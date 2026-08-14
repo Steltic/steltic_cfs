@@ -1,0 +1,2 @@
+REMOVED FROM SCOPE (2026-07-30): storage racks are excluded from this repo.
+Safe to delete this file from Windows at commit.

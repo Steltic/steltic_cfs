@@ -1,0 +1,31 @@
+Structural System - Open CFS portal canopy (fuel-station style), monoslope roof, NO walls
+Lateral Force Resisting System - Both directions: cantilevered/portalized column pairs with knee braces; roof-plane strap bracing between frames
+Number of stories - 1 (low eave 14'-0", high eave 17'-0"; monoslope)
+Analysis procedure - ELF (seismic trivial); OPEN-BUILDING WIND governs everything. Analysis fidelity - Tier 1
+Design standards - AISI S100, ASCE 7 (Ch. 27 open buildings / Ch. 30 open-building C&C)
+Project - Drive-through canopy for a truck-stop fuel court, Kansas
+
+## Material Properties
+- Columns: built-up box (double channel toe-to-toe) Gr. 50 for torsional stiffness; rafters: back-to-back channels Gr. 50
+- Purlins: Z-sections; roof: through-fastened panel with exposed underside (wind acts on BOTH surfaces)
+- Column bases: FIXED (moment) bases on drilled piers - the only lateral fixity in the cross-slope direction
+
+## Loads
+| Load Type | Magnitude |
+|------------|-----------|
+| Roof Dead | 4 psf + 1.5 psf collateral (lighting, signage strip) |
+| Wind | V = 115 mph, Exposure C; OPEN building, monoslope free roof: Cn net pressure cases (Ch. 27.3-4 / Fig. 27.3-4ff) for wind clear vs obstructed flow, BOTH load cases A and B; C&C per open-building figures |
+| Snow | pg = 20 psf; unbalanced/sliding not applicable (monoslope) but partial loading checked |
+| Seismic | SDS = 0.20 g, SDC B - confirm wind governs and say so |
+
+## Geometry
+- 4 frames at 24'-0" o.c. (72'-0" long); frame span 30'-0"; roof overhangs 4'-0" each side and each end
+- No walls, no diaphragm: each frame line takes its tributary transverse wind; longitudinal wind gathered by roof strap bracing to the frame knees
+
+## Design Requirements (agent outputs)
+- Open-building wind is the test: net Cn cases (clear + obstructed - trucks parked under = obstructed flow case REQUIRED), cases A/B, and the overhang C&C - NET UPLIFT on the whole roof is a primary case (0.9D + 1.0W), driving base UPLIFT + MOMENT on the piers
+- Fixed-base columns: cross-slope direction has no bracing - column base moment under transverse wind; rotation/stiffness assumption for the drilled pier stated (fixity is a modeling declaration)
+- Torsion on the canopy from end-bay wind (corner/edge zones + overhang) with no diaphragm: distribute via roof bracing; end frames govern
+- Purlin uplift with free bottom flange (exposed underside pressure) - unrestrained-flange design or discrete bracing schedule
+- Signage strip (2-ft deep fascia sign both long edges): additional wind area + dead - include in frame and overhang design
+- Deliverables: frame schedule, base reactions (pier design forces incl. uplift + moment), purlin/strap schedules, wind case table (clear/obstructed, A/B, C&C zones), governing-case statement per member

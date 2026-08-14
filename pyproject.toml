@@ -1,0 +1,60 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "steltic-cfs"
+version = "1.0.0"
+description = "Free, local AISI S100/S240/S400 cold-formed steel design agent: your LLM + OpenSees + stamped-style reports"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE", "NOTICE", "DISCLAIMER.md"]
+# <3.13: openseespy ships compiled binaries built for CPython <=3.12 (its Windows wheel is
+# mis-tagged as universal and fails at import with "DLL load failed" on newer interpreters).
+requires-python = ">=3.10,<3.13"
+authors = [{ name = "Steltic" }]
+keywords = ["structural-engineering", "AISC", "steel-design", "opensees", "llm", "agent"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering",
+]
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.27",
+    "httpx>=0.27",
+    "itsdangerous>=2.1",
+    "python-multipart>=0.0.9",
+    # Engine deps are CORE, not an extra: most users run the no-Docker subprocess executor, and a
+    # bare install that can't run OpenSees or render reports is a broken first experience.
+    "openseespy",
+    "numpy",
+    "scipy",
+    "matplotlib",
+]
+
+[project.optional-dependencies]
+# Backwards-compat alias (engine deps are now core); kept so `steltic[engine]` keeps working.
+engine = []
+
+[project.urls]
+Homepage = "https://stelticai.com"
+
+[project.scripts]
+steltic-cfs = "steltic.cli:main"
+
+# The wheel ships the app package plus its data folders (engine, contract, frontend, example briefs)
+# at site-packages top level; steltic/config.py resolves them relative to the package parent, which
+# works identically in a checkout and in an installed wheel. Install with uv/pipx (isolated venv).
+[tool.hatch.build.targets.wheel]
+packages = ["steltic", "steel_engine", "contract", "frontend", "test_buildings"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"DISCLAIMER.md" = "steltic/DISCLAIMER.md"
+"PRIVACY.md" = "steltic/PRIVACY.md"
+
+[tool.hatch.build.targets.sdist]
+include = ["steltic", "steel_engine", "contract", "frontend", "test_buildings", "PRIVACY.md",
+           "sandbox_image", "rag_v2", "rag_update", "rag_get_shim.py",
+           "README.md", "LICENSE", "NOTICE", "DISCLAIMER.md", ".env.example", "run_local.sh"]

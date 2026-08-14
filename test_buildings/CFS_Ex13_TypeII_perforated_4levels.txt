@@ -1,0 +1,46 @@
+Structural System - Load-bearing CFS stud-wall building
+Lateral Force Resisting System - CFS shear walls, WSP sheathed, designed as TYPE II (PERFORATED) walls per AISI S400 - full-height segments at wall ends with openings between, no hold-downs at intermediate openings
+Number of stories - 4; notched rectangular plan with a roof step
+Story heights - Level 1: 10'-6"; Levels 2-4: 9'-6"; top of wall 39'-0"
+Analysis procedure - ELF; SDC C
+Design standards - AISI S100, S240, S400 (Type II provisions), ASCE 7
+Project - Senior independent-living apartments
+
+## Material Properties
+- CFS members: **ASTM A1003 Gr. 50** bearing; **Gr. 33** interior
+- Sheathing: 7/16 in. OSB one side, No. 8 screws; hold-downs at WALL-LINE ENDS ONLY (Type II rule)
+- Floors: CFS joists @ 16 in. o.c. + WSP + gyp-crete; Roof: CFS trusses 3:12 over the main mass; flat joist roof over the 3-story notch mass
+
+## Gravity Loads
+| Load Type | Magnitude |
+|------------|-----------|
+| Floor Dead | 35 psf; Truss Roof Dead 18 psf; Flat Roof Dead 22 psf |
+| Cladding | 15 psf |
+| Live | 40 psf units + 15 psf partitions; 100 psf corridors/dining; reducible |
+| Roof Live | 20 psf Lr; Snow pg = 30 psf; drift at the 4-to-3 story roof step |
+
+## Seismic / Wind Design Data
+- SDS = 0.50 g, SD1 = 0.21 g, Site Class D, Risk Cat II, Ie = 1.0 (independent living, RC II assumed - agent may flag RC III consideration for assisted occupancies), SDC C
+- CFS walls w/ WSP: **R = 6.5, Cd = 4, Omega_0 = 3**
+- Wind: V = 110 mph, Exposure B
+- Diaphragms flexible
+
+## Building Plan Geometry (NOTCHED RECTANGLE + ROOF STEP)
+- Main envelope: 170'-0" (E-W) x 64'-0" (N-S)
+- NOTCH 1 (all levels): 25'-0" x 20'-0" entry recess at mid-south face (porte-cochere)
+- NOTCH 2: the EAST 40'-0" of the building is only 3 STORIES (flat roof at 29'-6"); the west 130' runs 4 stories (truss roof)
+- Double-loaded corridor E-W; unit party walls @ 14'-2" o.c.
+
+## Shear-Wall Layout
+TYPE II (perforated) walls - the exterior long walls (north, south) each story: treat each wall between building corners/notch corners as ONE perforated wall line with window/door openings as punched openings; full-height sheathed segments at each end + between openings
+TYPE I (segmented) walls - N-S direction: end walls, notch cheek walls, and party walls (every second line, 1 x 14'-0" segment)
+Openings schedule for the perforated lines (per story, per line): windows 6'-0" w x 4'-6" h with 3'-0" sill; entry doors 3'-6" x 8'-0"; percent full-height sheathing ~55-65% (agent computes exactly from the elevation dimensions below)
+North wall elevation (per story, west mass): 130' line = 8 windows equally spaced; South wall west mass: 6 windows + 2 doors; east mass (3-story): 40' line = 3 windows per face
+
+## Member / System Design Requirements (agent outputs, AISI S400 Type II)
+- Verify Type II LIMITATIONS: full-height segment at each end; opening height limits vs wall height; uniform top-of-wall elevation within each perforated line; max segment aspect ratios; if any line violates a limit, agent must convert it to Type I with hold-downs and say why
+- Compute the shear resistance adjustment factor (Ca / phi-factor path per S400) from percent full-height sheathing and max opening height ratio - show the calc
+- Anchorage: uplift anchorage at perforated-wall ENDS only, but S400 requires distributed uplift/shear anchorage along the bottom track between segments (t-track anchorage forces) - a commonly missed provision
+- Chord studs at line ends for cumulative 4-story overturning
+- Stud/track/fastener schedules per story; step-down
+- Roof-step diaphragm tie: the 4-story mass's east wall becomes an exterior shear line above Level 3 - design the transfer at the step and snow drift on the low roof

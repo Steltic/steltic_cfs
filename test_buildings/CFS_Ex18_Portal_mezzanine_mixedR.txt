@@ -1,0 +1,36 @@
+Structural System - CFS portal-frame shop building with an interior two-level CFS mezzanine (offices/storage) occupying one end
+Lateral Force Resisting System - Portal building transverse: CFS portals; longitudinal: strap-braced walls. Mezzanine: its own CFS strap-braced stud walls (S400 E3) - STRUCTURALLY CONNECTED to the portal building columns at the mezzanine roof line (shared axis!)
+Number of stories - Portal: 1 (eave 24'-0"); mezzanine: 2 levels (10'-0" + 10'-0") inside the last two bays
+Analysis procedure - ELF; SDC C. Analysis fidelity - Tier 1
+Design standards - AISI S100, AISI S240, AISI S400, ASCE 7
+Project - Fabrication shop with attached office mezzanine, Pacific Northwest
+
+## Material Properties
+- Portals: back-to-back channels, Gr. 50; mezzanine studs/joists Gr. 50; straps A1008 Gr. 50, Ry = 1.1
+- Mezzanine floor: CFS joists + WSP + gyp-crete (stiff diaphragm); portal roof: bare deck + insulation (flexible)
+
+## Loads
+| Load Type | Magnitude |
+|------------|-----------|
+| Portal Roof Dead | 5 psf + 2 psf collateral; Mezzanine Floor Dead 32 psf; Mezzanine Roof (level 2 ceiling) 12 psf |
+| Live | Mezzanine offices 50 psf + 15 partitions; storage level 125 psf; portal roof Lr 20 psf |
+| Snow | pg = 25 psf |
+| Wind | V = 110 mph, Exposure C |
+| Seismic | SDS = 0.75 g, SD1 = 0.30 g, SDC C; portals R = 3.0 ("not specifically detailed", Table 12.2-1); strap walls R = 4, Cd = 3.5, Omega0 = 2 |
+
+## Building Geometry
+- Portal span 50'-0", 9 frames at 25'-0" o.c., length 200'-0"; mezzanine fills the last two bays (50' x 50'), front edge on a portal frame line
+- Mezzanine strap walls: both levels, on its three non-shared sides; the fourth side is the portal frame line
+
+## Design Requirements (agent outputs)
+- MIXED SYSTEMS ON A SHARED AXIS: mezzanine strap walls (R=4) and portal frames (R=3.0) act along the same global axis where connected - apply the least-R rule along that axis or justify a seismic joint at the mezzanine/portal interface (ASCE 7 12.2.3.3); do not average
+- Mezzanine seismic mass loads the portal line it attaches to - the shared portal frame sees BOTH roles; capacity/drift checked for the combined case
+- Two diaphragm types in one structure: stiff mezzanine floors vs flexible bare-deck roof - distribute each level's shear per its own idealization
+- Mezzanine storage live load: 125 psf non-reducible; cumulative stud axial at level 1 studs under the storage level
+- Strap capacity-design chain (Ry Fy Ag) into chords, connections, hold-downs; portal members per EWM
+- Deliverables: portal schedule, mezzanine stud/joist/strap schedules, interface detail forces (joint or least-R justification), drift per system vs its own limit
+
+### Feasibility note (2026-07 revision)
+- Frame members may be built-up multi-ply channel assemblies (2- to 6-ply) and/or the
+  frame spacing may be tightened if the agent shows the stated arrangement cannot carry
+  the governing combos -- verify frame feasibility EARLY and flag any deviation.

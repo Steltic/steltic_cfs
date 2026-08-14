@@ -1,0 +1,34 @@
+Structural System - Single-span CFS portal-frame warehouse (back-to-back channel rafters and columns)
+Lateral Force Resisting System - Transverse: CFS portal frames (pinned bases, moment knees + apex). Longitudinal: flat-strap X-bracing in the end and side walls + roof plane bracing
+Number of stories - 1 (eave 20'-0", apex 26'-0", roof pitch ~10 deg)
+Analysis procedure - ELF (seismic trivial); wind governs. Analysis fidelity - Tier 1 (thin-walled members)
+Design standards - AISI S100, AISI S240 (wall framing), ASCE 7
+Project - Distribution warehouse, inland Southeast US
+
+## Material Properties
+- Portal members: built-up lipped-channel assemblies, 2- to 6-ply (e.g., 6 x 1200S250-118 class at this span/bay/wind), **ASTM A1003 Gr. 50**; agent selects sections and ply count -- verify frame feasibility EARLY (a 2-ply catalog pair does not work here)
+- Knee/apex connections: bolted gusseted brackets (bolt group design by agent)
+- Purlins/girts: Z-sections, lapped continuous over rafters; straps ASTM A1008 Gr. 50
+- Roof/wall: through-fastened metal panel (26 ga)
+
+## Loads
+| Load Type | Magnitude |
+|------------|-----------|
+| Roof Dead | 4.5 psf (panel + purlins + insulation + collateral 1.5 psf sprinkler allowance) |
+| Roof Live | 20 psf Lr (reducible) |
+| Snow | pg = 10 psf (flat-roof snow does not govern over Lr - verify) |
+| Wind | V = 120 mph, Exposure C, enclosed; C&C on panels/purlins/girts AND MWFRS on frames |
+| Seismic | SDS = 0.25 g, SD1 = 0.10 g, SDC B; R = 3.0 (steel "systems not specifically detailed", Table 12.2-1), verify wind governs both directions |
+
+## Building Geometry
+- 23 portal frames at 12'-6" o.c.; span 60'-0" clear; length 275'-0"
+- One 14'-0" x 16'-0" overhead door in each end wall; personnel doors only in side walls (building remains ENCLOSED - verify classification)
+- Purlin spacing 5'-0" o.c.; girt spacing 6'-0" o.c.
+
+## Portal Frame Design Requirements (agent outputs)
+- Rafter and column sections (back-to-back channels), checked per AISI S100 EWM: local + distortional + global; combined P+M per H1
+- Knee region: high closing moment - distortional buckling of the unbraced inside (compression) flange between purlin/girt brace points; state the bracing assumption at the knee and apex
+- Frame stability: notional out-of-plumb + second-order; pinned bases (uplift anchorage at base plates)
+- Wind uplift reversal: inside flange of rafter goes into compression under 0.9D + 1.0W - the purlin-braced flange is then the TENSION flange; unbraced-length treatment must switch accordingly
+- Longitudinal strap bracing per S100 (wind - tension-only X-straps); roof-plane diaphragm is NOT relied on (through-fastened panel stiffness neglected - bracing takes all longitudinal load)
+- Deliverables: frame member schedule, knee/apex bolted bracket design, purlin/girt schedule with lap lengths, strap schedule, base plate + anchor rods, drift/spread at eave vs L/... serviceability statement

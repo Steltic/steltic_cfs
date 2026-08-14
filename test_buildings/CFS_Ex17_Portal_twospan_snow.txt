@@ -1,0 +1,36 @@
+Structural System - Two-span continuous CFS portal-frame building (unequal spans)
+Lateral Force Resisting System - Transverse: two-span CFS portals (interior column line). Longitudinal: strap-braced side walls + interior line bracing at alternate bays
+Number of stories - 1 (eave 18'-0" both sides, apexes at 22'-6" and 21'-0"; twin-gable profile with an interior VALLEY on the interior column line)
+Analysis procedure - ELF; snow governs gravity. Analysis fidelity - Tier 1
+Design standards - AISI S100, AISI S240, ASCE 7
+Project - Municipal works garage, northern New England
+
+## Material Properties
+- Portal members: back-to-back lipped channels, ASTM A1003 Gr. 50 (agent selects)
+- Purlins: lapped Z-sections; valley region purlins may require doubling
+- Roof/wall: through-fastened panel, R = 26 ga
+
+## Loads
+| Load Type | Magnitude |
+|------------|-----------|
+| Roof Dead | 5 psf + 2 psf collateral (lighting, gas heaters) |
+| Snow | pg = 60 psf; Ce = 1.0, Ct = 1.0, Is = 1.0; BALANCED + UNBALANCED gable cases + VALLEY drift at the interior column line |
+| Wind | V = 105 mph, Exposure B |
+| Seismic | SDS = 0.30 g, SD1 = 0.12 g, SDC B |
+
+## Building Geometry
+- Spans 50'-0" + 36'-0" (unequal); frame spacing 8'-0" to 24'-0" (AGENT SELECTS -- tight spacing is expected at this snow load; state the count over the 216'-0" length)
+- Interior columns on the valley line at every frame; 16'-0" x 14'-0" doors along the south side wall (5 total)
+
+## Design Requirements (agent outputs)
+- Snow load cases: balanced, unbalanced per gable provisions on EACH span, and drift accumulation in the valley - the interior column axial and the valley purlin demands are governed by the DRIFT case, not balanced snow
+- Pattern loading: snow on one span only maximizes interior-support hogging in the continuous rafter and uplift at the far column base - check both
+- Continuous rafter over the interior column: hogging region has its unbraced compression (bottom) flange between brace points - distortional/LTB per EWM with correct unbraced lengths; purlin laps sized for continuity moments
+- Interior column: axial from two tributary spans + drift surcharge; slenderness about both axes (no girts on an interior line - provide discrete bracing or design unbraced)
+- Frame imperfections/notional loads on the two-span frame; differential apex heights create a small transverse stiffness asymmetry - state its treatment
+- Deliverables: frame schedule (exterior columns, interior column, both rafter spans), purlin schedule incl. valley zone, snow case table with governing member per case, base reactions per case
+
+### Feasibility note (2026-07 revision)
+- Frame members may be built-up multi-ply channel assemblies (2- to 6-ply) and/or the
+  frame spacing may be tightened if the agent shows the stated arrangement cannot carry
+  the governing combos -- verify frame feasibility EARLY and flag any deviation.

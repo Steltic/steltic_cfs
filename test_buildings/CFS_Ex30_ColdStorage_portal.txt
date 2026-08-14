@@ -1,0 +1,38 @@
+Structural System - CFS portal-frame COLD-STORAGE building (-10 F freezer), insulated-panel envelope
+Lateral Force Resisting System - Transverse: CFS portals; longitudinal: flat-strap X-bracing in the roof plane and side walls (panels provide NO diaphragm - mounted on thermal-isolation clips)
+Number of stories - 1 (eave 26'-0", apex 30'-0")
+Analysis procedure - ELF; snow + wind checked, snow governs gravity. Analysis fidelity - Tier 1
+Design standards - AISI S100, AISI S240, ASCE 7
+Project - Cold-storage / freezer warehouse, upstate New York
+
+## Material Properties
+- Portals: back-to-back channels Gr. 50; purlins/girts: Z-sections on THERMAL-ISOLATION clips (no panel bracing credit - state unbraced design basis or discrete brace schedule)
+- Envelope: 5-inch insulated metal panels (IMP), roof and walls - HEAVY cladding for a metal building
+- Low-temperature service: interior members at -10 F - material notch-toughness statement required for members and fasteners in cold service
+
+## Loads
+| Load Type | Magnitude |
+|------------|-----------|
+| Roof Dead | 9 psf (IMP + purlins + clips) + 4 psf collateral (refrigeration piping, ceiling-hung evaporators 2 kip each at 20-ft grid - point loads on specific purlins/rafters) |
+| Wall cladding | 7 psf (IMP on girts) |
+| Snow | pg = 50 psf with Ct = 1.2 (COLD roof over freezer - no melt credit; the warm-roof reflex Ct = 1.0 is WRONG here); drift at the 8-ft-tall rooftop condenser platform |
+| Wind | V = 110 mph, Exposure B |
+| Seismic | SDS = 0.30 g, SD1 = 0.12 g, SDC B; heavy IMP envelope raises W vs a bare metal building - wind-vs-seismic governing check per direction required |
+
+## Geometry
+- Span 70'-0" total (CLEAR SPAN NOT REQUIRED -- an interior column line is acceptable if the agent shows the clear span cannot work in the stated member class and justifies the layout against the racking plan); frame spacing 8'-0" to 25'-0" (agent selects); length 250'-0"; rooftop condenser platform 20' x 12' x 8' tall near midlength (drift source + added frame load)
+- Vestibule/airlock lean-to (12' deep, full width of one end wall, eave 14'-0") - snow drift on the lean-to at the step
+
+## Design Requirements (agent outputs)
+- Ct = 1.2 thermal factor and its consequences (freezer roof holds snow); drift at the condenser platform AND the lean-to step - map drifts to specific purlins and frames
+- No-diaphragm bracing scheme: thermal clips isolate panels - purlin/girt lateral restraint comes ONLY from the discrete brace/sag-rod schedule (deliverable with forces); longitudinal load path is straps, not skin
+- Evaporator point loads: 2-kip ceiling-hung units on specific members - local web crippling + added rafter moments; hanger connection design at cold-service temperature
+- Thermal movement: 250-ft envelope at -10 F interior vs +95 F ambient exterior - state the movement accommodation (girt slots/clip travel) and any bracing forces from restrained shrinkage; movement-joint decision with numbers
+- Material toughness at -10 F: specification statement for steel grades and fasteners in cold service (a completeness check, like Ex11's corrosion spec)
+- Wind-vs-seismic governing per direction with the heavy IMP mass; strap and anchor design for the governing case
+- Deliverables: frame/purlin/girt schedules with drift-zone callouts, discrete-brace + sag-rod schedule with forces, evaporator hanger details/forces, thermal movement statement, toughness spec line, governing-hazard table
+
+### Feasibility note (2026-07 revision)
+- Frame members may be built-up multi-ply channel assemblies (2- to 6-ply) and/or the
+  frame spacing may be tightened if the agent shows the stated arrangement cannot carry
+  the governing combos -- verify frame feasibility EARLY and flag any deviation.

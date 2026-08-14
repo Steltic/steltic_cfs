@@ -1,0 +1,56 @@
+Structural System - Load-bearing Cold-Formed Steel (CFS) stud-wall building
+Lateral Force Resisting System - CFS shear walls sheathed with Wood Structural Panels (WSP), Type I (segmented)
+Number of stories - 5; L-shaped plan with a stepped roof (truss gable on one wing, flat amenity roof on the other)
+Story heights - Level 1: 10'-0"; Levels 2-5: 9'-6"; top of Level 5 walls at 48'-0"
+Analysis procedure - ELF; SDC D
+Design standards - AISI S100, AISI S240, AISI S400, ASCE 7
+Project - Multi-family residential (double-loaded corridor)
+
+## Material Properties
+- CFS members: **ASTM A1003 Gr. 50 (Fy = 50 ksi)** exterior/bearing studs and joists; **Gr. 33 (Fy = 33 ksi)** interior non-bearing
+- Shear-wall sheathing: **7/16 in. OSB (WSP)**, one side; fasteners No. 8 screws (edge/field schedule = agent output per AISI S400 tables)
+- Floors: CFS joists @ 16 in. o.c., 3/4 in. WSP subfloor + 1 1/2 in. gypsum concrete topping
+- Gable wing roof: CFS trusses @ 24 in. o.c., 4:12 pitch; flat wing roof: CFS joists + WSP + membrane, amenity pavers
+- Screws: ASTM C1513; hold-downs/anchors: proprietary, capacity-design forces (agent to specify demand)
+
+## Gravity Loads
+| Load Type | Magnitude |
+|------------|-----------|
+| Floor Dead Load | 35 psf |
+| Roof Dead Load | 20 psf (gable, incl. trusses); 28 psf (flat wing, incl. pavers allowance over Level 5) |
+| Cladding | 15 psf (fiber cement) |
+| Floor Live Load | 40 psf residential + 15 psf partitions; 100 psf corridors; reducible per Sec. 4.7 |
+| Roof Live | 20 psf Lr (gable); 100 psf amenity deck area (Levels 5 roof, west wing, assembly) |
+| Snow | pg = 20 psf; drift at the gable-to-flat roof step |
+
+## Seismic / Wind Design Data
+- SDS = 0.90 g, SD1 = 0.45 g, Site Class D, Risk Cat II, Ie = 1.0, SDC D
+- Light-frame (CFS) walls w/ WSP: **R = 6.5, Cd = 4, Omega_0 = 3**; SDC D height limit 65 ft (48 ft OK)
+- Wind: V = 105 mph, Exposure B. Seismic expected to govern.
+- Diaphragms: idealize as FLEXIBLE (light-frame with <= 1 1/2 in. non-structural topping, ASCE 7 12.3.1.1c) - distribute shear to wall lines by tributary area; agent to confirm or justify semi-rigid.
+
+## Building Plan Geometry (L-SHAPE, STEPPED ROOF)
+- North bar: 180'-0" (E-W) x 62'-0" (N-S), 5 stories, gable truss roof (ridge E-W); eave at 48', ridge at ~58'
+- West leg: 62'-0" (E-W) x 90'-0" (N-S, extending south), 5 stories, FLAT roof at 48' with amenity deck
+- Re-entrant corner at the inside junction (both projections > 15% - Type 2 horizontal irregularity)
+- Double-loaded corridor down each wing: two corridor wall lines 6'-0" apart on each wing centerline
+- Party walls across each wing at 30'-0" o.c. (bar: 6 party lines; leg: 3 party lines)
+
+## Shear-Wall Layout (Type I segmented; all walls full-height stacked, Levels 1-5)
+E-W (longitudinal) resistance:
+  - Both exterior long walls of the bar: 6 segments x 12'-0" each per wall per story
+  - Both corridor walls of the bar: 10 segments x 8'-0" each per wall per story
+  - Leg exterior E-W end wall (south): 4 segments x 10'-0"; leg corridor E-W walls: 4 segments x 8'-0" per wall
+N-S (transverse) resistance:
+  - Party walls in the bar (6 lines): 3 segments x 14'-0" each per line
+  - Leg exterior side walls + leg corridor walls: 4 segments x 12'-0" per line
+Segment aspect ratios h/w <= 2:1 everywhere (verify; apply 2w/h factor if any exceed)
+
+## Member / System Design Requirements (agent outputs)
+- Stud schedule per story (exterior bearing @ 16 in. o.c., interior bearing @ 24 in. o.c.); thickness steps down with height; lower stories never lighter
+- Sheathing fastener edge/field spacing per story per wall line (from AISI S400 nominal capacities with correct resistance/safety factor)
+- Chord studs (boundary posts) per wall segment per story: built-up back-to-back, sized for cumulative overturning +/- gravity
+- Hold-down and anchor demands: capacity-based, continuous rod or strap system; report tension at each level
+- Drag/collector members along corridor lines at the re-entrant corner (Omega_0 combinations)
+- Wall-to-floor shear transfer (track-to-rim fastening) schedule per story
+- Drift check: amplified drift vs 0.025hsx (Risk Cat II light-frame ASCE 7 Table 12.12-1)

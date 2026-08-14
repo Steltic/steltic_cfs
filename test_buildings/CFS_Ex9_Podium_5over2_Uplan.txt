@@ -1,0 +1,49 @@
+Structural System - Load-bearing CFS stud-wall building over a 2-story reinforced concrete podium ("5-over-2")
+Lateral Force Resisting System - Upper: CFS shear walls with WSP sheathing. Lower: special RC shear walls (podium). TWO-STAGE equivalent lateral force procedure intended (ASCE 7 12.2.3.2).
+Number of stories - 7 total: 5 CFS residential over 2 concrete (retail + parking)
+Story heights - Podium L1: 12'-0", L2: 10'-0" (top of podium slab +22'-0"); CFS Levels 3-7: 9'-6" each; top of CFS wall +69'-6"
+Analysis procedure - Two-stage ELF (agent must VERIFY eligibility) or single combined model; SDC D
+Design standards - AISI S100, S240, S400, ASCE 7; ACI 318 podium (concrete design OUT OF SCOPE - report demands to podium only)
+Project - Mixed-use: U-shaped residential block over a full-footprint podium
+
+## Material Properties
+- CFS members: **ASTM A1003 Gr. 50, Fy = 50 ksi**
+- Shear walls: 7/16 in. OSB (WSP) one side; No. 8 screws
+- CFS floors: joists @ 16 in. o.c. + WSP + 1 1/2 in. gyp-crete; podium slab: 8 in. PT concrete (transfer level)
+- Continuous rod hold-downs anchored to podium slab embeds
+
+## Gravity Loads
+| Load Type | Magnitude |
+|------------|-----------|
+| CFS Floor Dead | 35 psf; CFS Roof Dead 22 psf |
+| Podium L2 (transfer) Dead | 110 psf self + 15 psf SDL (out of CFS scope except as reactions) |
+| Cladding | 15 psf CFS levels; 25 psf podium |
+| Live | 40 psf + 15 psf partitions residential; 100 psf retail L1; 40 psf parking L2; courtyard on podium deck: 100 psf |
+| Roof Live | 20 psf Lr |
+
+## Seismic / Wind Design Data
+- SDS = 0.95 g, SD1 = 0.50 g, Site Class D, Risk Cat II, Ie = 1.0, SDC D
+- Upper (CFS w/ WSP): **R = 6.5, Cd = 4, Omega_0 = 3**
+- Lower (special RC shear walls, building frame): R = 6, Cd = 5, Omega_0 = 2.5 (for the two-stage force hand-off only)
+- TWO-STAGE ELIGIBILITY (12.2.3.2) - agent must check and state: lower portion stiffness >= 10x upper; period of entire structure <= 1.1x period of upper on rigid base; upper designed with its own R/rho; lower designed for its own forces PLUS upper-portion reactions amplified by (R_upper/rho_upper)/(R_lower/rho_lower) >= 1.0
+- CFS height limit: 65 ft applies to the CFS portion measured from the two-stage base (top of podium): 47'-6" OK
+- Wind: V = 105 mph, Exposure B
+
+## Building Plan Geometry
+- PODIUM (L1-L2): full rectangle 210'-0" x 130'-0"
+- CFS LEVELS 3-7: U-SHAPE on the podium: two 62'-0"-wide N-S wings at the east & west ends (each 62' x 130') joined by a 62'-0"-deep S bar across the south (86' x 62' between wings); COURTYARD (open to sky, on podium deck): 86'-0" x 68'-0" facing north
+- Re-entrant corners at both wing/bar junctions
+- Party walls @ 15'-0" o.c. in wings; double-loaded corridors each wing/bar
+
+## Shear-Wall Layout (WSP Type I, stacked Levels 3-7 only)
+N-S: wing exterior walls: 3 segments x 12'-0" per line; courtyard-side wing walls: 5 segments x 12'-0" per line; EVERY wing party wall (15 ft o.c.): 4 segments x 14'-0" per line; south-bar party walls (every 2nd, ~30 ft o.c.): 4 segments x 14'-0" per line
+E-W: south bar exterior wall: 10 segments x 12'-0"; courtyard-side bar wall: 6 segments x 12'-0"; wing end walls (north): 3 segments x 12'-0" per wing; wing E-W party lines (~26 ft o.c., 3 shared lines + 2 south lines): 4 segments x 14'-0" per line (8 x 14'-0" on the two lines south of the courtyard)
+All CFS walls terminate on the podium slab: NO wall continues below +22'-0"
+
+## Member / System Design Requirements (agent outputs)
+- Two-stage check with numbers (stiffness ratio, period ratio) - state pass/fail; if fail, fall back to a combined model and say so
+- CFS stud schedule per story (5 tiers), chords, fastener schedules per line
+- Hold-down rod tension per level; podium embed/anchor demands (report as loads on podium, incl. amplification factor on reactions)
+- Collector design at re-entrant corners (Omega_0)
+- Podium deck as the CFS base diaphragm: report the total base shear and overturning delivered at each CFS wall line for the concrete engineer
+- Drift: CFS portion vs 0.025hsx on its own base

@@ -1,0 +1,32 @@
+Structural System - Roof purlin + wall girt COMPONENT DESIGN for an existing portal-frame shell (frames existing and adequate - purlin/girt system is the entire scope)
+Lateral Force Resisting System - existing (not in scope); purlin/girt design must not alter the existing bracing scheme
+Number of stories - 1 (eave 20'-0"; roof slope 1:12)
+Analysis procedure - component design to AISI S100; C&C wind governs. Analysis fidelity - Tier 0 (component-level; frames not modeled)
+Design standards - AISI S100, ASCE 7 (Ch. 30 C&C)
+Project - Re-roof/re-skin of a 1990s metal building, Oklahoma (existing purlins condemned by corrosion)
+
+## Material Properties
+- New purlins: lapped Z-sections (8ZS or 10ZS class), Gr. 55, continuous over frames with 2'-6" laps each side of supports
+- New girts: Z-sections bypass-mounted, Gr. 55
+- Roof panel OPTION A: through-fastened 26 ga (panel provides full lateral restraint to the connected flange)
+- Roof panel OPTION B: standing-seam with sliding clips (restraint per TESTED system data only - the brief provides none; treat as laterally unrestrained per S100 unless a test basis is cited)
+
+## Loads
+| Load Type | Magnitude |
+|------------|-----------|
+| Roof Dead | 3.5 psf | Collateral | 2 psf |
+| Roof Live / Snow | Lr 20 psf; pg = 15 psf |
+| Wind | V = 115 mph, Exposure C; C&C zones per Ch. 30 - interior, edge, corner zones with their own purlin/girt demands; NET UPLIFT governs |
+| Seismic | negligible for components (state why) |
+
+## Geometry
+- Frame spacing 25'-0" (purlin span); purlin spacing 5'-0"; girt spacing 6'-0"; building 100' x 250'
+- Eave/rake/corner C&C zone map to be produced; edge-zone purlins may need a heavier section or reduced spacing
+
+## Design Requirements (agent outputs)
+- GRAVITY case: top (connected) flange braced by panel - constrained bending per S100 for through-fastened OPTION A
+- UPLIFT case is the trap: bottom (FREE) flange in compression, laps + anti-roll clips as the only restraint. OPTION A: use the S100 through-fastened uplift provisions (R-factor method, I6.2) with the tabulated R for the panel/fastener system; OPTION B: no tested restraint data given - design the purlin as unrestrained between discrete braces and STATE the requirement for system test data if the standing-seam option proceeds
+- Distortional buckling checks at the unrestrained flange cases; lap continuity moments at supports; web crippling at frame bearing (G5) with the bearing width of the existing rafter flange
+- C&C zoning: separate purlin designs (or spacings) for interior vs edge/corner zones - one section everywhere is acceptable only if it passes the corner zone
+- Existing-structure interface: purlin reactions to existing rafters must not exceed the original design reactions (state assumed original capacity basis or deliver reactions for the EOR of record)
+- Deliverables: purlin schedule by zone (section, lap, clip/brace spacing), girt schedule, fastener schedule panel-to-purlin, uplift design basis per option (R-factor vs unrestrained), reaction handoff table

@@ -1,0 +1,30 @@
+Structural System - Free-standing CFS storage MEZZANINE (equipment/storage platform) erected inside an EXISTING warehouse - structurally independent of the host building
+Lateral Force Resisting System - Both directions: flat-strap X-braced CFS stud/post lines under the platform edge + interior post lines braced in alternating bays
+Number of stories - 1 elevated platform at 12'-0" (usable under and over); guardrail/handrail perimeter
+Analysis procedure - ELF as a NONBUILDING/platform structure (ASCE 7 Ch. 15 vs Ch. 12 boundary - agent determines and cites). Analysis fidelity - Tier 0/1 (agent selects and justifies)
+Design standards - AISI S100, AISI S240, AISI S400 (strap bays), ASCE 7
+Project - Parts storage mezzanine inside a leased distribution building, Phoenix AZ
+
+## Material Properties
+- Posts: built-up back-to-back CFS studs Gr. 50 (or box); primary beams: built-up boxed channels; joists: single C-joists at 16 in. o.c.
+- Deck: 1 1/8" wood structural panel + resilient floor (storage) - diaphragm at platform level
+- Straps: A1008 Gr. 50; hold-downs at strap-bay posts, anchors to the existing 6" slab
+
+## Loads
+| Load Type | Magnitude |
+|------------|-----------|
+| Platform Dead | 12 psf | Storage Live | 125 psf (non-reducible; posted limit deliverable) |
+| Seismic | SDS = 0.35 g, SD1 = 0.14 g, SDC C; platform seismic per the applicable Ch. 15/13 provisions (agent cites the governing path and the R/ap values used) |
+| Wind | none (indoor) |
+
+## Geometry
+- Platform 60'-0" x 32'-0"; post grid 12'-0" x 16'-0"; clear height under beams >= 9'-6" (forklift aisle below - post layout must keep two 12-ft-wide clear aisles)
+- Stair (one) + pallet gate (one) on the long edge; guardrails all around
+
+## Design Requirements (agent outputs)
+- CLASSIFICATION: free-standing platform inside a building - determine the seismic design path (Ch. 15 nonbuilding structure vs Ch. 12/13) and CITE it; the R value follows from that determination, not from habit
+- EXISTING BUILDING INTERFACE (scope guard): the mezzanine must remain seismically SEPARATE from the host building - clearance to host columns/walls at Cd-amplified drift; NO bracing to the host structure; slab is the host's - deliver anchor loads + bearing pressures for the landlord's engineer (slab verification explicitly scoped OUT, reactions handed off)
+- Storage live 125 psf: post axial + beam design; pattern live (checkerboard) for beam hogging; deflection L/360 live on joists/beams (racking sensitivity of stored goods noted)
+- Strap bays: S400 E3 chain (Ry Fy Ag) into posts, hold-downs, and slab anchors; cumulative overturning at 12-ft height is modest - but anchor EDGE DISTANCE on a 6" slab may govern (flag if proprietary anchors can't develop the tension)
+- Guardrail/handrail loads (50 plf / 200 lb point) on perimeter posts; stair stringer reactions to the platform edge beam
+- Deliverables: post/beam/joist schedules, strap + hold-down + anchor schedule with slab reaction handoff sheet, clearance table to host structure, posted-load statement

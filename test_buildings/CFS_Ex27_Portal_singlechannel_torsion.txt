@@ -1,0 +1,31 @@
+Structural System - Light single-span CFS portal frames built from SINGLE lipped channels (not back-to-back) - cost-driven agricultural design
+Lateral Force Resisting System - Transverse: single-channel portals; longitudinal: strap-braced walls
+Number of stories - 1 (eave 16'-0", apex 20'-0")
+Analysis procedure - ELF; wind governs. Analysis fidelity - Tier 2 RECOMMENDED (singly-symmetric open sections, shear-center eccentricity, torsion-sensitive - the brief asks the agent to JUSTIFY the tier choice)
+Design standards - AISI S100, ASCE 7
+Project - Equipment storage barn, rural Iowa (budget-driven: single-channel frames at tight spacing)
+
+## Material Properties
+- Portal members: SINGLE lipped channels (e.g., 1000S250-97 class) Gr. 55; web stiffeners at knees
+- The channel shear center lies OUTSIDE the web: loads applied through the web plane induce TORSION in every member - this is the defining feature of the design
+- Purlins/girts: Z-sections at 4'-0"/5'-0"; through-fastened panels both roof and walls
+
+## Loads
+| Load Type | Magnitude |
+|------------|-----------|
+| Roof Dead | 4 psf + 1 psf collateral |
+| Snow | pg = 25 psf | Roof Live | Lr 20 psf |
+| Wind | V = 105 mph, Exposure C |
+| Seismic | SDS = 0.15 g, SDC B (trivial - confirm) |
+
+## Geometry
+- Span 36'-0"; 14 frames at 15'-0" o.c. (tight spacing - light frames); length 195'-0"
+- Purlins/girts fasten to the channel flange - load plane offset from the shear center at every connection
+
+## Design Requirements (agent outputs)
+- TORSION IS THE TEST: single-channel members loaded eccentric to the shear center - bending PLUS torsion/warping stresses per S100 (combined bending and torsion reduction, or capture the torsional response in the Tier 2 model and design accordingly); a back-to-back reflex ("assume doubly-symmetric") is wrong here
+- Justify the analysis fidelity tier: Tier 1 minimum (warping DOF); state what Tier 2 adds for this structure (progressive local softening interacting with twist) and either run it or defend Tier 1
+- Purlin/girt anchorage forces: the panel + purlin system restrains the frame flange - anti-roll/torsion brace schedule at knees and apex is a REQUIRED deliverable, with forces
+- Flange-restraint asymmetry: outside flange braced by girts/purlins, inside flange free - uplift reversal puts the FREE flange in compression (unbraced distortional/LTB case)
+- Economy check: tight spacing was chosen to keep single channels feasible - report the governing D/C margins; if any member needs back-to-back doubling the brief's premise fails and the agent must SAY SO rather than silently upsize
+- Deliverables: frame schedule with torsion design basis per member, torsion-brace schedule + forces, purlin/girt/strap schedules, tier justification statement

@@ -1,0 +1,51 @@
+Structural System - Load-bearing CFS stud-wall building on a sloping site (split-level)
+Lateral Force Resisting System - MIXED BY DIRECTION: E-W (long) direction = CFS strap-braced walls (AISI S400 E3); N-S (short) direction = CFS shear walls with WSP (S400 E1). Different R each direction per ASCE 7 12.2.2.
+Number of stories - 3 on the uphill face; 4 on the downhill face (walkout lower level under the south half)
+Story heights - Lower (walkout) level: 10'-0" (south half only); Level 1: 11'-0"; Levels 2-3: 10'-0"; top of wall 31'-0" above Level 1 (41'-0" above walkout slab)
+Analysis procedure - ELF; SDC D
+Design standards - AISI S100, S240, S400, ASCE 7
+Project - Medical office building (outpatient clinic)
+
+## Material Properties
+- CFS members: **ASTM A1003 Gr. 50, Fy = 50 ksi**
+- Straps: Gr. 50 flat straps both faces (E-W panels); WSP: 7/16 in. OSB (N-S walls)
+- Floors: CFS joists @ 12 in. o.c. (clinic equipment) + WSP + 1 1/2 in. gyp-crete; Roof: CFS trusses, 2:12 mono-slope (high side north)
+- Downhill lower level: CFS bearing walls on strip footings; uphill north half bears on a stem wall at Level 1 (concrete stem wall out of scope; report demands)
+
+## Gravity Loads
+| Load Type | Magnitude |
+|------------|-----------|
+| Floor Dead | 42 psf (clinic: extra ceiling/MEP); Roof Dead 20 psf |
+| Cladding | 18 psf (brick veneer Level 1 north face, fiber cement elsewhere - note the heavier line) |
+| Live | 60 psf clinic/exam + 15 psf partitions; 100 psf lobbies/corridors; imaging suite 125 psf over a 20' x 24' zone at Level 1 south |
+| Roof Live | 20 psf Lr; Snow pg = 35 psf (mono-slope, unbalanced/slide-off per ASCE 7 Ch. 7) |
+
+## Seismic / Wind Design Data
+- SDS = 0.85 g, SD1 = 0.42 g, Site Class D, Risk Cat II, Ie = 1.0, SDC D
+- E-W: strap-braced walls **R = 4, Cd = 3.5, Omega_0 = 2** (65-ft SDC D limit OK)
+- N-S: WSP shear walls **R = 6.5, Cd = 4, Omega_0 = 3**
+- 12.2.2 orthogonal-combination: each direction designed with its own coefficients; shared elements (chords, diaphragms, foundations) see BOTH systems' demands - combine correctly
+- Wind: V = 110 mph, Exposure C
+- Diaphragms flexible
+
+## Building Plan Geometry (SPLIT-LEVEL RECTANGLE)
+- Plan: 120'-0" (E-W) x 70'-0" (N-S)
+- SLOPE: grade drops 10'-0" from north to south; the SOUTH 35'-0" of the plan has a walkout lower level (120' x 35'); the north 35' bears at Level 1 on a stem wall
+- The Level 1 floor is a SPLIT DIAPHRAGM: the north half bears on grade/stem wall (slab, no framed diaphragm); the south half is framed CFS over the walkout level. A framed Level 1 diaphragm exists over the south half only.
+- Interior bearing/LFRS line at the split (E-W line at mid-plan, top of the walkout north wall)
+
+## LFRS Layout
+E-W strap-braced panels (10'-0" to 12'-0" wide):
+  - North wall: 3 panels (Levels 1-3)
+  - Mid-split line: 6 panels, stacked from the walkout slab to the roof (4 panel stories on this line)
+  - South wall: 3 panels (walkout level + Levels 1-3 = 4 stories of stacked panels)
+N-S WSP walls:
+  - East and west end walls: 3 segments x 12'-0" each (4 stories on the south half of each end wall, 3 on the north half - stepped base!)
+  - Two interior corridor cross walls: 3 segments x 12'-0" each, Levels 1-3
+
+## Member / System Design Requirements (agent outputs)
+- Stepped-base walls: end-wall shear segments have different base elevations along the same line - design each segment to its own base, and design the split-line transfer (shear from the north-half 3-story stack delivered into the walkout-level walls)
+- Strap capacity-design chain (Ry Fy Ag) E-W; WSP fastener schedules N-S; chords/hold-downs both systems
+- Foundation/stem-wall demand report at the split (out-of-scope concrete, in-scope loads)
+- Snow slide-off + unbalanced case on the mono-slope; imaging-suite joist design zone
+- Drift each direction with its own Cd vs 0.025hsx

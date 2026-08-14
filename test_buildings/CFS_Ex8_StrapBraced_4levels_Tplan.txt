@@ -1,0 +1,48 @@
+Structural System - Load-bearing CFS stud-wall building
+Lateral Force Resisting System - CFS light-frame walls with FLAT STRAP X-BRACING (AISI S400 Section E3)
+Number of stories - 4; T-plan student housing
+Story heights - Level 1: 10'-0"; Levels 2-4: 9'-8"; top of wall 39'-0"
+Analysis procedure - ELF; SDC C
+Design standards - AISI S100, AISI S240, AISI S400, ASCE 7
+Project - University student housing (suite-style)
+
+## Material Properties
+- CFS members: **ASTM A1003 Gr. 50, Fy = 50 ksi**
+- Flat straps: **ASTM A1003 Gr. 50**, widths 3 in. to 6 in., thickness 0.043 in. to 0.068 in. (agent to size per story); installed both faces of braced walls, X-configuration
+- Floors: CFS joists @ 16 in. o.c., 3/4 in. WSP + 1 1/2 in. gyp-crete
+- Roof: CFS trusses @ 24 in. o.c., 3:12 gable over each wing; ridge heights differ (see geometry)
+- Gusset plates at strap ends: 54-mil min; screws ASTM C1513
+
+## Gravity Loads
+| Load Type | Magnitude |
+|------------|-----------|
+| Floor Dead Load | 35 psf |
+| Roof Dead Load | 18 psf |
+| Cladding | 15 psf |
+| Floor Live Load | 40 psf sleeping areas + 15 psf partitions; 100 psf corridors/lounges; reducible |
+| Roof Live | 20 psf Lr; Snow pg = 30 psf (valley drift where wing gables meet) |
+
+## Seismic / Wind Design Data
+- SDS = 0.45 g, SD1 = 0.19 g, Site Class D, Risk Cat II, Ie = 1.0, SDC C
+- Light-frame walls w/ flat strap bracing: **R = 4, Cd = 3.5, Omega_0 = 2**
+- Wind: V = 115 mph, Exposure C - with R = 4, CHECK BOTH; wind may govern the long direction
+- Diaphragms flexible; tributary distribution
+
+## Building Plan Geometry (T-PLAN, TWO GABLE ROOFS)
+- Head (E-W bar): 140'-0" x 46'-0", gable ridge E-W at +47'-0" (39' plate + gable rise)
+- Stem (N-S bar): 46'-0" x 84'-0" extending south from the head's center, gable ridge N-S at +47'-0"; VALLEYS at the T-junction
+- Re-entrant corners both sides of the stem (Type 2)
+- Suite party walls @ 14'-0" o.c. both wings; single-loaded corridor on the stem's west side (exterior walkway - adds eccentric cladding/rail loads)
+
+## Strap-Braced Wall Layout (X-braced panels 9'-0" to 12'-0" wide, stacked Levels 1-4)
+E-W: head north exterior wall: 3 panels; head south wall: 5 panels; stem end (south) wall: 2 panels
+N-S: head end walls (east, west): 2 panels each; stem east exterior wall: 4 panels; stem west (walkway) wall: 4 panels
+All panels: straps both faces; chord studs built-up; panel aspect ratio h/w <= 1.9
+
+## Member / System Design Requirements (agent outputs per AISI S400 E3)
+- Strap size per story: strength from strap gross yield (Fy Ag); CONNECTIONS, chord studs, anchorage, and collectors designed for EXPECTED strap yield strength Ry Fy Ag (Ry = 1.1 for Gr. 50) - capacity design, not Omega_0
+- Chord studs: axial from gravity + overturning at expected strap force; check both tension chord (net section at gusset screws) and compression chord (built-up, torsional restraint)
+- Hold-downs at every panel end, every level: cumulative capacity-based tension
+- Strap-to-gusset screw groups: screw shear / tilting / bearing per AISI S100 Chapter J; verify strap gross yield governs over net-section fracture at the screw pattern (An Fu >= Ag Fy check)
+- Stud/track schedule per story with step-down
+- Drift: strap-braced walls are flexible - amplified drift vs 0.025hsx per story, INCLUDING anchorage/rod elongation contribution

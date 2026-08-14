@@ -1,0 +1,48 @@
+Structural System - Load-bearing CFS stud-wall building
+Lateral Force Resisting System - Interior lines: CFS shear walls with GYPSUM BOARD panels; exterior lines: agent to VERIFY gypsum adequacy under the governing wind and UPGRADE to WSP where needed (this decision is part of the test)
+Number of stories - 3; L-plan coastal motel with open breezeway walkways
+Story heights - Level 1: 10'-0"; Levels 2-3: 9'-4"; top of wall 28'-8"
+Analysis procedure - ELF seismic (trivial); WIND GOVERNS - full MWFRS design required
+Design standards - AISI S100, S240, S400, ASCE 7
+Project - Beachfront motel, exterior-corridor (walkway) type
+
+## Material Properties
+- CFS members: **ASTM A1003 Gr. 50** exterior/bearing; **Gr. 33** interior
+- Gypsum shear panels: 1/2 in. gypsum board both faces, No. 6 screws (capacities per AISI S400 gypsum tables - LOW values)
+- WSP option: 7/16 in. OSB where the agent upgrades lines
+- Floors: CFS joists @ 16 in. o.c. + WSP + gyp-crete; Roof: CFS trusses, 4:12 hip, high wind-uplift detailing
+- All exterior fasteners/hold-downs: hot-dip galvanized or stainless (coastal)
+
+## Gravity Loads
+| Load Type | Magnitude |
+|------------|-----------|
+| Floor Dead | 35 psf; Roof Dead 20 psf |
+| Cladding | 15 psf (fiber cement) |
+| Live | 40 psf rooms + 15 psf partitions; exterior walkways 100 psf (exit balcony); reducible |
+| Roof Live | 20 psf Lr; no snow |
+
+## Seismic / Wind Design Data
+- SDS = 0.25 g, SD1 = 0.10 g, Site Class D, Risk Cat II, SDC B
+- CFS walls w/ gypsum panels: **R = 2.0, Cd = 2.0, Omega_0 = 2.5** (bearing wall, "all other materials"); permitted in SDC B, 3 stories OK
+- WIND: **V = 150 mph (ult), Exposure D** (beachfront). MWFRS + C&C both required. Wind will govern every LFRS element; agent must still run the seismic case to show it.
+- Wind uplift: roof C&C zones, truss anchorage, and NET UPLIFT on shear-wall chords (0.6D + 0.6W combinations)
+
+## Building Plan Geometry (L-PLAN, BREEZEWAY)
+- Main bar: 160'-0" (E-W) x 34'-0"; room depth 26' + 8'-0" open exterior walkway along the north face (walkway roof/floor cantilevered or post-supported - agent choice, state it)
+- End wing: 34'-0" x 70'-0" extending south at the west end
+- Re-entrant corner at the junction
+- Room party walls @ 13'-4" o.c. (12 lines in the bar, 5 in the wing)
+- Breezeway pass-through at mid-bar: 13'-4" x 26' opening through the building at Level 1 ONLY (rooms continue above) - soft/weak story concern on the two interrupted wall lines
+
+## Shear-Wall Layout
+E-W: exterior south wall of bar + exterior walls of wing: continuous except windows (segments 8'-0" typ); corridor-side (north) wall of bar: segments between room doors
+N-S: party walls (gypsum, both faces) - all 17 lines available; end walls
+LEVEL 1 EXCEPTION: the two party walls at the breezeway have NO Level 1 segments (open) - transfer or redistribute (agent to resolve)
+
+## Member / System Design Requirements (agent outputs)
+- Line-by-line shear check: gypsum capacity vs wind demand; UPGRADE map (which lines become WSP, which stay gypsum) with a defensible rule - state the code basis for combining dissimilar sheathing in the same line vs in parallel lines (AISI S400 limits on summing dissimilar-material capacities)
+- Chord studs + hold-downs for the governing 0.6D+0.6W net-uplift case (dead load can't be counted at full value)
+- Truss-to-wall uplift connectors (per-truss force), wall-to-floor, floor-to-foundation continuous load path for uplift
+- C&C pressures for cladding/stud design of the tallest exterior studs (Level 1, Exposure D)
+- Breezeway: design the Level 2 transfer (walls above open bay) - header/strongback or designate adjacent lines to take the shear (flexible diaphragm redistribution limits!)
+- Drift under 10-yr wind: walkway guest comfort, 0.0025h per story suggested target (state assumption)

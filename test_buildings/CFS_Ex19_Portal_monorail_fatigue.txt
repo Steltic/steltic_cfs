@@ -1,0 +1,35 @@
+Structural System - Single-span CFS portal-frame maintenance building with a 2-ton underhung monorail
+Lateral Force Resisting System - Transverse: CFS portals; longitudinal: strap-braced side walls + roof bracing
+Number of stories - 1 (eave 22'-0", apex 27'-0")
+Analysis procedure - ELF; wind/crane cases govern. Analysis fidelity - Tier 1
+Design standards - AISI S100, AISI S240, ASCE 7; monorail service class per CMAA/MMA guidance (scoping)
+Project - Vehicle maintenance shop, Midwest US
+
+## Material Properties
+- Portals: back-to-back channels Gr. 50; monorail beam: HOT-ROLLED S-shape or W-shape (monorail beam itself is hot-rolled - out of CFS member scope, design by exception or scope out), HUNG from the CFS rafters at every frame plus midspan hangers between frames
+- Purlins/girts: Z-sections; panels through-fastened
+
+## Loads
+| Load Type | Magnitude |
+|------------|-----------|
+| Roof Dead | 5 psf + 3 psf collateral (monorail runway + services) |
+| Monorail | 2-ton (4 kip) capacity + 0.6 kip hoist/trolley; VERTICAL IMPACT 25%; LATERAL 20% of lifted load; LONGITUDINAL 10% (applied at the runway level) |
+| Roof Live / Snow | Lr 20 psf; pg = 30 psf |
+| Wind | V = 105 mph, Exposure C |
+| Seismic | SDS = 0.20 g, SD1 = 0.08 g, SDC B |
+
+## Building Geometry
+- Span 40'-0"; 8 frames at 20'-0" o.c.; length 140'-0"; monorail runs the full length at midspan, hook height 14'-0"
+
+## Design Requirements (agent outputs)
+- Crane load cases combined with D/L/S per ASCE 7 (crane vertical+lateral concurrent, longitudinal separate); rafter hanger points see concentrated cyclic loads
+- FATIGUE SCOPING (hard requirement): AISI S100 static design does NOT cover the cyclic hanger/connection demands - size statically, then SCOPE the fatigue check (stress range at hanger connections, service class, cycle count assumption) explicitly as a separate verification; never claim fatigue is covered by the static D/C
+- Local effects at hanger points: web crippling / pull-through at the CFS rafter under the hanger reaction (G5 + connection limit states); consider a load-distribution plate or bolted saddle
+- Serviceability: runway vertical deflection limit L/450 under wheel loads (state assumption); portal sway at hook height under lateral crane load
+- Monorail beam itself: hot-rolled - design by exception (cite AISC) or deliver as a scoped exclusion with reactions provided
+- Deliverables: frame + hanger schedule, crane case table, fatigue scope statement, runway reactions
+
+### Feasibility note (2026-07 revision)
+- Frame members may be built-up multi-ply channel assemblies (2- to 6-ply) and/or the
+  frame spacing may be tightened if the agent shows the stated arrangement cannot carry
+  the governing combos -- verify frame feasibility EARLY and flag any deviation.

@@ -1,0 +1,64 @@
+Structural System - Load-bearing Cold-Formed Steel (CFS) stud-wall building
+Lateral Force Resisting System - Flat-strap X-braced shear walls (diagonal tension-only straps)
+Number of stories - 6
+Story heights - First story 11 ft; typical upper stories (2-6) 10 ft (= 9 ft / 108 in. unbraced stud height L_x + 12 in. floor joist/deck depth); total height 61 ft
+Analysis procedure - ELF; SDC D governs (SDS = 0.80 g, SD1 = 0.35 g, Site Class D, Risk Category II, Ie = 1.0; source allows C or D - design for D)
+Design standards - AISI S100, AISI S240, AISI S400, ASCE 7
+Project - Student residence (dormitory)
+
+## Material Properties
+- CFS structural members: **ASTM A1003 / A653**, **Fy = 50 ksi**
+- Flat straps: **Fy = 50 ksi** (ASTM A1008 / A1011), expected-strength factor Ry = 1.1
+- Screws: **ASTM C1513** self-drilling, self-tapping
+
+## Seismic Design Parameters (per source)
+- Seismic Design Category: D (governing case)
+- Response modification coefficient R = 4.0 (light-gauge strap-braced walls)
+- System overstrength Omega0 = 2.0
+- Strap-braced walls designed as a ductile, tension-only system (straps yield before connections / boundary studs / hold-downs).
+
+## Gravity Loads (per source)
+| Load Type | Magnitude |
+|------------|-----------|
+| Floor Dead Load | 35 psf (joists, plywood, gypsum topping, ceiling) |
+| Roof Dead Load | 20 psf |
+| Floor Live Load | 40 psf (residential rooms) + 15 psf partitions |
+| Corridor Live Load | 80 psf |
+| Cladding Load | 15 psf (perimeter facade) |
+| Roof Live Load | 20 psf (Lr; reducible per Sec. 4.8) |
+
+### Additional Notes
+- Wind loads - V = 115 mph (Risk Cat II), Exposure C
+- LRFD load combinations (per source): 1.4D; 1.2D + 1.6L + 0.5(Lr or S); 1.2D + 1.0E + 1.0L + 0.2S.
+- Studs are continuously braced by sheathing about the weak axis / torsion; strong-axis flexural buckling (clear story height) governs gravity stud design (AISI S100 Chapter E; Effective Width Method).
+
+## Member Design Requirements
+- Stud thickness steps down with height; lower-story studs not lighter than stories above.
+- Boundary studs (columns) at bracing-bay ends designed for gravity plus the overstrength-amplified (Omega0) vertical component of the expected strap force.
+- Track sizing to match stud depth/thickness (agent to determine).
+
+## Building Plan Geometry
+- Building length / width: 180 ft (E-W) x 60 ft (N-S), double-loaded central corridor
+- X-bracing bay locations: 8 X-braced bays x 12 ft-0 in per exterior long wall per story PLUS 8 x 12 ft-0 in per corridor wall per story; N-S: 3 X-braced bays x 10 ft-0 in per end wall PLUS five interior party-wall braced lines at 30 ft o.c. (5 bays x 12 ft-0 in per line) -- all stacked over height
+- Consider these section-size groups (agent to determine the actual CFS sections; designations and thicknesses are the design output):
+
+Story	Exterior Gravity Studs	Flat Straps (X-brace)	Floor Joists	Stud Spacing (per source)
+1	A	D	F	12 in. o.c.
+2	A	D	F	12 in. o.c.
+3	B	D	F	12 in. o.c.
+4	B	E	F	12 in. o.c.
+5	C	E	F	16 in. o.c.
+6	C	E	F	16 in. o.c.
+
+(Stud tiers 1-2 / 3-4 / 5-6 and strap tiers 1-3 / 4-6 follow the documented step-down. Floor joists at 16 in. o.c., constant size at all levels - same span every floor.)
+
+- Drift target - 0.020 h_sx (ASCE 7 Table 12.12-1; 6 stories)
+
+## Lateral Strap-Bracing Design (CFS, AISI S400 - Seismic)
+- Flat steel straps in an "X" pattern, tension-only, sized so the strap yields along its length before the connections, boundary studs, or hold-downs (capacity-based design).
+- Expected tension strength P_e = Ry * T_n, with T_n = Fy * Ag (Ry = 1.1).
+- Strap width and thickness: agent to determine.
+
+## Connections
+- Strap-to-gusset and gusset-to-stud connections: self-drilling screws designed for the expected strap force (AISI S100 Chapter J - tilting/bearing, screw shear, net-section rupture).
+- Hold-downs / continuous tie-downs at bracing-bay ends sized for seismic overturning from the expected strap force chain (S400 E3); cumulative tension tracked level-by-level down all 6 stories, with anchorage at the foundation.

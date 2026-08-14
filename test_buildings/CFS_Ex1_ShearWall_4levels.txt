@@ -1,0 +1,55 @@
+Structural System - Load-bearing Cold-Formed Steel (CFS) stud-wall building
+Lateral Force Resisting System - CFS shear walls sheathed with Wood Structural Panels (WSP) or steel sheets
+Number of stories - 4
+Story heights - First story 10 ft 8 in (taller ground-floor common areas); typical upper stories (2-4) 9 ft 6 in; total height ~39 ft 2 in
+Analysis procedure - ELF; SDC D (SDS = 1.00 g, SD1 = 0.45 g, Site Class D, Risk Category II, Ie = 1.0)
+Design standards - AISI S100, AISI S240, AISI S400, ASCE 7
+Project - Multi-family residential building
+
+## Material Properties
+- CFS structural members: **ASTM A1003 / A653**; **Fy = 50 ksi** (load-bearing exterior studs, floor joists), **Fy = 33 ksi** (interior load-bearing studs, per source)
+- Shear-wall sheathing: Wood Structural Panel (plywood/OSB) or structural steel sheet (agent to determine)
+- Floor system: CFS joists with structural wood panels and 1 1/2 in. gypsum concrete topping
+- Screws: **ASTM C1513** self-drilling, self-tapping
+
+## Gravity Loads
+| Load Type | Magnitude |
+|------------|-----------|
+| Floor Dead Load | 35 psf (CFS joists, wood panels, 1 1/2 in. gypsum concrete topping, ceiling) |
+| Roof Dead Load | 20 psf |
+| Cladding Load | 15 psf (perimeter facade - fiber-cement/EIFS/metal panel) |
+| Floor Live Load | 40 psf (residential dwelling units) + 15 psf partition allowance; reducible per Sec. 4.7 |
+| Roof Live Load | 20 psf (Lr; reducible per Sec. 4.8) |
+
+### Additional Notes
+- Wind loads - V = 105 mph (Risk Cat II), Exposure B (suburban)
+- Studs are continuously braced by sheathing about the weak axis / torsion; strong-axis unbraced length = clear story height.
+
+## Member Design Requirements
+- Stud thickness steps down with height in two groups (levels 1-2 heavier, levels 3-4 lighter); lower-story studs not lighter than stories above.
+- Built-up / back-to-back members (e.g., headers): connect along length per AISI S240; fastener schedule: pairs of No. 10 screws at 12 in. o.c. unless the design demands closer.
+- Track sizing to match stud depth/thickness (agent to determine)
+
+## Building Plan Geometry
+- Building length / width: 160 ft (E-W) x 62 ft (N-S), double-loaded central corridor (corridor 6 ft-0 in wide, centered); interior mid-unit bearing lines each side of the corridor (floor joists span ~14 ft; single C-joists cannot span the full 28-ft unit depth)
+- Shear-wall locations: both exterior long walls (6 segments x 8 ft-0 in per wall per story) plus both corridor walls (6 segments x 8 ft-0 in per wall per story); N-S: end (short) walls 2 segments x 10 ft-0 in each PLUS four interior party-wall shear lines at 32 ft o.c. (4 segments x 10 ft-0 in per line, stacked)
+- Consider these section-size groups (agent to determine the actual CFS sections; designations and thicknesses are the design output):
+
+Wall / Floor Element	Section (agent to determine)	Spacing (per source)
+Exterior load-bearing wall studs	A	16 in. o.c.
+Interior load-bearing wall studs	B	24 in. o.c.
+Floor joists	C	12 in. o.c.
+Header assemblies over openings	D (back-to-back)	-
+Shear-wall sheathing	E	(WSP or steel sheet)
+
+(Stud sizes step down with height: group levels 1-2 and levels 3-4 for elements A and B; joists and headers constant over height.)
+
+- Drift target - 0.025 h_sx (ASCE 7 Table 12.12-1, light-frame ≤4 stories with interior wall finishes)
+
+## Shear-Wall Design (CFS, AISI S400)
+- Sheathing type (WSP or steel sheet), thickness, and fastener edge/field schedule: agent to determine per AISI S400 nominal shear-wall capacity tables (seismic column).
+- Boundary studs (chord/post) at wall ends sized for overturning tension/compression.
+
+## Connections
+- Framing connections: No. 10-16 self-drilling, self-tapping screws (ASTM C1513); agent to determine counts per demand.
+- Hold-downs at shear-wall chords each story; anchorage to foundation at the base; cumulative overturning tension tracked level-by-level.

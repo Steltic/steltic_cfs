@@ -1,0 +1,54 @@
+Structural System - Load-bearing Cold-Formed Steel (CFS) stud-wall building over a concrete podium
+Lateral Force Resisting System - Steel sheet-sheathed CFS shear walls (exterior walls + both corridor walls); concrete shear walls in the podium story
+Number of stories - 8 stories of CFS framing over a 1-story reinforced concrete podium (9 stories total)
+Story heights - Level 1 concrete podium (lobby/parking) 15 ft (tall transfer level); CFS levels 2-8 (residential) 9 ft 8 in per floor; total height ~83 ft
+Analysis procedure - ELF, two-stage analysis (ASCE 7 12.2.3.2 - eligibility to be verified); SDC C (SDS = 0.40 g, SD1 = 0.16 g, Site Class C, Risk Category II, Ie = 1.0)
+Design standards - AISI S100, AISI S240, AISI S400, ASCE 7, and local building codes
+Project - Assisted living facility (residential)
+
+## Material Properties
+- CFS structural members: **ASTM A1003 / A653**, **Fy = 50 ksi**
+- Floor system: proprietary light-gauge steel joist system (e.g., Hambro D500) with a 3 in. concrete slab
+- Screws: **ASTM C1513** self-drilling, self-tapping
+- Concrete podium: reinforced concrete (podium design out of scope - concrete, not CFS)
+
+## Gravity Loads
+| Load Type | Magnitude |
+|------------|-----------|
+| Floor Dead Load | 50 psf (proprietary joist system + 3 in. concrete slab) |
+| Roof Dead Load | 20 psf |
+| Cladding Load | 15 psf (perimeter facade) |
+| Floor Live Load | 40 psf (resident rooms) + 15 psf partition allowance; reducible per Sec. 4.7 |
+| Roof Live Load | 20 psf (Lr; reducible per Sec. 4.8) |
+
+### Additional Notes
+- Wind loads - V = 110 mph (Risk Cat II), Exposure B
+- 8 stories of cumulative gravity load are carried by the CFS bearing walls down to the concrete podium transfer level.
+
+## Member Design Requirements
+- Stud thickness steps down with height; lower-story studs not lighter than stories above.
+- Lower-level studs are heavy built-up sections (nested track-in-stud or back-to-back) to resist high cumulative axial load and prevent torsional buckling.
+- Track sizing to match stud depth/thickness (agent to determine).
+
+## Building Plan Geometry
+- Building length / width: 216 ft (E-W) x 64 ft (N-S), double-loaded central corridor; CFS footprint matches the podium
+- Bearing-wall / shear-wall layout: exterior long walls and both corridor walls are bearing + shear lines (steel sheet segments 4 ft-0 in to 8 ft-0 in as required); transverse demising walls at 28 ft o.c. are bearing walls, and EVERY SECOND demising line (56 ft o.c.) plus both end walls are also N-S steel-sheet shear lines (segments 4 ft-0 in to 8 ft-0 in as required, stacked)
+- Consider these section-size groups (agent to determine the actual CFS sections; designations and thicknesses are the design output):
+
+Story	Wall Studs	Floor Joists	Stud Spacing (per source)
+1	A (built-up)	E	12 in. o.c.
+2	A (built-up)	E	12 in. o.c.
+3	A (built-up)	E	12 in. o.c.
+4	B	E	16 in. o.c.
+5	B	E	16 in. o.c.
+6	C	E	16 in. o.c.
+7	C	E	16 in. o.c.
+8	D	E	16 in. o.c.
+
+(Stud-thickness tiers - stories 1-3, 4-5, 6-7, and 8 - follow the documented step-down in the source. Floor joists are a proprietary system (Hambro D500 style), constant size at all levels - same span every floor.)
+
+- Drift target - 0.020 h_sx (ASCE 7 Table 12.12-1); CFS drift measured from the top of podium (CFS base)
+
+## Connections
+- Built-up stud connections: nested (track-in-stud) or back-to-back, connected along their length with pairs of No. 10 screws at 6 in. o.c. to prevent torsional buckling.
+- Podium attachment: CFS bottom tracks anchored to the podium slab with cast-in anchors; shear-wall hold-down / tie-down rods terminate in podium embeds; upper-portion reactions amplified per the two-stage procedure ((R_upper/rho_upper)/(R_lower/rho_lower)) for podium design handoff.

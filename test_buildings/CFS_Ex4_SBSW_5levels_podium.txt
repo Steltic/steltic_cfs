@@ -1,0 +1,57 @@
+Structural System - Load-bearing Cold-Formed Steel (CFS) stud-wall building over a concrete podium
+Lateral Force Resisting System - Special Bolted Shear Walls (SBSW) or structural steel sheet-sheathed shear walls
+Number of stories - 4 stories of CFS framing over a 1-story concrete podium (5 stories total)
+Story heights - Level 1 concrete podium (retail/commercial) 15 ft; CFS levels 2-5 (residential) 10 ft per floor; total height ~55 ft
+Analysis procedure - ELF (two-stage eligibility per ASCE 7 12.2.3.2 to be verified); SDC D (SDS = 1.00 g, SD1 = 0.50 g, Site Class D, Risk Category II, Ie = 1.0)
+Design standards - AISI S100, AISI S240, AISI S400, ASCE 7
+Project - Mixed-use building, San Francisco Bay Area, CA
+
+## Material Properties
+- CFS structural members: **ASTM A1003 / A653**, **Fy = 50 ksi**
+- Shear-wall sheathing: structural steel sheet, **ASTM A653 Grade 33**, applied to one side of the boundary studs (sheet thickness: agent to determine)
+- Floor diaphragm: corrugated steel deck (1.5 in. deep) with 2 1/2 in. lightweight concrete topping (deck gauge: agent to determine)
+- Screws: **ASTM C1513** self-drilling, self-tapping
+- Concrete podium: reinforced concrete (podium design out of scope - concrete, not CFS)
+
+## Gravity Loads
+| Load Type | Magnitude |
+|------------|-----------|
+| Floor Dead Load | 45 psf (1.5 in. corrugated deck + 2 1/2 in. lightweight concrete topping + framing) |
+| Roof Dead Load | 20 psf |
+| Cladding Load | 15 psf (perimeter facade) |
+| Floor Live Load | 40 psf (residential levels 2-5) + 15 psf partition allowance; reducible per Sec. 4.7 |
+| Roof Live Load | 20 psf (Lr; reducible per Sec. 4.8) |
+
+### Additional Notes
+- Wind loads - V = 95 mph (Risk Cat II), Exposure C
+- Seismic design per AISI S400 (high-seismic SDC D); shear walls detailed for ductility.
+
+## Member Design Requirements
+- Stud thickness steps down with height in two groups (CFS levels 2-3 heavier, levels 4-5 lighter); lower-story studs not lighter than stories above.
+- Boundary (chord) studs at wall ends are back-to-back built-up sections sized for seismic overturning.
+- Track sizing to match stud depth/thickness (agent to determine).
+
+## Building Plan Geometry
+- Building length / width: 140 ft (E-W) x 70 ft (N-S); CFS footprint matches the podium
+- Shear-wall locations: E-W: exterior long walls (8 segments x 8 ft-0 in per wall per story) plus both corridor walls (12 segments x 8 ft-0 in per wall per story); N-S: end walls (4 segments x 8 ft-0 in each) plus four interior transverse party-wall lines at 28 ft o.c. (8 segments x 8 ft-0 in per line per story), all stacked over height
+- Consider these section-size groups (agent to determine the actual CFS sections; designations and thicknesses are the design output):
+
+Wall / Floor Element	Section (agent to determine)	Spacing (per source)
+Boundary studs (at wall ends)	A (back-to-back)	-
+Intermediate shear-wall studs	B	12 in. o.c.
+Gravity wall studs	C	16 in. o.c.
+Shear-wall sheathing (steel sheet, one side)	D	-
+Floor diaphragm deck	E	-
+
+(Section sizes step down with height in two groups - CFS levels 2-3 and 4-5 - for elements A, B, C; sheathing and deck schedules may also lighten at the upper group.)
+
+- Drift target - 0.020 h_sx (ASCE 7 Table 12.12-1; 5 stories total)
+
+## Shear-Wall Design (CFS, AISI S400 - Seismic)
+- Steel sheet-sheathed (or special bolted) shear walls designed as the ductile, energy-dissipating element.
+- Sheet thickness and seismic fastener schedule: agent to determine per AISI S400 nominal shear-wall capacity.
+- Boundary studs, collectors, and anchorage designed for capacity-amplified shear-wall forces.
+
+## Connections
+- Seismic sheathing fasteners: No. 8-18 self-drilling screws at 2 in. o.c. along the perimeter of the steel sheet (to maximize shear capacity and ductility).
+- Continuous tie-down (overturning) system: continuous rod system (e.g., ATS / Simpson Strong-Tie) ranging from 1 1/2 in. dia. at the base to 5/8 in. dia. at the roof, with take-up (shrinkage-compensating) devices at each level; rod elongation included in the drift calculation.

@@ -1,0 +1,47 @@
+Structural System - Load-bearing CFS stud-wall building
+Lateral Force Resisting System - CFS shear walls with WSP sheathing (Type I), continuous rod hold-downs
+Number of stories - 6 (west block) stepping to 4 (east block); single long bar with a mid-length massing step and a 240-ft total length
+Story heights - Level 1: 10'-0"; Levels 2-6: 9'-6"; west roof 57'-6"; east roof 38'-6"
+Analysis procedure - ELF; SDC D
+Design standards - AISI S100, S240, S400, ASCE 7
+Project - Extended-stay hotel
+
+## Material Properties
+- CFS members: **ASTM A1003 Gr. 50, Fy = 50 ksi**
+- Sheathing: 7/16 in. OSB one side; No. 8 screws
+- Floors: CFS joists @ 16 in. o.c. + WSP + 1 1/2 in. gyp-crete
+- Roofs: west block flat CFS joist roof with a 60' x 20' amenity terrace zone adjacent to the step (see loads); east block: CFS truss gable 3:12
+- Continuous rod hold-downs; screws C1513
+
+## Gravity Loads
+| Load Type | Magnitude |
+|------------|-----------|
+| Floor Dead | 38 psf; West Roof Dead 25 psf (pavers zone +25 psf over the terrace 60' x 20'); East Roof Dead 18 psf (trusses) |
+| Cladding | 16 psf |
+| Live | 40 psf guestrooms + 15 psf partitions; 100 psf corridors; terrace 100 psf (assembly) |
+| Roof Live | 20 psf Lr; Snow pg = 25 psf; DRIFT on the east gable roof against the 19-ft step wall |
+
+## Seismic / Wind Design Data
+- SDS = 0.92 g, SD1 = 0.46 g, Site Class D, Risk Cat II, Ie = 1.0, SDC D
+- CFS walls w/ WSP: **R = 6.5, Cd = 4, Omega_0 = 3**; SDC D limit 65 ft (57.5 ft OK)
+- Wind: V = 105 mph, Exposure B
+- Diaphragms flexible; tributary distribution
+- Vertical irregularity at the step (mass/stiffness); with flexible diaphragms and ELF, agent must justify treatment (two-block idealization with a shared line vs one stepped model)
+
+## Building Plan Geometry (STEPPED BAR, 240 FT LONG)
+- Single bar: 240'-0" (E-W) x 60'-0" (N-S)
+- WEST BLOCK: 140'-0" long x 6 stories; EAST BLOCK: 100'-0" long x 4 stories; shared STEP WALL line at x = 140'
+- Double-loaded corridor full length; party walls @ 14'-0" o.c.
+- NO expansion/seismic joint shown - agent must assess the 240-ft length (thermal/shrinkage movement of gyp-crete topping + diaphragm demand) and either justify jointless construction or place a joint (if a joint is placed, EACH block needs a complete LFRS - redo wall lines accordingly and say so)
+
+## Shear-Wall Layout (Type I, WSP; stacked full height of their block)
+E-W: both exterior long walls: 12'-0" segments - west block 6 per wall, east block 4 per wall; corridor walls: 8'-0" segments where door-free (agent assigns; plan on ~8 per corridor wall per block)
+N-S: end walls (west, east): 2 x 12'-0" segments; STEP WALL (the exposed 19-ft-tall wall face above the east roof at x = 140'): full-height N-S line, 3 x 14'-0" segments serving both blocks; party walls EVERY line (14 ft o.c.): 2 x 12'-0" per line
+
+## Member / System Design Requirements (agent outputs)
+- Stud schedule step-down (6 tiers max west block, 4 east); chords; rod schedule
+- Sheathing fastener schedule per line per story
+- The STEP: the shared N-S wall line collects from BOTH blocks with different diaphragm elevations on each side; design the collectors and the 19-ft exposed step wall for out-of-plane wind + in-plane shear + snow-drift surcharge delivered from the east gable
+- Truss uplift ties (east); terrace load path (west Level 6)
+- Drift per story per block vs 0.025hsx
+- Report the movement-joint decision with a quantitative basis (e.g., estimated shrinkage + thermal strain over 240 ft vs diaphragm/chord capacity)

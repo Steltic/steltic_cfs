@@ -1,0 +1,30 @@
+Structural System - CFS portal-frame agricultural building with ONE PERMANENTLY OPEN SIDE (equipment access, no doors)
+Lateral Force Resisting System - Transverse: CFS portals; longitudinal: strap-braced end walls + the single solid side wall; open side has NO panels below the eave strut
+Number of stories - 1 (eave 18'-0", apex 24'-0")
+Analysis procedure - ELF; wind governs - ENCLOSURE CLASSIFICATION is the pivotal step. Analysis fidelity - Tier 1
+Design standards - AISI S100, AISI S240, ASCE 7 (26.2 enclosure definitions; 26.13 internal pressure)
+Project - Machinery shed, western Nebraska
+
+## Material Properties
+- Portals: built-up channel assemblies Gr. 50, 2- to 6-ply (6 x 1400S300-118 class is the expected order at these spans/bays -- agent selects and verifies early); purlins/girts Z-sections; straps A1008 Gr. 50
+- Cladding: through-fastened panel on roof, both end walls, and ONE side wall; open side: eave strut + jamb columns only
+
+## Loads
+| Load Type | Magnitude |
+|------------|-----------|
+| Roof Dead | 4.5 psf + 1 psf collateral |
+| Snow | pg = 30 psf; drift against the solid side-wall parapet none (no parapet); unbalanced gable cases |
+| Wind | V = 115 mph, Exposure C - CLASSIFY the enclosure per 26.2: one full side open (opening area test) makes this PARTIALLY ENCLOSED (or open - the agent must run the definitions, not assume): GCpi = +/-0.55 if partially enclosed |
+| Seismic | SDS = 0.25 g, SDC B (wind governs - confirm) |
+
+## Geometry
+- Span 48'-0"; 9 frames at 22'-0" o.c.; length 176'-0"; the full 176' x 18' north side is open
+- End walls each have one 20'-0" x 14'-0" door opening (closed doors, but include the door-open scenario in the enclosure sensitivity)
+
+## Design Requirements (agent outputs)
+- ENCLOSURE CLASSIFICATION drives the whole design: run the 26.2 open/partially-enclosed tests with the stated openings. Partially enclosed internal pressure (+/-0.55 GCpi) roughly TRIPLES the net C&C demands on the roof and solid-wall panels vs enclosed, and adds large net uplift to the frames - a silently "enclosed" design fails this brief
+- Internal pressure acts on the UNDERSIDE of the roof panels and the INSIDE of the solid wall - purlin uplift with free-flange compression, girt reversal on the solid side
+- Torsional wind response: the solid side wall + end straps resist longitudinal load, but transverse wind on the open side has no wall to react through - portals take it all; the eave strut collects the open-side edge and drags to the end walls (collector force, deliverable)
+- Frame uplift at the open-side column bases (0.9D + 1.0W with internal pressure) - anchor tension
+- Door-open sensitivity on the end walls: state whether classification changes and the design envelope covers it
+- Deliverables: enclosure classification worksheet (areas, tests, result), frame + purlin/girt schedules by pressure case, eave-strut collector design, strap schedules, base reactions incl. governing uplift
