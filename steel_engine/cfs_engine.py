@@ -45,7 +45,8 @@ except Exception:
 
 def story_weight(cfg, k):
     """Seismic weight (kip) at level k (1..N, N = roof). Mirrors engine3d.floor_w: area dead +
-    tributary cladding + 20% flat snow at the roof when snow > 0.
+    tributary cladding + 15% flat snow at the roof ONLY where pf > 45 psf (ASCE 7-22
+    12.7.2 item 4; below 45 psf snow is excluded from W).
     Optional cfg keys (irregular T/U/L plans -- pair with wall_line.fit_positions):
       area_sf       -- TRUE floor area (default Lx*Ly) so W is exact on a bounding-box model
       perimeter_ft  -- TRUE cladding perimeter (default 2*(Lx+Ly))
@@ -61,8 +62,8 @@ def story_weight(cfg, k):
     per = cfg.get("perimeter_ft") or (2.0 * (Lx + Ly))
     h = cfg["heights_ft"][k - 1]
     w += cfg.get("clad", 0.0) * per * (h / 2.0 if roof else h) / 1000.0
-    if roof and cfg.get("snow", 0.0) > 0:
-        w += 0.2 * cfg["snow"] * A / 1000.0
+    if roof and cfg.get("snow", 0.0) > 45.0:
+        w += 0.15 * cfg["snow"] * A / 1000.0     # 12.7.2 item 4: 15% of pf where pf > 45 psf
     return w
 
 

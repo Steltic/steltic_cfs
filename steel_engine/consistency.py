@@ -457,9 +457,63 @@ def _system_checks_issues(cfg, pkg):
                     out.append("system '%s' requires check: %s -- not found in capacity_design (add it, computed)"%(cfg.get("system"),label))
     return out
 
+_CD_GATE_SYSTEMS = ("strap_braced", "wsp_shearwall", "steelsheet_wall")   # R>3 wall systems
+
+
+def _capacity_design_numeric_issues(cfg, pkg):
+    """NUMERIC capacity-design gate (R>3 wall systems): a hold-down or chord DESIGN demand
+    that is <= 1.05x its ELF seed (T_bay_seed_kip / T_cum_kip) means the capacity-design
+    amplification was never applied -- FAIL, not warn (the verified failure mode: reusing
+    the raw ELF seed as the final anchorage demand while citing the capacity-design clause,
+    ~2x undersized). Robust to missing keys: entries without a numeric design demand
+    (an explicit demand field, or DC x capacity) fall through to the existing text-evidence
+    checks unchanged."""
+    out=[]
+    if not isinstance(cfg, dict) and not isinstance(pkg, dict): return out
+    sysname=str(((cfg or {}) if isinstance(cfg,dict) else {}).get("system")
+                or (pkg or {}).get("system") or "").lower()
+    if sysname not in _CD_GATE_SYSTEMS or not isinstance(pkg, dict): return out
+
+    def _design_demand(e):
+        for k in ("T_design_kip","design_T_kip","T_demand_kip","demand_kip","Tu_kip",
+                  "T_u_kip","demand"):
+            v=_num(e.get(k))
+            if v is not None: return v, k
+        dc=_num(e.get("DC")); cap=_num(e.get("capacity"))
+        if dc is not None and cap is not None and cap > 0:
+            return dc*cap, "DC x capacity"
+        return None, None
+
+    entries=[("hold-down", h) for h in (pkg.get("holddowns") or []) if isinstance(h,dict)]
+    for m in (pkg.get("members") or []) + (pkg.get("studs") or []):
+        if isinstance(m,dict) and "chord" in (str(m.get("id",""))
+                                              +str((m.get("inputs") or {}).get("role",""))
+                                              +str(m.get("role",""))).lower():
+            entries.append(("chord", m))
+    for kind, e in entries:
+        if e.get("waived"): continue
+        seed=_num(e.get("T_bay_seed_kip"))
+        if seed is None: seed=_num(e.get("T_cum_kip"))
+        if seed is None or seed <= 0: continue
+        d, src=_design_demand(e)
+        if d is None: continue                      # missing data -> existing behavior
+        Tw=_num(e.get("T_wind_kip"))
+        if Tw is not None and Tw > seed and d >= 0.99*Tw:
+            continue                                # wind governs and the demand reflects it
+        if d <= 1.05*seed:
+            out.append("[%s %s] FAIL: capacity-design amplification not applied: demand "
+                       "%.1f kip (%s) equals ELF seed %.1f kip; S400 requires expected-"
+                       "strength (capped at overstrength-level) design of chords/hold-downs/"
+                       "anchorage -- design to min(Omega_E*Vn stack, T_cd_seed_kip)"
+                       %(kind, e.get("id"), d, src, seed))
+    return out
+
+
 def _height_limit_issues(cfg):
     """Table 12.2-1 height limits via the CFS system table (65 ft walls/straps, 35 ft SBMF in
-    SDC D-F; gypsum NP in E/F). SDC proxied from SDS/S1 as elsewhere in the repo."""
+    every SDC B-F; gypsum NP in E/F). SDC from the CANONICAL cfs_systems.sdc (Tables
+    11.6-1 AND 11.6-2, worse governs, incl. the S1>=0.75 E/F override) -- the old proxy
+    ignored SD1 and mis-binned SD1-governed sites."""
     out=[]
     if not isinstance(cfg, dict): return out
     s=cfg.get("seis") or {}
@@ -469,13 +523,11 @@ def _height_limit_issues(cfg):
         Hft=[h/12.0 for h in H]
     if not Hft: return out
     hn=sum(Hft); SDS=float(s.get("SDS",0) or 0); S1=float(s.get("S1",0) or 0)
+    SD1=float(s.get("SD1",0) or 0)
     sysname=str(cfg.get("system") or "").lower()
-    if SDS < 0.33:  sdc="B"
-    elif SDS < 0.50: sdc="C"
-    elif S1 >= 0.75: sdc="E"
-    else: sdc="D"
     try:
         import cfs_systems as _CS
+        sdc=_CS.sdc(SDS, SD1, S1, str(cfg.get("risk_cat","II")))
         if sysname in _CS.SYSTEMS:
             ok, msg = _CS.height_check(sysname, sdc, hn)
             if not ok:
@@ -665,6 +717,7 @@ def check(name, root=None, pkg=None, verbose=True):
     issues += _consultancy_issues(_dcfg, pkg)               # Tier A/B real-world guards
     issues += _named_not_computed_issues(pkg)               # R9 named-not-computed
     issues += _system_checks_issues(_dcfg, pkg)             # per-system S400 required checks
+    issues += _capacity_design_numeric_issues(_dcfg, pkg)   # NUMERIC gate: demand vs ELF seed (R>3 walls)
     issues += _cfs_slot_issues(_dcfg, pkg)                  # CFS slot screens (walls/HDs/TypeII/uplift/gates)
     issues += _completeness_issues(pkg)
     if verbose:
@@ -712,6 +765,32 @@ def _selftest():
                  "unresolved drift limit", "600S162-68", "65", "look like INCHES",
                  "connections list is empty", "tributary"):
         assert want in blob, "missing screen: %s\n%s" % (want, blob)
+    # canonical SDC: SD1-governed site (SDS=0.30 says B, SD1=0.25 says D) must use the
+    # WORSE bin; the old SD1-blind proxy called this SDC B and missed the gypsum 35-ft cap
+    _sd1cfg = dict(cfg, system="gypsum_wall", heights_ft=[10.0] * 4,
+                   seis=dict(SDS=0.30, SD1=0.25, S1=0.10, R=2.0, Ie=1.0))
+    assert any("35" in i for i in _height_limit_issues(_sd1cfg)), \
+        "SD1-governed SDC D must trip the gypsum 35-ft screen"
+    # NUMERIC capacity-design gate (R>3 wall systems): demand == ELF seed must FAIL ...
+    cd_bad = dict(system="wsp_shearwall",
+                  holddowns=[dict(id="hd-X-A", T_cum_kip=27.0, T_cd_seed_kip=51.9,
+                                  device_class="rod", limit_state="tension", cited="S400",
+                                  basis="cumulative tension", DC=0.90, capacity=30.0)])
+    gate = _capacity_design_numeric_issues(dict(cfg, system="wsp_shearwall"), cd_bad)
+    assert gate and "capacity-design amplification not applied" in gate[0], gate
+    # ... amplified demand passes, wind-governed demand passes, missing data stays silent
+    cd_ok = dict(system="wsp_shearwall",
+                 holddowns=[dict(id="hd-X-A", T_cum_kip=27.0, T_design_kip=51.9, DC=0.9,
+                                 capacity=57.7)])
+    assert _capacity_design_numeric_issues(dict(cfg, system="wsp_shearwall"), cd_ok) == []
+    cd_wind = dict(system="wsp_shearwall",
+                   holddowns=[dict(id="hd-X-A", T_cum_kip=20.0, T_wind_kip=28.0,
+                                   T_design_kip=28.0)])
+    assert _capacity_design_numeric_issues(dict(cfg, system="wsp_shearwall"), cd_wind) == []
+    cd_na = dict(system="wsp_shearwall", holddowns=[dict(id="hd-X-A", T_cum_kip=27.0)])
+    assert _capacity_design_numeric_issues(dict(cfg, system="wsp_shearwall"), cd_na) == []
+    assert _capacity_design_numeric_issues(dict(cfg, system="gypsum_wall"), cd_bad) == [], \
+        "gate is scoped to R>3 wall systems only"
     # a clean package + cfg raises none of the CFS screens
     good = dict(
         wall_lines=[dict(id="wall-X-A-s1", sheathing="7/16 OSB", fastener_schedule="#8@4/12",

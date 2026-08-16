@@ -20,6 +20,85 @@ COMBOS_NOTE = ("ASCE 7-22 2.3 LRFD; seismic cases carry (1.2+0.2SDS)D and 0.9-0.
 RY_BY_FY = {33: 1.5, 50: 1.1}
 RT_BY_FY = {33: 1.2, 50: 1.1}
 
+# R>3 wall systems (from cfs_systems.SYSTEMS) that get NUMERIC capacity-design seeds:
+# chords/hold-downs/anchorage are designed for expected strength capped at Omega_0-level,
+# never the raw ELF seed (S400 E1/E2/E3).
+CD_WALL_SYSTEMS = ("strap_braced", "wsp_shearwall", "steelsheet_wall")
+
+
+def _rho_seismic(cfg):
+    """Numeric redundancy factor rho (ASCE 7-22 12.3.4): 1.3 by default in SDC D/E/F
+    (canonical cfs_systems.sdc from SDS/SD1/S1 + risk category), 1.0 in SDC B/C.
+    cfg['rho'] overrides (e.g. the 12.3.4.2 conditions are met -> 1.0).
+    rho multiplies STRENGTH-design E only -- never drift (12.3.4.1 item 2), diaphragm
+    Fpx (item 7), or Omega_0/expected-strength capacity-design quantities (item 5)."""
+    if cfg.get("rho") is not None:
+        return float(cfg["rho"])
+    s = cfg["seis"]
+    cat = CS.sdc(s.get("SDS", 0.0), s.get("SD1", 0.0), s.get("S1", 0.0),
+                 cfg.get("risk_cat", "II"))
+    return 1.3 if cat in ("D", "E", "F") else 1.0
+
+
+def _om0_of(cfg):
+    """Omega_0 from cfg['seis'], else the declared system's Table 12.2-1 value.
+    NO silent fallback -- there is no generic CFS Omega_0 default."""
+    s = cfg["seis"]
+    if s.get("Om0") is not None:
+        return float(s["Om0"])
+    sysname = cfg.get("system")
+    if sysname in CS.SYSTEMS:
+        return float(CS.SYSTEMS[sysname]["Om0"])
+    raise KeyError("cfg['seis']['Om0'] missing and cfg['system']=%r is not in the CFS "
+                   "system table -- declare Omega_0 from ASCE 7-22 Table 12.2-1 "
+                   "(no default exists)" % (sysname,))
+
+
+def _om0_eff(cfg):
+    """(Om0_eff, Om0, basis note). Table 12.2-1 footnote b: where Om0 >= 2.5, Om0 is
+    permitted to be reduced by 0.5 for structures with FLEXIBLE diaphragms."""
+    Om0 = _om0_of(cfg)
+    flex = str(cfg.get("diaphragm", "flexible")).lower() == "flexible"
+    if flex and Om0 >= 2.5:
+        return Om0 - 0.5, Om0, ("Om0_eff = Om0 - 0.5 = %.2f (Table 12.2-1 footnote b: "
+                                "flexible diaphragm, Om0 >= 2.5)" % (Om0 - 0.5))
+    return Om0, Om0, "Om0_eff = Om0 = %.2f (footnote b reduction not applicable)" % Om0
+
+
+def _chord_dead_relief(cfg, line, dirn, w_bay_ft):
+    """Dead-load relief AVAILABLE at a chord/hold-down (kip) -- NOT taken in the T_cd seed:
+    (0.9 - 0.2*SDS) * D_chord_trib, with the EXPLICIT chord tributary = half-bay
+    (w_bay/2 along the wall) x half joist span, D summed over the stories above.
+    Joist span = cfg['joist_span_ft'] where declared, else the largest spacing to an
+    adjacent lateral line in the same direction group (documented surrogate).
+    Returns (kip or None, note)."""
+    SDS = cfg["seis"]["SDS"]
+    span = cfg.get("joist_span_ft")
+    how = "cfg['joist_span_ft']"
+    if span is None:
+        lines = cfg["lines_x"] if dirn == "X" else cfg["lines_y"]
+        pos = sorted(set(round(float(l.pos), 6) for l in lines))
+        p = round(float(line.pos), 6)
+        if p in pos:
+            i = pos.index(p)
+            gaps = ([pos[i] - pos[i - 1]] if i > 0 else []) + \
+                   ([pos[i + 1] - pos[i]] if i < len(pos) - 1 else [])
+            if gaps:
+                span = max(gaps)
+                how = "largest adjacent lateral-line spacing (surrogate)"
+    if span is None or not w_bay_ft:
+        return None, ("chord tributary not derivable from cfg geometry (no joist_span_ft, "
+                      "no adjacent line) -- agent computes (0.9-0.2SDS)*D over half-bay x "
+                      "half joist span and documents it before taking any relief")
+    N = cfg["stories"]
+    D_trib = 0.0
+    for k in range(1, N + 1):
+        D = cfg["D_roof"] if k == N else cfg["D_floor"]
+        D_trib += D * (w_bay_ft / 2.0) * (span / 2.0) / 1000.0
+    return round((0.9 - 0.2 * SDS) * D_trib, 2), \
+        ("(0.9-0.2*SDS)*D_chord_trib; chord trib = half-bay (%.1f ft) x half joist span "
+         "(%.1f ft, %s), D summed over %d stories" % (w_bay_ft / 2.0, span / 2.0, how, N))
+
 
 # ---------------- Stage 3b: wall-path wind machinery + LRFD combo enumeration ----------------
 
@@ -38,6 +117,7 @@ def wind_story_forces(cfg, direction):
     # REQUIRED for partially enclosed / open-front wall briefs, where +/-0.55 internal
     # pressure cannot be represented by the enclosed default
     Cnet, G, Kd = w.get("Cnet", 1.3), 0.85, 0.85
+    Kzt, Ke = w.get("Kzt", 1.0), w.get("Ke", 1.0)
     z = 0.0
     forces = {}
     N = cfg["stories"]
@@ -45,11 +125,15 @@ def wind_story_forces(cfg, direction):
         h = cfg["heights_ft"][k - 1]
         trib = h / 2.0 + (cfg["heights_ft"][k] / 2.0 if k < N else 0.0)
         z += h
-        qz = 0.00256 * CF._kzf(z, w.get("exposure", "C")) * Kd * w["V"] ** 2
+        # ASCE 7-22 Eq. 26.10-1: qz = 0.00256*Kz*Kzt*Ke*V^2; Kd applied at the pressure
+        # equation (Eq. 27.3-1) -- folded into the same product (numerically identical)
+        qz = 0.00256 * CF._kzf(z, w.get("exposure", "C")) * Kzt * Ke * Kd * w["V"] ** 2
         forces[k] = qz * G * Cnet * B * trib / 1000.0
     basis = dict(V_mph=w["V"], exposure=w.get("exposure", "C"),
-                 note="SEED: MWFRS net wall coeff G*(0.8+0.5)=%.2f, Kd=0.85, qz stepped; "
-                      "agent verifies per ASCE 7 Ch. 27" % (G * 1.3))
+                 note="SEED: MWFRS net wall coeff G*(0.8+0.5)=%.2f; qz = 0.00256*Kz*Kzt*Ke*"
+                      "V^2 (Eq. 26.10-1, Kzt=%.2f Ke=%.2f) with Kd=0.85 applied at the "
+                      "pressure eq. (27.3-1), qz stepped; agent verifies per ASCE 7 Ch. 27"
+                      % (G * 1.3, Kzt, Ke))
     return forces, basis
 
 
@@ -60,26 +144,35 @@ def enumerate_combos(cfg):
     the REQUIRED 0.9D+1.0W net-uplift anchorage case."""
     s = cfg["seis"]
     SDS = s["SDS"]
-    rho = cfg.get("rho", 1.3 if s.get("SDS", 0) >= 0.5 else 1.0)
+    rho = _rho_seismic(cfg)          # 12.3.4 via canonical SDC; cfg['rho'] overrides
+    # 7-22 2.3.1: S principal carries 1.0 (was 1.6); companion S is 0.3 (was 0.5).
+    # Lr KEEPS 1.6 principal / 0.5 companion -- the 7-22 factor change is snow-only.
     out = [dict(label="1.4D", D=1.4),
-           dict(label="1.2D+1.6L+0.5(Lr or S)", D=1.2, L=1.6, LrS=0.5),
-           dict(label="1.2D+1.6(Lr or S)+L", D=1.2, L=1.0, LrS=1.6)]
+           dict(label="1.2D+1.6L+(0.5Lr or 0.3S)", D=1.2, L=1.6, Lr=0.5, S=0.3),
+           dict(label="1.2D+(1.6Lr or 1.0S)+L", D=1.2, L=1.0, Lr=1.6, S=1.0)]
     for dirn in ("X", "Y"):
         for sgn in ("+", "-"):
-            out.append(dict(label="(1.2+0.2SDS)D+rho*E%s%s+L+0.2S" % (dirn, sgn),
-                            D=1.2 + 0.2 * SDS, L=0.5, S=0.2, E=rho, dir=dirn, sign=sgn))
+            # 7-22 2.3.6 combo 6: snow companion with seismic is 0.15S (was 0.2S)
+            out.append(dict(label="(1.2+0.2SDS)D+rho*E%s%s+L+0.15S" % (dirn, sgn),
+                            D=1.2 + 0.2 * SDS, L=0.5, S=0.15, E=rho, dir=dirn, sign=sgn))
             out.append(dict(label="(0.9-0.2SDS)D+rho*E%s%s" % (dirn, sgn),
                             D=0.9 - 0.2 * SDS, E=rho, dir=dirn, sign=sgn,
                             role="uplift/counteracting"))
     if cfg.get("wind"):
         for dirn in ("X", "Y"):
             for sgn in ("+", "-"):
-                out.append(dict(label="1.2D+1.0W%s%s+L+0.5(Lr or S)" % (dirn, sgn),
-                                D=1.2, L=1.0, LrS=0.5, W=1.0, dir=dirn, sign=sgn))
+                out.append(dict(label="1.2D+1.0W%s%s+L+(0.5Lr or 0.3S)" % (dirn, sgn),
+                                D=1.2, L=1.0, Lr=0.5, S=0.3, W=1.0, dir=dirn, sign=sgn))
                 out.append(dict(label="0.9D+1.0W%s%s" % (dirn, sgn), D=0.9, W=1.0,
                                 dir=dirn, sign=sgn, role="NET UPLIFT anchorage case"))
-    out.append(dict(label="overstrength: (1.2+0.2SDS)D+Om0*E (collectors, 12.10.2.1)",
-                    D=1.2 + 0.2 * SDS, E=s.get("Om0", 2.5), role="collectors/transfer"))
+    Om0 = _om0_of(cfg)               # NO 2.5 fallback -- table value or explicit error
+    # 2.3.6 overstrength pair (combos 6 & 7 with Emh): BOTH the additive and the
+    # counteracting case are REQUIRED for collectors/transfer/anchorage (rho NOT applied
+    # to Omega_0-level E, 12.3.4.1 item 5)
+    out.append(dict(label="overstrength: (1.2+0.2SDS)D+Om0*E (2.3.6 combo 6; 12.10.2.1)",
+                    D=1.2 + 0.2 * SDS, E=Om0, role="collectors/transfer/anchorage uplift"))
+    out.append(dict(label="overstrength counteracting: (0.9-0.2SDS)D+Om0*E (2.3.6 combo 7)",
+                    D=0.9 - 0.2 * SDS, E=Om0, role="collectors/transfer/anchorage uplift"))
     return out
 
 
@@ -130,11 +223,19 @@ def build_package(name, cfg, res):
     line in every story gets a slot; hold-down slots carry the rod-switch feasibility note."""
     e = res["elf"]
     sysname = cfg.get("system", "wsp_shearwall")
+    rho = _rho_seismic(cfg)
     pkg = dict(building=name, code="AISI S100-16(R2020)+S2/S3, S240-20, S400-20 -- LRFD",
                system=sysname, combos_note=COMBOS_NOTE,
                combos=enumerate_combos(cfg),
+               rho=rho,
+               rho_basis="ASCE 7-22 12.3.4 (canonical SDC); rho=%.2f is MULTIPLIED into the "
+                         "seeded strength demands below (v_unit_plf, V_kip, T_cum/T_bay, "
+                         "wind-vs-seismic comparison); NOT applied to drift (12.3.4.1 item "
+                         "2), diaphragm Fpx (item 7), or Omega_0/expected-strength "
+                         "capacity-design seeds (item 5)" % rho,
                elf=dict(V_kip=round(e["V"], 1), Cs=round(e["Cs"], 4), W_kip=round(e["W"], 0),
-                        Ta_s=round(e["Ta"], 3)),
+                        Ta_s=round(e["Ta"], 3),
+                        note="pure ELF (no rho); per-slot seeds below already include rho"),
                wall_lines=[], holddowns=[], studs=[], collectors=[], drift_table=[],
                preflight_warnings=res.get("preflight_warnings", []))
     wind = _wind_line_screen(cfg, res)
@@ -149,6 +250,33 @@ def build_package(name, cfg, res):
             Ry_by_Fy=RY_BY_FY, Rt_by_Fy=RT_BY_FY,
             note="AGENT: after selecting the strap (Ag, Fy grade), propagate Ry*Fy*Ag into "
                  "the connection, chord-stud and hold-down slots as the demand basis")
+    elif sysname in ("wsp_shearwall", "steelsheet_wall"):
+        pkg["capacity_design"] = dict(
+            basis="%s: chord studs, hold-downs and anchorage on every shear-wall line are "
+                  "designed for the EXPECTED strength of the SELECTED sheathing/fastener "
+                  "assembly, capped at the Omega_0-level force -- never the ELF force alone"
+                  % CS.SYSTEMS[sysname]["std"],
+            note="AGENT: after selecting sheathing + fasteners, propagate the expected wall "
+                 "strength (capped at Omega_0-level, see the numeric seeds below) into the "
+                 "chord-stud, hold-down and anchorage slots as the demand basis")
+    if sysname in CD_WALL_SYSTEMS:
+        Om0e, Om0_tab, om0_note = _om0_eff(cfg)
+        pkg["capacity_design"].update(
+            Om0=Om0_tab, Om0_eff=Om0e, Om0_eff_basis=om0_note,
+            lines={},
+            seed_basis="T_cd_seed = Omega0-level stack, no dead relief; final demand = "
+                       "min(Omega0-level, Omega_E*Vn_selected stack) per S400 capacity "
+                       "design -- relief only as documented",
+            instruction="NUMERIC: per line, Ve_cap_by_story_kip = Om0_eff x V_ELF,story "
+                        "(pure ELF, NO rho -- 12.3.4.1 item 5) and T_cd_seed_kip = the "
+                        "same top-down stack at Om0_eff-level shears. The FINAL hold-down/"
+                        "chord/anchorage demand is min(expected-strength stack of the "
+                        "SELECTED assembly (Omega_E*Vn), Ve_cap stack) -- NEVER the raw "
+                        "ELF seed; consistency.check FAILS demands <= 1.05x the ELF seed. "
+                        "dead_relief_kip_available is the DOCUMENTED (0.9-0.2SDS)D chord "
+                        "relief -- NOT taken in the seed; take it only as documented.")
+    else:
+        Om0e = None
     for dirn, dd in res["directions"].items():
         for lname, lr in dd["lines"].items():
             wl = (wind or {}).get(dirn, {}).get("lines", {}).get(lname)
@@ -157,16 +285,18 @@ def build_package(name, cfg, res):
                 v_w = (wl["v_plf"].get(k) if wl else None)
                 slot = dict(
                     id="wall-%s-%s-s%d" % (dirn, lname, k), direction=dirn, story=k,
-                    v_unit_plf=round(r["v_unit_plf"], 0), V_kip=round(r["V"], 1),
-                    demand_basis="tributary (%s diaphragm) + 5%% shift"
-                                 % dd.get("diaphragm", "flexible"),
+                    v_unit_plf=round(r["v_unit_plf"] * rho, 0),
+                    V_kip=round(r["V"] * rho, 1),
+                    demand_basis="tributary (%s diaphragm) + 5%% shift; includes rho=%.2f"
+                                 % (dd.get("diaphragm", "flexible"), rho),
                     sheathing=None, fastener_schedule=None,       # AGENT (S400 table, cited)
                     limit_state=None, cited=None, capacity=None, DC=None)
                 if v_w is not None:
                     slot["v_wind_plf"] = v_w
-                    slot["governing_basis"] = ("wind (1.0W > rho*E at this line -- use the "
-                                               "S400 WIND capacity columns)"
-                                               if v_w > r["v_unit_plf"] else "seismic")
+                    slot["governing_basis"] = (
+                        "wind (1.0W > rho*E at this line -- use the S400 WIND capacity "
+                        "columns)" if v_w > r["v_unit_plf"] * rho
+                        else "seismic (rho=%.2f included in the comparison)" % rho)
                 pkg["wall_lines"].append(slot)
                 pkg["drift_table"].append(dict(
                     direction=dirn, line=lname, story=k,
@@ -174,41 +304,73 @@ def build_package(name, cfg, res):
                     limit=dd["drift_limit"],
                     ok=r.get("drift_amplified", 0.0) <= dd["drift_limit"]))
             base = lr[min(lr)]
-            T_seis = base["T_kip"]
+            T_seis = base["T_kip"] * rho          # rho-included ELF strength seed
             T_wind = wl["T_base_kip"] if wl else None
             T_gov = max(T_seis, T_wind or 0.0)
+            _ln = next((l for l in (cfg["lines_x"] if dirn == "X" else cfg["lines_y"])
+                        if l.name == lname), None)
+            _segs = _ln.segments.get(min(lr), []) if _ln is not None else []
             # STRAP lines: overturning concentrates at BAY ends -- seed the PER-BAY
             # tension too (T_line spreads M over the whole line length; per bay:
             # T_bay = M/(n_bays*w_bay) = T_line * L_line/(n_bays*w_bay))
             T_bay = None
-            if sysname == "strap_braced":
-                _ln = next((l for l in (cfg["lines_x"] if dirn == "X" else cfg["lines_y"])
-                            if l.name == lname), None)
-                _segs = _ln.segments.get(min(lr), []) if _ln is not None else []
-                if _segs:
-                    _n, _w = len(_segs), _segs[0][0]
-                    T_bay = round(T_seis * _ln.length(min(lr)) / (_n * _w), 1)
-                    T_gov = max(T_gov, T_bay)
+            if sysname == "strap_braced" and _segs:
+                _n, _w = len(_segs), _segs[0][0]
+                T_bay = round(T_seis * _ln.length(min(lr)) / (_n * _w), 1)
+                T_gov = max(T_gov, T_bay)
             dev, kdev, note = WL.pick_holddown(T_gov)
             hd = dict(
                 id="hd-%s-%s" % (dirn, lname), line=lname, direction=dirn,
                 T_cum_kip=round(T_seis, 1), device_class=dev,
                 k_kip_in=kdev, feasibility_note=note,
-                basis="cumulative overturning tension, top-down stack; sized for TENSION "
-                      "(never the shear force); rods computed PL/AE + take-up",
+                basis="cumulative overturning tension, top-down stack (includes rho=%.2f); "
+                      "sized for TENSION (never the shear force); rods computed PL/AE + "
+                      "take-up" % rho,
                 limit_state=None, cited=None, capacity=None, DC=None)
             if T_bay is not None:
                 hd["T_bay_seed_kip"] = T_bay
                 hd["basis"] += ("; STRAP LINE: design anchorage for the PER-BAY tension "
-                                "seed T_bay_seed_kip (the line-level T_cum spreads "
-                                "overturning over the whole line), then apply the S400 "
-                                "E3.3 capacity-design amplification from the SELECTED "
+                                "seed T_bay_seed_kip (includes rho; the line-level T_cum "
+                                "spreads overturning over the whole line), then apply the "
+                                "S400 E3.3 capacity-design amplification from the SELECTED "
                                 "strap Ry*Fy*Ag")
             if T_wind is not None:
                 hd["T_wind_kip"] = T_wind
                 if T_wind > T_seis:
                     hd["basis"] += ("; WIND GOVERNS the tension (0.9D+1.0W net-uplift case) "
                                     "-- the anchorage chain is a wind design")
+            # NUMERIC capacity-design seed (R>3 wall systems): Omega0_eff-level story
+            # shears + the SAME top-down stacking as the ELF T_cum, from PURE ELF (no
+            # rho -- 12.3.4.1 item 5), NO dead relief taken
+            if sysname in CD_WALL_SYSTEMS and _ln is not None:
+                Ve_cap = {k: round(lr[k]["V"] * Om0e, 1) for k in lr}
+                ot_cd = WL.overturning_stack(
+                    _ln, dd["dist"], {k: cfg["heights_ft"][k - 1] for k in dd["dist"]},
+                    shear_scale=Om0e)
+                T_cd = round(ot_cd[min(ot_cd)]["T_kip"], 1)
+                w_bay = _segs[0][0] if _segs else None
+                relief, relief_note = _chord_dead_relief(cfg, _ln, dirn, w_bay)
+                cd_entry = dict(
+                    direction=dirn, line=lname, Om0_eff=Om0e,
+                    Ve_cap_by_story_kip=Ve_cap, T_cd_seed_kip=T_cd,
+                    dead_relief_kip_available=relief, dead_relief_basis=relief_note,
+                    basis="T_cd_seed = Omega0-level stack, no dead relief; final demand = "
+                          "min(Omega0-level, Omega_E*Vn_selected stack) per S400 capacity "
+                          "design -- relief only as documented")
+                if sysname == "strap_braced" and _segs:
+                    _n = len(_segs)
+                    cd_entry["Ve_cap_bay_by_story_kip"] = \
+                        {k: round(v / _n, 1) for k, v in Ve_cap.items()}
+                    cd_entry["T_cd_bay_seed_kip"] = \
+                        round(T_cd * _ln.length(min(lr)) / (_n * _segs[0][0]), 1)
+                    hd["T_cd_seed_kip"] = cd_entry["T_cd_bay_seed_kip"]
+                else:
+                    hd["T_cd_seed_kip"] = T_cd
+                pkg["capacity_design"]["lines"]["%s:%s" % (dirn, lname)] = cd_entry
+                hd["basis"] += ("; CAPACITY DESIGN: final demand = min(Omega0-level "
+                                "T_cd_seed_kip, expected-strength Omega_E*Vn stack of the "
+                                "SELECTED assembly) -- NEVER the raw ELF T_cum/T_bay seed "
+                                "(see capacity_design block)")
             pkg["holddowns"].append(hd)
         if dd.get("gate_flags"):
             pkg.setdefault("model_vs_tributary_flags", []).extend(dd["gate_flags"])
@@ -463,7 +625,9 @@ def _selftest():
           (ppkg["connections"][0]["M_transfer_kipin"],
            ppkg["anchorage"][0]["T_net_uplift_kip"], ppkg["anchorage"][0]["uplift_combo"]))
     # Stage 3b: combos + wind screen + strap seeds + merged design_and_report
-    cfgw = dict(cfg, wind=dict(V=140.0, exposure="C"))
+    # 170 mph: the seeded seismic side now carries rho=1.3 (SDC D), so the wind-governing
+    # fixture needs more wind than the pre-rho 140 mph to exercise the wind path
+    cfgw = dict(cfg, wind=dict(V=170.0, exposure="C"))
     resw = CE.run(cfgw)
     pkgw = build_package("Ex-wind", cfgw, resw)
     assert pkgw["combos"] and any("0.9D+1.0W" in c["label"] for c in pkgw["combos"])
@@ -471,12 +635,29 @@ def _selftest():
     ws = [w for w in pkgw["wall_lines"] if "v_wind_plf" in w]
     assert ws, "wind screen must annotate wall slots"
     assert any("wind" in (w.get("governing_basis") or "") for w in ws), \
-        "140 mph must out-govern seismic on at least one line"
+        "170 mph must out-govern rho-amplified seismic on at least one line"
     assert any(h.get("T_wind_kip") is not None for h in pkgw["holddowns"])
+    # A3/A6: rho + numeric capacity-design seeds on the WSP package
+    assert pkgw["rho"] == 1.3, "SDS=1.0/SD1=0.45 -> SDC D -> rho default 1.3"
+    cdw = pkgw["capacity_design"]
+    assert cdw["Om0"] == 3.0 and cdw["Om0_eff"] == 2.5, \
+        "footnote b: flexible diaphragm + Om0>=2.5 -> Om0_eff = Om0 - 0.5"
+    hdw = pkgw["holddowns"][0]
+    assert hdw["T_cd_seed_kip"] > 1.05 * hdw["T_cum_kip"] > 0, \
+        "Omega0-level seed must exceed the rho-included ELF seed"
+    lncd = cdw["lines"]["X:%s" % hdw["line"]]
+    assert lncd["T_cd_seed_kip"] == hdw["T_cd_seed_kip"]
+    assert lncd["Ve_cap_by_story_kip"][1] > lncd["Ve_cap_by_story_kip"][4] > 0
+    assert lncd["dead_relief_kip_available"] is not None      # adjacent lines -> derivable
+    assert "rho=1.30" in pkgw["wall_lines"][0]["demand_basis"]
     cfgs = dict(cfgw, system="strap_braced",
                 seis=CS.seis_cfs(1.0, 0.45, 0.45, "strap_braced"))
     pkgs = build_package("Ex-strap", cfgs, CE.run(cfgs))
     assert pkgs["capacity_design"]["Ry_by_Fy"] == {33: 1.5, 50: 1.1}
+    assert pkgs["capacity_design"]["Om0_eff"] == 2.0, "strap Om0=2.0 < 2.5: no footnote-b cut"
+    hds = [h for h in pkgs["holddowns"] if "T_bay_seed_kip" in h][0]
+    assert hds["T_cd_seed_kip"] > 1.05 * hds["T_bay_seed_kip"], \
+        "strap per-bay Omega0-level seed must exceed the per-bay ELF seed"
     out_w = design_and_report("t3b-wall", cfgw, outdir=tempfile.mkdtemp())
     out_p = design_and_report("t3b-portal", CF._demo_cfg(), outdir=tempfile.mkdtemp())
     import os

@@ -512,8 +512,8 @@ def _wind_section(cfg):
         w = cfg["wind"]; FX = E.wind_forces(cfg, "X"); FY = E.wind_forces(cfg, "Y")
         VwX = sum(FX.values()); VwY = sum(FY.values()); NF = len(cfg["heights"])
         rows = [[k, f"{FX[k]:.1f}", f"{FY[k]:.1f}"] for k in range(1, NF+1)]
-        h = ["<p>ASCE 7-22 §27 MWFRS. Velocity pressure qz = 0.00256·Kz·Kzt·Kd·V²; design pressure "
-             "p = qz·G·Cpnet; story force = p × tributary width × tributary height.</p>",
+        h = ["<p>ASCE 7-22 §27 MWFRS. Velocity pressure qz = 0.00256·Kz·Kzt·Ke·V² (Eq. 26.10-1); design pressure "
+             "p = qz·Kd·G·Cpnet (Kd applied at the pressure equation per Eq. 27.3-1); story force = p × tributary width × tributary height.</p>",
              _table(["Parameter", "Value"], [["Basic wind speed V", f"{w.get('V')} mph"],
                     ["Exposure", w.get("exposure", "C")],
                     ["Kd / G / Cpnet", f"{w.get('Kd',0.85)} / {w.get('G',0.85)} / {w.get('Cpnet',1.3)}"]]),
@@ -615,8 +615,8 @@ def _stability_section(cfg, Fx, drX, pkg):
     h = ["<p>Member demands already include second-order effects (a P-&Delta; geometric transformation is applied "
          "under every combination), so the second-order amplification is captured directly by the "
          "analysis. The ASCE 7-22 &sect;12.8.7 story stability coefficient "
-         "&theta; = P<sub>x</sub>&Delta;I<sub>e</sub>/(V<sub>x</sub>h<sub>sx</sub>C<sub>d</sub>) is evaluated per "
-         "story below; the limit is &theta;<sub>max</sub> = min(0.5/(&beta;C<sub>d</sub>), 0.25) = "
+         "&theta; = P<sub>x</sub>&Delta;I<sub>e</sub>/(V<sub>x</sub>h<sub>sx</sub>C<sub>d</sub>) (Eq. 12.8-18) is evaluated per "
+         "story below; the limit is &theta;<sub>max</sub> = min(0.5/(&beta;C<sub>d</sub>), 0.25) (Eq. 12.8-19) = "
          "%.3f (&beta; = 1.0 conservatively). &theta; &le; 0.10 means P-&Delta; could be neglected; "
          "&theta; &gt; &theta;<sub>max</sub> is not permitted.</p>" % theta_max,
          _table(["Story", "P<sub>x</sub> (kip)", "V<sub>x</sub> (kip)", "h<sub>sx</sub> (in)",
@@ -801,15 +801,35 @@ def _chapter(n, status=None):
 def _risk_category(Ie):
     return {1.0: "II", 1.25: "III", 1.5: "IV"}.get(round(float(Ie), 2), "II")
 
-def _sdc(SDS, SD1):
-    """Seismic Design Category from ASCE 7-22 Tables 11.6-1/2 (Risk Cat I-III; S1>=0.75 E/F needs S1)."""
+def _sdc(SDS, SD1, S1=0.0, risk_cat="II"):
+    """Seismic Design Category, ALIGNED with the canonical cfs_systems.sdc: worse of ASCE 7-22
+    Tables 11.6-1 and 11.6-2, plus S1 >= 0.75 -> E (RC I-III) / F (RC IV)."""
+    try:
+        import cfs_systems as _CS
+        return _CS.sdc(SDS, SD1, S1, risk_cat)
+    except Exception:
+        pass
+    rc4 = str(risk_cat).strip().upper() in ("IV", "4")
+    if S1 is not None and float(S1) >= 0.75:
+        return "F" if rc4 else "E"
     def a(x, b):
-        for thr, c in b:
-            if x < thr: return c
+        for thr, c123, c4 in b:
+            if x < thr: return c4 if rc4 else c123
         return "D"
-    c1 = a(SDS, [(0.167, "A"), (0.33, "B"), (0.50, "C")])
-    c2 = a(SD1, [(0.067, "A"), (0.133, "B"), (0.20, "C")])
+    c1 = a(SDS, [(0.167, "A", "A"), (0.33, "B", "C"), (0.50, "C", "D")])
+    c2 = a(SD1, [(0.067, "A", "A"), (0.133, "B", "C"), (0.20, "C", "D")])
     return max(c1, c2)
+
+
+def _rho_default(cfg):
+    """Display default for the redundancy factor, aligned with the canonical rule
+    (ASCE 7-22 12.3.4.2): 1.3 in SDC D/E/F, 1.0 in B/C; cfg['rho'] overrides."""
+    if cfg.get("rho") is not None:
+        return cfg["rho"]
+    s = cfg.get("seis") or {}
+    cat = _sdc(s.get("SDS", 0.0), s.get("SD1", 0.0), s.get("S1", 0.0),
+               _risk_category(s.get("Ie", 1.0)))
+    return 1.3 if cat in ("D", "E", "F") else 1.0
 
 def _design_basis_codes(cfg, s):
     seismic = bool(s.get("R"))
@@ -826,11 +846,11 @@ def _design_basis_codes(cfg, s):
     Ie = s.get("Ie", 1.0); RC = _risk_category(Ie)
     crows = [["Risk Category", RC], ["Importance factor I<sub>e</sub>", f"{Ie}"]]
     if seismic:
-        sdc = _sdc(s["SDS"], s["SD1"])
+        sdc = _sdc(s["SDS"], s["SD1"], s.get("S1", 0.0), RC)
         crows += [["S<sub>DS</sub> / S<sub>D1</sub>", f"{s['SDS']} / {s['SD1']} g"],
-                  ["Seismic Design Category", f"{sdc} <span class='cnote'>(Tables 11.6-1/2; confirm E/F vs S<sub>1</sub>)</span>"],
+                  ["Seismic Design Category", f"{sdc} <span class='cnote'>(Tables 11.6-1/2, worse governs, incl. S<sub>1</sub>&ge;0.75 &rarr; E/F)</span>"],
                   ["R / C<sub>d</sub> / &Omega;<sub>0</sub>", f"{s['R']} / {s.get('Cd')} / {s.get('Om0')}"],
-                  ["Redundancy &rho;", f"{cfg.get('rho', 1.3)}"]]
+                  ["Redundancy &rho;", f"{_rho_default(cfg)}"]]
     w = cfg.get("wind", {})
     if w:
         crows.append(["Basic wind speed V", f"{w.get('V','?')} mph, Exposure {w.get('exposure','?')}"])
@@ -857,12 +877,12 @@ def _system_loadpath(cfg):
 
 def _lfrs_table(cfg):
     s = cfg["seis"]; R = s.get("R"); Om0 = s.get("Om0"); Cd = s.get("Cd")
-    rho = cfg.get("rho", 1.3)
+    rho = _rho_default(cfg)          # canonical SDC-based default (12.3.4.2)
     # CFS R-fingerprint (ASCE 7-22 Table 12.2-1 light-frame rows) — an R-guess is
     # ambiguous (R=6.5 is WSP or steel-sheet): DECLARE cfg['system'].
     if R and abs(R-6.5) < .3:  name, hl = "CFS shear wall — WSP or steel sheet (DECLARE which)", "65 ft (SDC D/E/F)"
     elif R and abs(R-4) < .3:  name, hl = "CFS strap-braced wall", "65 ft (SDC D/E/F)"
-    elif R and abs(R-3.5) < .3: name, hl = "CFS special bolted moment frame (SBMF)", "35 ft (SDC D/E/F)"
+    elif R and abs(R-3.5) < .3: name, hl = "CFS special bolted moment frame (SBMF)", "35 ft in EVERY SDC B&ndash;F (Table 12.2-1 row C.12; footnote n one-story exception)"
     elif R and abs(R-2) < .3:  name, hl = "CFS wall, gypsum/other materials", "35 ft (SDC D); NP in E/F"
     elif R and abs(R-3) < .3:  name, hl = "CFS system not specifically detailed (S100 only)", "NP in SDC D/E/F (confirm)"
     else: name, hl = "CFS system", "per ASCE 7-22 Table 12.2-1 / Ch. 15"
@@ -938,13 +958,15 @@ def _irregularity_section(cfg, Fx):
     h = cfg["heights"]; custom_plan = cfg.get("plan") is not None
     tors = _torsion_ratios(cfg, Fx)
     tr = max([v for v in tors.values() if v is not None], default=1.0)
-    _Ax = min(max((tr/1.2)**2, 1.0), 3.0)   # ASCE 7-22 Eq. 12.8-14 accidental-torsion amplification
+    _Ax = min(max((tr/1.2)**2, 1.0), 3.0)   # ASCE 7-22 Eq. 12.8-15 accidental-torsion amplification
     if tr >= 1.4:   tcls = f"EXTREME torsional (1b): ratio {tr:.2f} &ge; 1.4 &mdash; apply A<sub>x</sub> = {_Ax:.2f} (&sect;12.8.4.3)"
     elif tr >= 1.2: tcls = f"Torsional (1a): ratio {tr:.2f} &ge; 1.2 &mdash; apply A<sub>x</sub> = {_Ax:.2f} (&sect;12.8.4.3)"
     else:           tcls = f"None: ratio {tr:.2f} &lt; 1.2 (A<sub>x</sub> = 1.0)"
-    # mass irregularity (vertical 2): adjacent floor mass > 150%
+    # mass screen -- SUPPLEMENTARY only: the 7-16 Vert-2 mass (weight) irregularity was
+    # DELETED from ASCE 7-22 Table 12.3-2; the ratio is reported for reviewer information
     massr = max((max(w[k]/w[k-1], w[k-1]/w[k]) for k in range(1, NF)), default=1.0)
-    mcls = "None" if massr <= 1.5 else f"Mass irregularity (Vert-2): adjacent ratio {massr:.2f} &gt; 1.5"
+    mcls = ("None" if massr <= 1.5 else
+            f"Supplementary (deleted in 7-22): adjacent mass ratio {massr:.2f} &gt; 1.5 &mdash; no longer a Table 12.3-2 irregularity; reported for information")
     # soft story screen via story height uniformity (stiffness ~ 1/h^3 proxy)
     hr = max((max(h[k]/h[k-1], h[k-1]/h[k]) for k in range(1, NF)), default=1.0)
     scls = "None (uniform story heights)" if hr <= 1.0001 else f"Check stiffness/soft-story: tallest/shortest story height ratio {hr:.2f}"
@@ -952,8 +974,8 @@ def _irregularity_section(cfg, Fx):
     # not the old 'cfg.get(plan) is None -> uniform rectangular' guess that denied custom_build L/T/U/cruciform plans.
     pir = E.plan_irregularities(cfg)
     if pir["reentrant"]:
-        h2 = ("Type 2 RE-ENTRANT: YES &mdash; non-convex footprint. Requires MODAL RESPONSE SPECTRUM (12.6/12.9) and a "
-              "<b>25% increase to diaphragm-to-collector CONNECTION forces</b> (&sect;12.3.3.4), with &Omega;<sub>0</sub> "
+        h2 = ("Type 2 RE-ENTRANT: YES &mdash; non-convex footprint. Requires a "
+              "<b>25% increase to diaphragm-to-collector CONNECTION forces</b> (&sect;12.3.3.5, SDC D&ndash;F), with &Omega;<sub>0</sub> "
               "collectors on the re-entrant grid lines.")
     else:
         h2 = "None (rectangular / convex footprint)"
@@ -970,18 +992,21 @@ def _irregularity_section(cfg, Fx):
         ["Horizontal 4 &mdash; Out-of-plane offset", "None (continuous vertical frames; confirm no transfer)"],
         ["Horizontal 5 &mdash; Nonparallel system", h5],
         ["Vertical 1a/1b &mdash; Soft / extreme soft story", scls],
-        ["Vertical 2 &mdash; Mass (weight)", mcls],
+        ["Vertical 2 &mdash; Mass screen (supplementary; deleted in 7-22)", mcls],
         ["Vertical 3 &mdash; Geometric (setback)", v3],
         ["Vertical 4 &mdash; In-plane discontinuity", "None (aligned frames; confirm no transfer columns)"],
         ["Vertical 5a/5b &mdash; Weak / extreme weak story", "Confirm against story shear strengths (Ch 6/9)"]]
     intro = ("<p>Screening against ASCE 7-22 Tables 12.3-1 (plan) and 12.3-2 (vertical). The torsional ratio is "
              "the story diaphragm displacement-ratio under the &plusmn;5% accidental eccentricity (rigid-diaphragm "
              "estimate); &ge;1.2 triggers a torsional irregularity and amplification A<sub>x</sub> (&sect;12.8.4.3).</p>")
-    mrsa_needed = pir["reentrant"] or pir["setback"] or pir["nonparallel"] or tr >= 1.2
-    if mrsa_needed and "RS" not in [a.upper() for a in cfg.get("analyses", [])]:
-        intro += ("<p class='cnote'><b>Analysis procedure &mdash; ACTION:</b> the determinations above trigger ASCE 7-22 "
-                  "Table 12.6-1: this structure requires <b>MODAL RESPONSE SPECTRUM (&sect;12.9)</b>, not the ELF "
-                  "procedure (&sect;12.8). Add 'RS' to cfg['analyses'] and design to the MRSA demands.</p>")
+    # ASCE 7-22 12.6 PERMITS ELF for all structures (the 7-16 Table 12.6-1 procedure
+    # restrictions were removed) -- MRSA is ADVISORY here, not required
+    mrsa_advis = pir["reentrant"] or pir["setback"] or pir["nonparallel"] or tr >= 1.2
+    if mrsa_advis and "RS" not in [a.upper() for a in cfg.get("analyses", [])]:
+        intro += ("<p class='cnote'><b>Analysis procedure &mdash; ADVISORY:</b> ASCE 7-22 &sect;12.6 permits the ELF "
+                  "procedure (&sect;12.8) for ALL structures (the 7-16 Table 12.6-1 restrictions were deleted). Given the "
+                  "irregularities above, MODAL RESPONSE SPECTRUM (&sect;12.9.1) is recommended as a check; note the 3D "
+                  "representation and accidental-torsion requirements of &sect;12.7.3/&sect;12.8.4.2 still apply.</p>")
     return intro + _table(["Irregularity type", "Determination"], rows)
 
 
@@ -1008,18 +1033,18 @@ def _seismic_loads_section(cfg, T, eX, eY, Cs, V, Tu, Ta, Fx, W):
     cap = SD1/(Tu*(R/Ie)) if Tu <= TL else SD1*TL/(Tu**2*(R/Ie))
     cmin = max(0.044*SDS*Ie, 0.01); cmin_s1 = (0.5*S1/(R/Ie)) if S1 >= 0.6 else None
     low = max(cmin, cmin_s1 or 0.0); upper = min(Cs_eq, cap)
-    if upper <= low: gov = "C<sub>s,min</sub> (Eq.12.8-6, S<sub>1</sub>)" if (cmin_s1 and low == cmin_s1) else "C<sub>s,min</sub> (Eq.12.8-5)"
-    elif cap < Cs_eq: gov = "C<sub>s,max</sub> (Eq.12.8-3)"
-    else: gov = "C<sub>s</sub> (Eq.12.8-2)"
+    if upper <= low: gov = "C<sub>s,min</sub> (Eq.12.8-7, S<sub>1</sub>)" if (cmin_s1 and low == cmin_s1) else "C<sub>s,min</sub> (Eq.12.8-6)"
+    elif cap < Cs_eq: gov = "C<sub>s,max</sub> (Eq.12.8-4)"
+    else: gov = "C<sub>s</sub> (Eq.12.8-3)"
     intro = (f"<p>ASCE 7-22 &sect;12.8 equivalent lateral force. Seismic weight W = {W:.0f} kip; S<sub>DS</sub> = "
              f"{SDS} g, S<sub>D1</sub> = {SD1} g, S<sub>1</sub> = {S1} g, R = {R}, I<sub>e</sub> = {Ie}. Approximate "
              f"period T<sub>a</sub> = C<sub>t</sub>h<sub>n</sub><sup>x</sup> = {Ta:.2f} s; design period "
              f"T = min(T<sub>computed</sub>, C<sub>u</sub>T<sub>a</sub>) = {Tu:.2f} s (&sect;12.8.2).</p>")
-    crows = [["C<sub>s</sub> = S<sub>DS</sub>/(R/I<sub>e</sub>) &nbsp;(Eq.12.8-2)", f"{Cs_eq:.4f}"],
-             ["C<sub>s,max</sub> = S<sub>D1</sub>/(T&middot;R/I<sub>e</sub>) &nbsp;(Eq.12.8-3)", f"{cap:.4f}"],
-             ["C<sub>s,min</sub> = max(0.044&middot;S<sub>DS</sub>I<sub>e</sub>, 0.01) &nbsp;(Eq.12.8-5)", f"{cmin:.4f}"]]
+    crows = [["C<sub>s</sub> = S<sub>DS</sub>/(R/I<sub>e</sub>) &nbsp;(Eq.12.8-3)", f"{Cs_eq:.4f}"],
+             ["C<sub>s,max</sub> = S<sub>D1</sub>/(T&middot;R/I<sub>e</sub>) &nbsp;(Eq.12.8-4)", f"{cap:.4f}"],
+             ["C<sub>s,min</sub> = max(0.044&middot;S<sub>DS</sub>I<sub>e</sub>, 0.01) &nbsp;(Eq.12.8-6)", f"{cmin:.4f}"]]
     if cmin_s1 is not None:
-        crows.append(["C<sub>s,min</sub> = 0.5&middot;S<sub>1</sub>/(R/I<sub>e</sub>) &nbsp;(Eq.12.8-6, S<sub>1</sub>&ge;0.6)", f"{cmin_s1:.4f}"])
+        crows.append(["C<sub>s,min</sub> = 0.5&middot;S<sub>1</sub>/(R/I<sub>e</sub>) &nbsp;(Eq.12.8-7, S<sub>1</sub>&ge;0.6)", f"{cmin_s1:.4f}"])
     crows.append(["<b>Governing C<sub>s</sub></b>", f"<b>{Cs:.4f}</b> &nbsp;({gov})"])
     cstab = "<h4>Seismic response coefficient C<sub>s</sub> and its limits</h4>" + _table(["C<sub>s</sub> equation", "Value"], crows)
     base = f"<p>Design base shear V = C<sub>s</sub>W = {Cs:.4f} &times; {W:.0f} = <b>{V:.0f} kip</b> in each direction.</p>"
@@ -1071,12 +1096,12 @@ def _combo_legend():
              ("L<sub>r</sub> / S", "roof live load / snow"),
              ("E<sub>X</sub>, E<sub>Y</sub>", "horizontal seismic effect Q<sub>E</sub> (ELF) in the X (E-W) / Y (N-S) direction; the vertical term E<sub>v</sub>=0.2S<sub>DS</sub>D is folded into the D factor"),
              ("W<sub>X</sub>, W<sub>Y</sub>", "wind load in the X / Y direction"),
-             ("&rho;", "redundancy factor multiplying Q<sub>E</sub> (&sect;12.3.4); &rho;=1.0 here (SDC B)"),
+             ("&rho;", "redundancy factor multiplying Q<sub>E</sub> (&sect;12.3.4); 1.0 in SDC B/C, 1.3 in SDC D&ndash;F unless &sect;12.3.4.2 conditions are met"),
              ("&Omega;<sub>0</sub>", "overstrength factor; the &ldquo;[col]&rdquo; cases apply &Omega;<sub>0</sub>Q<sub>E</sub> to capacity-protected columns only (&sect;12.4.3)"),
              ("t+ / t&minus;", "&plusmn;5% accidental torsion M<sub>t</sub> = &plusmn;0.05B&middot;F<sub>x</sub> (&sect;12.8.4.2)"),
              ("+ / &minus;", "sign (direction) of the applied lateral load"),
              ("[col]", "combination applied to columns only"),
-             ("0.5L, 0.2S, 0.9D", "companion / counteracting load factors (ASCE 7-22 &sect;2.3)")]
+             ("0.5L, 0.15S, 0.9D", "companion / counteracting load factors (ASCE 7-22 &sect;2.3; 7-22 seismic snow companion is 0.15S)")]
     return "<h4>Notation used in the combination labels</h4>" + _table(["Symbol", "Meaning"], [[a, b] for a, b in items])
 
 def _joint_figure(cfg):
@@ -1168,7 +1193,7 @@ def _floor_serviceability(pkg):
             + _table(["Member", "Section", "Live &delta;", "Limit", "Total &delta;", "Limit", "Camber", "&le; limit"], rows))
 
 def _combo_notes(cfg):
-    s = cfg["seis"]; SDS = s["SDS"]; rho = cfg.get("rho", 1.3); Om0 = s.get("Om0")
+    s = cfg["seis"]; SDS = s["SDS"]; rho = _rho_default(cfg); Om0 = s.get("Om0")
     return ("<p>The analysed set is the ASCE 7-22 &sect;2.3 LRFD strength combinations:</p><ul>"
             f"<li><b>Vertical seismic E<sub>v</sub></b> = 0.2&middot;S<sub>DS</sub>D = {0.2*SDS:.2f}D is folded into the "
             f"D factor: seismic combinations use (1.2+0.2S<sub>DS</sub>)D = {1.2+0.2*SDS:.2f}D and "

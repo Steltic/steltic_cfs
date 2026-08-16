@@ -31,3 +31,4 @@ SCOPING.md
 # licensed-content transfer artifacts -- carry to the RAG VM, never publish
 rag_v2/md_repairs/
 .env
+public_release/

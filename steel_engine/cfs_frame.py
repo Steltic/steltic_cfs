@@ -327,10 +327,12 @@ def build_portal(cfg, secs=None):
 # ---------------- load cases ----------------
 
 def _kzf(z_ft, exposure="C"):
-    """ASCE 7 Kz = 2.01 (z/zg)^(2/alpha), z floored at 15 ft."""
-    zg, alpha = dict(B=(3280.0, 7.5), C=(900.0, 9.8), D=(700.0, 11.5))[exposure]
+    """ASCE 7-22 Kz = 2.41 (z/zg)^(2/alpha), z floored at 15 ft (Table 26.10-1 note 1);
+    terrain constants per Table 26.11-1: B (zg=3280 ft, alpha=7.5), C (2460, 9.8),
+    D (1935, 11.5)."""
+    zg, alpha = dict(B=(3280.0, 7.5), C=(2460.0, 9.8), D=(1935.0, 11.5))[exposure]
     z = max(z_ft, 15.0)
-    return 2.01 * (z / zg) ** (2.0 / alpha)
+    return 2.41 * (z / zg) ** (2.0 / alpha)
 
 
 def wind_surface_pressures(cfg):
@@ -352,7 +354,10 @@ def wind_surface_pressures(cfg):
         return d
     w = cfg["wind"]
     hmean = (cfg["eave_ft"] + cfg["apex_ft"]) / 2.0
-    qh = 0.00256 * _kzf(hmean, w.get("exposure", "C")) * 0.85 * w["V"] ** 2
+    # ASCE 7-22 Eq. 26.10-1: qh = 0.00256*Kz*Kzt*Ke*V^2; Kd (=0.85) belongs to the pressure
+    # equation (Eq. 27.3-1) -- folded into the same product here, which is numerically identical
+    qh = (0.00256 * _kzf(hmean, w.get("exposure", "C")) * w.get("Kzt", 1.0)
+          * w.get("Ke", 1.0) * 0.85 * w["V"] ** 2)
     G = 0.85
     gcpi = 0.18 if w.get("enclosed", True) else 0.55
     pos = dict(wall_wind=qh * (G * 0.8 - gcpi), wall_lee=qh * (-G * 0.5 - gcpi),
@@ -360,7 +365,10 @@ def wind_surface_pressures(cfg):
     neg = dict(wall_wind=qh * (G * 0.8 + gcpi), wall_lee=qh * (-G * 0.5 + gcpi),
                roof_wind=qh * (-G * 0.7 + gcpi), roof_lee=qh * (-G * 0.6 + gcpi))
     d = dict(qh_psf=round(qh, 2), case_neg=neg,
-             basis="SEED: directional MWFRS, G=0.85 Kd=0.85, Cp {+0.8,-0.5,-0.7,-0.6}, "
+             basis="SEED: directional MWFRS, qh = 0.00256*Kz*Kzt*Ke*V^2 (Eq. 26.10-1, "
+                   "Kzt=%.2f Ke=%.2f), G=0.85, Kd=0.85 applied at the pressure eq. (27.3-1), "
+                   "Cp {+0.8,-0.5,-0.7,-0.6}, "
+                   % (w.get("Kzt", 1.0), w.get("Ke", 1.0)) +
                    "TWO single-GCpi cases (+/-%.2f): W = +GCpi (max uplift), W2 = -GCpi "
                    "(max wall push) -- agent verifies per ASCE 7 Ch.27" % gcpi)
     d.update(pos)
@@ -370,13 +378,21 @@ def wind_surface_pressures(cfg):
 
 def snow_ps(cfg):
     """Flat-roof snow ps (psf) for the portal cases. Priority: explicit cfg['snow_ps']
-    override, else 0.7 * Ce * Ct * Is * pg with FIRST-CLASS factor keys snow_ce /
-    snow_ct / snow_is (each defaulting 1.0). Added 2026-07-31 (Ex30 finding: Ct for
-    cold roofs was silently dropped unless the agent knew the snow_ps override)."""
+    override, else ASCE 7-22 Eq. 7.3-1: pf = 0.7 * Ce * Ct * pg with FIRST-CLASS factor
+    keys snow_ce / snow_ct (each defaulting 1.0). Added 2026-07-31 (Ex30 finding: Ct for
+    cold roofs was silently dropped unless the agent knew the snow_ps override).
+    7-22 CHANGE: Is is NO LONGER a factor in Eq. 7.3-1 -- importance is embedded in the
+    Risk-Category-specific pg maps. cfg['snow_is'] is still read for backward compat but
+    a value != 1.0 is IGNORED with a warning (use the RC-appropriate pg instead)."""
     if "snow_ps" in cfg:
         return float(cfg["snow_ps"])
+    if abs(float(cfg.get("snow_is", 1.0)) - 1.0) > 1e-9:
+        import warnings
+        warnings.warn("ASCE 7-22 embeds importance in the RC-specific pg maps; supplied "
+                      "snow_is=%.2f ignored -- use the RC-appropriate pg"
+                      % float(cfg["snow_is"]))
     return (0.7 * cfg.get("snow_ce", 1.0) * cfg.get("snow_ct", 1.0)
-            * cfg.get("snow_is", 1.0) * cfg.get("snow_pg", 0.0))
+            * cfg.get("snow_pg", 0.0))
 
 def _case_loads(fr, members, meta, cfg, case):
     """Apply one elementary case to a fresh copy of member/nodal loads. Returns a closure list
@@ -481,11 +497,13 @@ def lrfd_combos(cfg):
                               if (has_S and cfg.get("pattern_snow", True)) else [])
     combos = [("1.4D", {"D": 1.4})]
     combos.append(("1.2D+1.6Lr+0.5W", {"D": 1.2, "Lr": 1.6, "W": 0.5}))
+    # ASCE 7-22 2.3.1 combo 3: snow as PRINCIPAL carries 1.0S (was 1.6S in 7-16; Lr stays 1.6)
     for sc in (snow_cases if has_S else []):
-        combos.append(("1.2D+1.6%s+0.5W" % sc, {"D": 1.2, sc: 1.6, "W": 0.5}))
+        combos.append(("1.2D+1.0%s+0.5W" % sc, {"D": 1.2, sc: 1.0, "W": 0.5}))
     combos.append(("1.2D+1.0W+0.5Lr", {"D": 1.2, "W": 1.0, "Lr": 0.5}))
     if has_S:
-        combos.append(("1.2D+1.0W+0.5S", {"D": 1.2, "W": 1.0, "S_bal": 0.5}))
+        # 7-22 combo 4: snow COMPANION to wind is 0.3S (was 0.5S in 7-16)
+        combos.append(("1.2D+1.0W+0.3S", {"D": 1.2, "W": 1.0, "S_bal": 0.3}))
     combos.append(("0.9D+1.0W", {"D": 0.9, "W": 1.0}))                 # NET UPLIFT case
     # second internal-pressure case (W2 = -GCpi): duplicate every W combo unless the
     # agent supplied a single-case override without 'case_neg'
@@ -778,7 +796,7 @@ def _selftest():
     assert res["eff_stiffness"]["converged"]
     up = res["combos"]["0.9D+1.0W"]
     assert up["net_uplift"], "0.9D+1.0W must produce net uplift at this wind speed"
-    unb = res["combos"].get("1.2D+1.6S_unb_L+0.5W")
+    unb = res["combos"].get("1.2D+1.0S_unb_L+0.5W")
     if unb:
         mL = unb["envelope"]["raf_L"]["M_kipin"]
         mR = unb["envelope"]["raf_R"]["M_kipin"]

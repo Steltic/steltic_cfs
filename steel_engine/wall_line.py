@@ -11,6 +11,10 @@ requires agent justification (open fronts, offsets, mixed diaphragms).
 NO capacities: unit shear DEMANDS and tension DEMANDS only. Sheathing/fastener selection,
 hold-down selection, and every strength check remain agent/RAG work.
 
+ALL OUTPUTS HERE ARE PURE ELF: no redundancy rho, no Omega_0. The seed-assembly layer
+(cfs_pipeline) applies rho to strength-design seeds and Omega_0_eff to the capacity-design
+seeds (via overturning_stack(shear_scale=...)); drift stays unamplified per 12.3.4.1.
+
 Hold-down hardware classes (scope decision #7 -- hybrid class-envelope): capacity bands and
 stiffness for DISCRETE devices are representative in-house values ("EOR substitutes a specific
 product"); continuous RODS are computed (PL/AE + take-up allowance).
@@ -197,19 +201,26 @@ def distribute(story_forces, lines, dim_ft, shift=0.05):
     return out
 
 
-def overturning_stack(line, dist, story_heights_ft, dead_kip_per_story=None, dead_factor=0.9):
+def overturning_stack(line, dist, story_heights_ft, dead_kip_per_story=None, dead_factor=0.9,
+                      shear_scale=1.0):
     """Cumulative chord/hold-down TENSION demand at each story of one line, stacking from the
     top down (the CFS bookkeeping the rubric scores): at story k,
         T_k = sum_{j>=k} V_j * h_j / L_k  -  dead_factor * P_dead_above / 2
     per wall-line (single-segment idealization; the agent refines per segment). Returns
-    {story: dict(T_kip, V_cum, note)}."""
+    {story: dict(T_kip, V_cum, note)}.
+
+    PURE ELF by default: with shear_scale=1.0 (the default) the outputs carry NO rho and NO
+    Omega_0 -- those multipliers are applied at the SEED-ASSEMBLY layer (cfs_pipeline), so
+    the drift and capacity-design paths stay clean. shear_scale is the capacity-design hook:
+    pass Omega_0_eff to stack the SAME mechanics at the overstrength-level story shears
+    (Ve_cap = Omega_0_eff * V_ELF) for the T_cd seed."""
     stories = sorted(dist.keys(), reverse=True)
     out = {}
     M_cum = 0.0
     V_run = 0.0
     P_dead = 0.0
     for k in stories:
-        V = dist[k][line.name]["V_shifted"]
+        V = dist[k][line.name]["V_shifted"] * shear_scale
         h = story_heights_ft[k]
         # overturning accumulates as CUMULATIVE story shear x story height (identically
         # sum of story forces x their lever arms). The pre-2026-07-31 form used the
@@ -222,7 +233,7 @@ def overturning_stack(line, dist, story_heights_ft, dead_kip_per_story=None, dea
         L = max(line.length(k), 1e-6)
         T = M_cum / L - dead_factor * P_dead / 2.0
         out[k] = dict(T_kip=max(T, 0.0), V_cum=sum(dist[j][line.name]["V_shifted"]
-                                                   for j in stories if j >= k),
+                                                   for j in stories if j >= k) * shear_scale,
                       M_ot_kipft=M_cum, wall_len_ft=L)
     return out
 
@@ -295,6 +306,12 @@ def _selftest():
     ot = overturning_stack(lines[1], dist, {1: 10.0, 2: 9.5, 3: 9.5, 4: 9.5},
                            dead_kip_per_story={k: 6.0 for k in F})
     assert ot[1]["T_kip"] > ot[3]["T_kip"] >= 0.0, "tension must grow downward"
+    # capacity-design scale hook: same stacking mechanics, scaled shears; ELF path unchanged
+    ot_cd = overturning_stack(lines[1], dist, {1: 10.0, 2: 9.5, 3: 9.5, 4: 9.5},
+                              shear_scale=2.5)
+    ot_e = overturning_stack(lines[1], dist, {1: 10.0, 2: 9.5, 3: 9.5, 4: 9.5})
+    assert abs(ot_cd[1]["T_kip"] - 2.5 * ot_e[1]["T_kip"]) < 1e-9
+    assert abs(ot_cd[1]["V_cum"] - 2.5 * ot_e[1]["V_cum"]) < 1e-9
     dev1, k1, note1 = pick_holddown(ot[4]["T_kip"])
     dev0, k0, note0 = pick_holddown(ot[1]["T_kip"])
     print("  cumulative T: story4=%.1f kip -> %s; story1=%.1f kip -> %s%s"

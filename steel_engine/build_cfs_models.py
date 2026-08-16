@@ -426,8 +426,8 @@ def gates_portal(s, cfg, res):
     up = res["combos"].get("0.9D+1.0W")
     if s.get("expect_uplift", True) and up and not up["net_uplift"]:
         probs.append("0.9D+1.0W shows no net uplift")
-    if cfg.get("pattern_snow") and "1.2D+1.6S_unb_L+0.5W" in res["combos"]:
-        e = res["combos"]["1.2D+1.6S_unb_L+0.5W"]["envelope"]
+    if cfg.get("pattern_snow") and "1.2D+1.0S_unb_L+0.5W" in res["combos"]:
+        e = res["combos"]["1.2D+1.0S_unb_L+0.5W"]["envelope"]      # 7-22: 1.0S principal
         if abs(e["raf_L"]["M_kipin"] - e["raf_R"]["M_kipin"]) < 1e-3:
             probs.append("unbalanced snow did not break symmetry")
     sway = res["service"]["eave_sway_in"]
