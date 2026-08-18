@@ -90,42 +90,31 @@
         <span class="info" tabindex="0" data-tip="Up to 3 files, 5 MB each. Text / Markdown (.txt, .md) is read into the brief. PDFs (.pdf) have their text extracted into the brief (text-based PDFs only — scanned pages have no text layer). Images (.png, .jpg, .jpeg, .gif, .webp) are attached as references and sent to the model — but not all LLMs can read images.">i</span>
         <select id="exampleSelect" class="ghost" title="Load an example design brief into the prompt">
           <option value="" selected>Choose an example building…</option>
-          <option value="ex1">Ex1 — SCBF, 5 levels</option>
-          <option value="ex2">Ex2 — SMF, 9 levels</option>
-          <option value="ex3">Ex3 — Braced + Moment, 7 levels</option>
-          <option value="ex4">Ex4 — BRBF, 3 levels</option>
-          <option value="ex5">Ex5 — SMF, 10 levels</option>
-          <option value="ex6">Ex6 — SCBF, 6 levels</option>
-          <option value="ex7a">Ex7a — SMF, 7 levels</option>
-          <option value="ex7b">Ex7b — SCBF, 7 levels</option>
-          <option value="ex8">Ex8 — EBF, 8 levels, L-plan</option>
-          <option value="ex9">Ex9 — SPSW, 12 levels, T-plan</option>
-          <option value="ex10">Ex10 — Dual SMF+SCBF, 16 levels, podium</option>
-          <option value="ex11">Ex11 — BRBF, 10 levels, U-plan</option>
-          <option value="ex12">Ex12 — SMF, 14 levels, chamfer + setback</option>
-          <option value="ex13">Ex13 — OCBF, 4 levels, split-level</option>
-          <option value="ex14">Ex14 — EBF, 11 levels, cruciform, hillside</option>
-          <option value="ex15">Ex15 — Dual SMF+BRBF, 20 levels, wedding-cake</option>
-          <option value="ex16">Ex16 — IMF, 3 levels, Z-plan school</option>
-          <option value="ex17">Ex17 — SCBF, 9 levels, offset core</option>
-          <option value="ex18">Ex18 — R=3 (not detailed), 8 levels, low seismic</option>
-          <option value="ex19">Ex19 — SMF, 11 levels, soft-story podium</option>
-          <option value="ex20">Ex20 — SCBF, 12 levels, transfer / discontinuous</option>
-          <option value="ex21">Ex21 — OCBF, 1-story big-box, flexible diaphragm</option>
-          <option value="ex22">Ex22 — SMF, 6 levels, hospital (Risk Cat IV)</option>
-          <option value="ex23">Ex23 — Dual SMF+BRBF, 9 levels, SDC F near-fault EOC</option>
-          <option value="ex24">Ex24 — Mixed: SMF N-S + SCBF E-W, 10 levels</option>
-          <option value="ex25">Ex25 — SMF, 12 levels, atrium diaphragm discontinuity</option>
-          <option value="ex26">Ex26 — Dual SMF+SCBF, 18 levels, slender, wind-governed</option>
-          <option value="ex27">Ex27 — CC-PSW/CF SpeedCore, 20 levels, composite</option>
-          <option value="ex28">Ex28 — STMF, 8 levels, long-span truss moment</option>
-          <option value="ex29">Ex29 — Dual SMF+BRBF, 20 levels, 264 ft, NLRHA/PBSD</option>
-          <option value="ex30">Ex30 — Composite floors + SCBF, 6 levels, studs/camber</option>
-          <option value="ex31">Ex31 — Gable warehouse, R=3, snow + ponding</option>
-          <option value="ex32">Ex32 — Vertical addition on 1968 A36 frame, ASCE 41 scope</option>
-          <option value="ex33">Ex33 — Crane bay, IMF+OCBF, App.3 fatigue runway</option>
-          <option value="ex34">Ex34 — Twin towers on shared podium, seismic joint</option>
-          <option value="ex35">Ex35 — Ch.15 equipment platform, 3 tiers</option>
+          <option value="ex1">Ex1 — WSP shear walls, 4 levels</option>
+          <option value="ex2">Ex2 — Strap-braced, 6 levels</option>
+          <option value="ex3">Ex3 — Bearing wall, 8 levels, podium</option>
+          <option value="ex4">Ex4 — Steel-sheet walls, 5 levels, podium</option>
+          <option value="ex5">Ex5 — Strap-braced, 6 levels (dormitory)</option>
+          <option value="ex6">Ex6 — WSP, 5 levels, L-plan</option>
+          <option value="ex7">Ex7 — Steel sheet, 6 levels, Z-plan</option>
+          <option value="ex8">Ex8 — Strap-braced, 4 levels, T-plan</option>
+          <option value="ex9">Ex9 — Podium 5-over-2, U-plan</option>
+          <option value="ex10">Ex10 — SBMF, 2 levels, high bay</option>
+          <option value="ex11">Ex11 — Gypsum walls, 3 levels, coastal wind</option>
+          <option value="ex12">Ex12 — Steel sheet, 8 levels, cross-plan</option>
+          <option value="ex13">Ex13 — Type II perforated walls, 4 levels</option>
+          <option value="ex14">Ex14 — Mixed systems, 3 levels, split-level</option>
+          <option value="ex15">Ex15 — WSP, 6 levels, stepped bar</option>
+          <option value="ex16">Ex16 — Portal frame, single-span warehouse</option>
+          <option value="ex17">Ex17 — Portal, two-span, heavy snow</option>
+          <option value="ex18">Ex18 — Portal + mezzanine, mixed R</option>
+          <option value="ex19">Ex19 — Portal with monorail, fatigue</option>
+          <option value="ex25">Ex25 — Purlin/girt uplift retrofit</option>
+          <option value="ex26">Ex26 — Open canopy, Cn wind</option>
+          <option value="ex27">Ex27 — Single-channel portal, torsion</option>
+          <option value="ex28">Ex28 — Ag building, partially enclosed</option>
+          <option value="ex29">Ex29 — Freestanding mezzanine in existing bldg</option>
+          <option value="ex30">Ex30 — Cold-storage portal</option>
         </select>
         <span class="info" tabindex="0" data-tip="Load a ready-made CFS design brief (26 examples: stud-wall buildings, podiums, portal frames, canopies and specialty cases). Edit it if you like, then click Design building.">i</span>
         <label id="restoreFileLabel" class="ghost" for="restoreFile" style="cursor:pointer;padding:.45rem .8rem;border:1px solid var(--line);border-radius:8px" title="Recover a session: re-upload a previously downloaded design .zip, then click Continue">Restore session…</label>
@@ -162,7 +151,7 @@
       </div>
       <div id="timeWarn" class="timewarn hidden" role="status">
         <span class="tw-ico">⏱</span>
-        <span class="tw-msg">This run is nearing the platform's ~60-minute limit. It will <b>pause and save your progress automatically</b> — click <b>Continue</b> to resume (the clock resets). You can also download what's finished so far.</span>
+        <span class="tw-msg">This run is nearing the platform's ~60-minute request limit. It will pause, save, and <b>continue automatically</b> — one more hour maximum, then the demo run ends. You can download what's finished so far.</span>
         <a id="timeWarnDownload" class="btn tw-dl hidden" download>Download ⤓</a>
         <button id="timeWarnClose" class="tw-x" type="button" aria-label="Dismiss">✕</button>
       </div>

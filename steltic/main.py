@@ -366,8 +366,10 @@ async def run(request: Request, user: str = Depends(current_user)):
         try: job_dir.rename(jobs_dir / (building + "__" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S")))
         except Exception: pass
     # Resume from a browser-held snapshot (restore + resume ride one request; only fills a missing
-    # conversation). DEMO: the snapshot path writes client bytes to disk = an upload vector -> disabled.
-    snapshot_b64 = None if config.DEMO_MODE else body.get("snapshot_b64")
+    # conversation). Allowed in DEMO too (AISC demo parity, 2026-08-16): the soft-deadline
+    # auto-continue may land on a different instance, and this hard-validated path is how it
+    # rehydrates; the standalone /api/restore endpoint stays 403 in DEMO.
+    snapshot_b64 = body.get("snapshot_b64")
     if resume and snapshot_b64 and not (job_dir / "conversation.json").exists():
         try:
             _restore_zip_into(job_dir, base64.b64decode(snapshot_b64))

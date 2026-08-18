@@ -9,6 +9,7 @@ let reasonLine = null;     // streaming line for the Model reasoning box
 let DEMO = false;          // Demo build: examples only, brief locked, uploads off, hard time cap
 let demoExamples = [];     // [{key,label,building}] from the server -- the ONLY runnable briefs
 let demoContinued = false; // the Demo auto-continues ONCE at the soft deadline, then stops for good
+let demoAutoResume = false; // soft-deadline resume in flight -- finishRun must NOT end the demo (race fix 2026-08-16)
 let demoEnded = false;     // hard time cap hit -> no further runs this session
 let currentBuilding = "";  // the job this tab is working on (DEMO hides #building, so read this)
 
@@ -322,7 +323,7 @@ function handleEvent(ev, building) {
     case "demo_limit": {
       // Fleet-wide 2 h cap hit. The server has already flipped the cancel flag, so the agent is
       // wrapping up and a final bundle is on its way -- just make sure we never auto-continue again.
-      demoEnded = true; demoContinued = true;
+      demoEnded = true; demoContinued = true; demoAutoResume = false;
       logLine("paused", "⏱ " + (ev.text || "Demo time limit reached."));
       $("runStatus").textContent = "demo time limit reached — download your package below";
       break;
@@ -339,8 +340,9 @@ function handleEvent(ev, building) {
         const softDeadline = /deadline|time limit|soft/i.test((ev.reason || "") + (ev.detail || ""));
         if (softDeadline && !demoContinued && !demoEnded) {
           demoContinued = true;
-          logLine("paused", "↻ continuing automatically — this design needs more time");
-          $("runStatus").textContent = "continuing automatically…";
+          demoAutoResume = true;          // finishRun (stream end) races the timer below -- flag first
+          logLine("paused", "↻ continuing automatically — up to one more hour, then the demo run ends");
+          $("runStatus").textContent = "continuing automatically (final hour)…";
           setTimeout(() => startRun(true), 1200);
         } else {
           demoEnded = true;
@@ -429,6 +431,7 @@ async function startRun(resume, _retry) {
   markActivity();
   let building, brief, exampleKey = null;
   if (DEMO) {
+    if (resume) demoAutoResume = false;      // the scheduled auto-continue is now running
     if (demoEnded) { $("runStatus").textContent = "demo time limit reached — download your package"; return; }
     exampleKey = ($("exampleSelect").value || "").trim();
     if (!exampleKey) { $("runStatus").textContent = "choose an example building first"; return; }
@@ -506,7 +509,10 @@ function finishRun(status) {
   // DEMO is single-shot: one example, one run. Continue exists only for the automatic mid-design
   // resume, which startRun triggers itself -- never offer the button.
   show($("resumeBtn"), !DEMO);
-  if (DEMO) { demoEnded = true; $("runBtn").disabled = true; }
+  // Single-shot rule, EXCEPT while the automatic soft-deadline resume is in flight: the stream
+  // ends (finishRun) BEFORE the 1.2 s resume timer fires, and ending the demo here killed the
+  // auto-continue (race fixed 2026-08-16).
+  if (DEMO && !demoAutoResume) { demoEnded = true; $("runBtn").disabled = true; }
   const cur = $("runStatus").textContent;
   if (cur === "running…" || cur === "resuming…") $("runStatus").textContent = status;
   runController = null;
