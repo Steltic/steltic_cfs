@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "steltic-cfs"
-version = "1.0.0"
+version = "1.0.1"
 description = "Free, local AISI S100/S240/S400 cold-formed steel design agent: your LLM + OpenSees + stamped-style reports"
 readme = "README.md"
 license = "MIT"
