@@ -37,7 +37,7 @@ bound): `pipx install --python 3.12 steltic-cfs`. The install includes the full 
 a checkout:
 
 ```bash
-git clone <this repo> && cd steltic
+git clone <this repo> && cd steltic_cfs
 python -m venv .venv && . .venv/bin/activate
 pip install -e .
 ./run_local.sh               # http://localhost:8000
@@ -79,16 +79,15 @@ with `DATA_DIR`.
 ## Engineering-standards, OpenSees & design-examples RAG (highly recommended)
 
 The hosted version of Steltic at [stelticai.com](https://stelticai.com) grounds the agent with RAG
-vector databases of AISI S100-16(R2020)+S2/S3, S240-20 and S400-20, plus the CFS section/model
-Examples (V16.0, 168 worked examples), an examples database of validated OpenSees models, and two
-databases of the OpenSees documentation. The specifications and design examples ground the LLM in
+vector databases of AISI S100-16(R2020)+S2/S3, S240-20 and S400-20, an examples database of
+validated OpenSees models, and two databases of the OpenSees documentation. The specifications and design examples ground the LLM in
 the current procedures; the OpenSees databases help it build the model — and when OpenSees throws
 errors, resolve them. Steltic's performance has been validated **with** these databases and will
 likely reduce without them.
 
 For copyright reasons the vector databases of the AISI standards are **not** open-sourced in
-this project. The rest are freely downloadable from this repo's
-[Releases page](https://github.com/Steltic/steltic/releases) as portable `.jsonl.gz` dumps
+this project. The OpenSees databases are freely downloadable from the
+[Steltic Releases page](https://github.com/Steltic/steltic/releases) (shared with the AISC agent) as portable `.jsonl.gz` dumps
 (pre-embedded; see [rag_v2/README.md](rag_v2/README.md) for loading them into your own Qdrant):
 `cfs_design_examples` (original worked Q&A for the CFS scope; being authored),
 `opensees_buildings_3d` (40 validated 3D building models), `opensees_building_templates`, and the
@@ -109,7 +108,7 @@ Two options:
 `steltic/` FastAPI app + agent loop + sandbox executors · `steel_engine/` OpenSees modelling,
 design pipeline, consistency checks, report + 3D viewer · `contract/` the agent's working contract
 and references · `frontend/` vanilla JS UI · `sandbox_image/` Docker sandbox image ·
-`test_buildings/` 50+ example briefs (steel + CFS) with assessment rubrics · `rag_v2/`, `rag_update/`
+`test_buildings/` the 25 CFS example briefs with assessment rubric · `rag_v2/`, `rag_update/`
 build-your-own-RAG starter kit.
 
 ## License
