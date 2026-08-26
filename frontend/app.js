@@ -10,6 +10,7 @@ let DEMO = false;          // Demo build: examples only, brief locked, uploads o
 let demoExamples = [];     // [{key,label,building}] from the server -- the ONLY runnable briefs
 let demoContinued = false; // the Demo auto-continues ONCE at the soft deadline, then stops for good
 let demoAutoResume = false; // soft-deadline resume in flight -- finishRun must NOT end the demo (race fix 2026-08-16)
+let stallResumes = 0;       // auto-reconnects after a silent-stream stall (max 2 per run)
 let demoEnded = false;     // hard time cap hit -> no further runs this session
 let currentBuilding = "";  // the job this tab is working on (DEMO hides #building, so read this)
 
@@ -454,8 +455,9 @@ async function startRun(resume, _retry) {
   if (runSoftDeadlineSec > 0) runWarnTimer = setTimeout(showTimeWarn, Math.max(5000, (runSoftDeadlineSec - 120) * 1000));
   tokenLine = null;
   runController = new AbortController();
+  if (!resume) stallResumes = 0;
   let snapB64 = null;   // on resume, carry the in-browser snapshot so the server can rehydrate /tmp in THIS request
-  if (resume && backupBlob && backupBuilding === building) { try { snapB64 = await _blobToB64(backupBlob); } catch (_) {} }
+  if (resume && backupBlob && (DEMO || backupBuilding === building)) { try { snapB64 = await _blobToB64(backupBlob); } catch (_) {} }
   let r;
   try {
     const payload = DEMO
@@ -480,9 +482,21 @@ async function startRun(resume, _retry) {
     finishRun("failed"); return;
   }
   const reader = r.body.getReader(); const dec = new TextDecoder(); let buf = "";
+  // Stall watchdog (2026-08-22): the server pings every ~20 s of silence, so 75 s with NO bytes
+  // means the stream is dead even though the socket never errored (seen: log frozen ~20 min
+  // while the run kept burning tokens). A stalled read() otherwise waits forever.
+  const _read = async () => {
+    const p = reader.read();
+    let t;
+    try {
+      return await Promise.race([p, new Promise((_, rej) => {
+        t = setTimeout(() => { p.catch(() => {}); rej(new Error("__stall__")); }, 75000);
+      })]);
+    } finally { clearTimeout(t); }
+  };
   try {
     while (true) {
-      const { value, done } = await reader.read(); if (done) break;
+      const { value, done } = await _read(); if (done) break;
       buf += dec.decode(value, { stream: true });
       let i;
       while ((i = buf.indexOf("\n\n")) >= 0) {
@@ -493,6 +507,21 @@ async function startRun(resume, _retry) {
       }
     }
   } catch (e) {
+    if (e && e.message === "__stall__") {
+      try { runController.abort(); } catch (_) {}
+      if (stallResumes < 2 && !(DEMO && demoEnded)) {
+        stallResumes++;
+        if (DEMO) demoAutoResume = true;   // a stall recovery must not end the single-shot demo
+        logLine("status", "· connection stalled — reconnecting and resuming automatically…");
+        $("runStatus").textContent = "connection stalled — resuming…";
+        setTimeout(() => startRun(true), 1000);
+        finishRun("reconnecting…"); return;
+      }
+      logLine("err", "✖ connection lost mid-run (stream stalled)");
+      logLine("status", "· your progress IS saved — the last snapshot is in this tab (Download)");
+      backupWithRetry(building, [1500, 6000]);
+      finishRun("connection lost"); return;
+    }
     if (e.name !== "AbortError") {
       logLine("err", "✖ connection lost mid-run: " + e);
       logLine("status", "· your progress IS saved on the server (and snapshotted to this tab every ~10 min) — click Continue to resume from where it stopped");
