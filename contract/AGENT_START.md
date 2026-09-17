@@ -276,6 +276,120 @@ distinct derivations typically cover the building.
    header deflection L/360 / L/240 on the frame path.
 5. **Do NOT read `eval_tests/answer_key/`** — off-limits and blocked.
 
+## HOW TO ASK THE RAG — one document, the exact id, the printed words
+Hard rule 1 says ground every check. This section is *how*, and it is not style advice: nearly every
+"the RAG has nothing on this" in a run log was a query problem, not a corpus problem. One call is one
+question. There is no batching and no plan to submit — you call `search_engineering_standards` and
+the answer comes straight back.
+
+**Pick ONE collection per call.** Route it **material → system → member → loading**, then send that
+one. Firing the same question at all of them is not thoroughness; it is several vague full-text
+searches where one pinpoint lookup would have worked, and it burns the search softcap.
+
+| `collection=` | Document | Ask it for |
+|---|---|---|
+| `engineering_standards_S100` | AISI S100-16 (R2020) w/S3 | CFS member capacity — E2/E3/E4, F2–F4, G2, G5 web crippling, H1, Ch. J fasteners, App. 1 EWM |
+| `engineering_standards_S240` | AISI S240-20 | light-frame framing, built-up interconnection, bracing, trusses |
+| `engineering_standards_S400` | AISI S400-20 | seismic / wind walls, straps, SBMF, capacity-design chains, Table E1.3-1 |
+| `engineering_standards_ASCE7` | ASCE 7-22 | **Hard rule 2 still stands: loads are computed, not retrieved.** Use this only to read back a printed value you are citing — R / Ω₀ / Cd off Table 12.2-1 is the usual one — never to generate loads |
+| `opensees_buildings_3d` · `openseespy_documentation` · `opensees_documentation` | Modelling | API and whole-building references (R21), never design values |
+
+Send the **collection string exactly as spelled above** — Chapter 13's grounding verification counts
+those literal strings out of your activity log, so `AISI_S100` in the `collection` argument is
+grounding work that the report will score as MISSING. The `AISI_S100` / `AISI_S400_20`-style *stem*
+is what comes back in each hit's `source` field; that is for citing, not for asking. **Do not
+default-search AISC 360/341/358** — they are a different product's corpus and a wrong basis for CFS.
+
+**Exact id, not a sentence.** The `clause` argument is the pinpoint: the server looks it up as an
+exact equation id (when it is shaped like one), then as an exact section id, then as an exact table
+id, and returns the hit with one neighbouring chunk attached. A sentence gets none of that.
+
+```
+good:  search_engineering_standards("nominal shear strength, wood structural panel shear wall",
+                                    collection="engineering_standards_S400", clause="Table E1.3-1")
+bad:   search_engineering_standards("AISI S400-20 Table E1.3-1 shear wall capacities for WSP")
+```
+
+The bad one fails in a way that looks like success: `S400-20` is shaped exactly like an equation id,
+the id you actually meant never reaches the table index, and you get back whatever full text ranked
+highest. `clause` takes the **id alone** — `E2`, `E3.4.2`, `D5.1.2`, `A3.1.3-1`, and the captioned
+tables by their caption tag per the retrieval tips at the top of this file — with **no document name,
+no edition and no prose around it**. `chapter` (`E`, `F`, `G`, `J`) only narrows; it is not a
+substitute for the id, and on its own it will not find anything a plain search would have missed.
+
+**Spec words, not chat.** "Distortional buckling", not "the lip rolls over". The corpus expands the
+usual abbreviations (EWM, Ω₀, φ), but what is indexed is the **printed** text, so printed phrasing
+wins: the PDF says *"Cold-formed steel light-frame shear walls with wood structural panels"*.
+
+**An equation on its own is not enough to compute with.** Every equation you will actually evaluate
+needs three more things before you may use it: its **"where:" variable definitions**, its
+**applicability limits**, and its **exceptions**. This tool has no neighbour-width knob — an exact-id
+lookup brings one neighbouring chunk, a full-text search brings none — so ask for them as their own
+calls rather than inferring them. A wall shear value off Table E1.3-1 is unusable without the aspect
+ratio limits, the sheathing/fastener qualifiers and the φ that belongs to *that* table column; ask
+for the table id and the governing section as separate, exact calls rather than one query for "all of
+Chapter E".
+
+**Id traps — these are real, and a "better" guess is always wrong.**
+- **AISI Chapter C is a PROVISION chapter** — stability, installation, seismic load effects — in
+  **both halves** of S100, S240 and S400. It is not a commentary divider. **S100 C1.1 is Direct
+  Analysis / stability**, never ASCE commentary C1/C11.
+- S100 **E2** is global buckling, P_n = A_g·F_n. **E3** is local **and** global, A_e·F_n. **E2.1 is
+  the closed-box R** — a different thing again.
+- The **EWM strength gate is S100 B4.1**, not the L1 serviceability provision.
+- S400 **E1.3.1.1-1 is V_n = v_n·w**; the both-sides-sheathed case is **E1.3.1.1.2**.
+- S400 **E3.4.3 is foundations**. The strap Ω_E is **E3.3.3**.
+- S240 **C2.1 is web holes**, and **there is no C2.1.1**. Built-up members are **B1.3**.
+- ASCE 7 full-text for Table 12.2-1 tends to rank 12.8-2 / 12.14-1 / 12.3-3 above it. If you need
+  R / Ω₀ / Cd, ask for the **table by id** — `clause="12.2-1"` — not by description.
+- Commentary carries a **`C-` prefix** on many equation and figure ids. Provisions and commentary are
+  different documents: never quote a `C-` id as if it were the standard, and never invent a standard
+  counterpart for one.
+- A **dropped-letter equation id** resolves — S400 `1.3.1.1-1` is `E1.3.1.1-1` — but a short one is
+  ambiguous across chapters, so pass `chapter` alongside it and the right letter gets put back.
+
+**Honest absences — these are genuinely not there. Do not invent around them.**
+- S400 has **no Table B1.1-1**.
+- S400 wood-structural-panel **φ_v = 0.60 at E1.3.2** — **not** 0.65. There is no separate wind φ.
+- Strap **φ_v = 0.90 at E3.3.2**.
+- S240 has **no girt design section** — glossary entry and Type L only; "bypass" does not appear.
+- There are **no CFS chunks in the worked-example corpus**. Hard rule 3's `cfs_design_examples` probe
+  is optional and expected to come back empty; note that the grounding server does not map that name
+  at all and answers `UNKNOWN COLLECTION`, which is a name problem, not an absence. Either way: probe
+  once, move on, and take the spec text as sufficient and authoritative on its own.
+- **AISI S310** (bare-deck diaphragms) and **S220** (nonstructural) are not ingested — Hard rule 1
+  already tells you what to do: say so and ground the value another way, stated. Never fabricate an
+  S310 clause number.
+
+**One empty result is NOT evidence of absence.** The tool no longer takes your first miss at face
+value: it retries without your `clause`/`chapter` filter, then as an exact-id lookup, then with the
+query reworded through the corpus's own synonym layer, then across every document — and if that last
+one hits, it tells you which document actually answered, which is **not** the one you asked for, so
+cite accordingly and check it governs. Read what comes back:
+
+- **`not_found_kind: "no_specification_index"`** — there is no specification corpus on this machine at
+  all. Every spec query will return nothing however it is worded. **Stop searching the specifications.**
+  This says nothing whatever about AISI S100/S240/S400.
+- **`not_found_kind: "document_not_in_corpus"`** — that document was never converted here. The reply
+  names the documents that *are* indexed; if one of those governs instead, ask it.
+- **`not_found_kind: "term_absent_from_document"`** — the corpus holds the document and the term is
+  genuinely not in it. Only this one is a statement about the standard, and the honest-absence list
+  above is what it usually means. Re-word **once** in printed phrasing, or ask for the parent section,
+  then accept it.
+
+The first two are `corpus_gap: true`. Treating a corpus gap as an absence is how a design gets run
+from memory while its report records that the corpus was searched — do not do it.
+
+**Designing from memory is a last resort, and it is DECLARED.** If a value you need is genuinely not
+retrievable, you may fall back on your own knowledge of the standard — but then you say so, in the
+report, in those words: which value, which clause you believe it comes from, and that it was **not**
+verified against the corpus. A quiet fallback is the failure mode this whole section exists to
+prevent. Never invent a clause number, an equation id, a table id or a φ/Ω value to close the gap.
+
+**These rules are locked to the editions in the stem table** — AISI S100-16 (R2020) w/S3, S240-20,
+S400-20, ASCE/SEI 7-22. Every trap and every absence above is edition-specific. If the corpus is ever
+rebuilt on a different edition, **re-verify each one before reusing it**.
+
 ## CONNECTIONS & ANCHORAGE — design these by reasoning (S100 Ch. J, S400)
 - **Sheathing fasteners** are the wall capacity (the schedule IS the design) — cite the S400 basis.
 - **Strap connections** (strap-braced walls): capacity design from Ry·Fy·Ag of the strap — screws/
