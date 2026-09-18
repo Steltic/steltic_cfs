@@ -67,20 +67,28 @@ TOOL_SPECS = [
     _spec("new_activity_log", "Start a fresh activity log for a design run (call ONCE first).",
           {"building": {"type": "string", "description": "building name -> jobs/<name>/"}}, []),
     _spec("search_engineering_standards",
-          "Search the engineering RAG. Collections: engineering_standards_S100 (AISI S100 -- primary member/connection "
-          "spec), engineering_standards_S240 (framing rules -- REQUIRED on every light-frame brief), "
-          "engineering_standards_S400 (walls/straps/SBMF: capacities incl. WIND columns, capacity-design chains, Type II), "
-          "and cfs_design_examples (worked CFS examples -- NOTE: this collection may be EMPTY (not yet "
-          "authored); probe it at most once per session, treat an empty result as NORMAL (never retry), "
-          "and derive the method directly from the spec text). When you know the exact provision, "
-          "pass clause or chapter for a pinpoint lookup. "
-          "Returns a 'disabled' note if no RAG is configured -- then rely on your own cited AISI knowledge.",
-          {"query": {"type": "string"},
+          "Retrieve a provision from the standards corpus (Query file manager) UNDER THE RETRIEVAL POLICY: "
+          "one document per call, an EXACT id when you know the provision (type=exact_section|exact_equation|"
+          "exact_table and query=the id ALONE, e.g. E2, G5-1, A3.1.3-1, E1.3-1), and a full-text query (type=fts) only "
+          "to NAVIGATE to an id -- in the standard's own printed words, one idea, no sentences. "
+          "Good: {type:'exact_section', doc:'AISI_S100', query:'G5'}. "
+          "Bad: {query:'AISI S100 web crippling of stiffened flanges under one-flange loading G5'}. "
+          "Documents: AISI_S100 (members, connections -- primary), AISI_S240 (framing rules -- REQUIRED on every "
+          "light-frame brief), AISI_S400_20 (walls/straps/SBMF: capacities incl. WIND columns, capacity-design chains, "
+          "Type II), ASCE7; collection=steel_design_examples for worked examples (query ALONGSIDE the spec for each "
+          "member/connection and mirror the example's method). Returns a 'disabled' note if no RAG is configured -- "
+          "then rely on your own cited AISI knowledge.",
+          {"query": {"type": "string", "description": "for exact types: the id only. For fts: printed spec terminology, one idea."},
+           "type": {"type": "string", "enum": ["exact_section", "exact_equation", "exact_table", "fts"],
+                    "description": "exact_section (E2, G5, E3.4.2) / exact_equation (G5-1, A3.1.3-1, E1.3.1.1-1) / exact_table (E1.3-1, 12.2-1) / fts (navigation only)"},
+           "doc": {"type": "string", "description": "canonical document stem: AISI_S100, AISI_S240, AISI_S400_20, ASCE7. One per call."},
+           "purpose": {"type": "string", "description": "why you need it, a few words (goes in the provenance)"},
+           "want_commentary": {"type": "boolean", "description": "default false (provisions). true only for intent/background; commentary never supplies a design value."},
+           "context_neighbors": {"type": "integer", "description": "0-2: widen when an equation needs its surrounding 'where:' list"},
            "collection": {"type": "string",
-                          "description": "default engineering_standards_S100; _S240 framing, _S400 lateral, "
-                                         "cfs_design_examples for worked examples"},
-           "clause": {"type": "string", "description": "optional: restrict to an exact clause code, e.g. E2, G5, F2, or a dotted App-1 section like 1.1 -- use when you know the provision"},
-           "chapter": {"type": "string", "description": "optional: restrict to a whole chapter, e.g. E, G, J"},
+                          "description": "legacy alias of doc (engineering_standards_S100 / _S240 / _S400 ...); steel_design_examples for worked examples"},
+           "clause": {"type": "string", "description": "legacy: an exact id sent with a sentence. Prefer type + query=id."},
+           "chapter": {"type": "string", "description": "optional: narrow an fts query to a chapter, e.g. E, G, J"},
            "top_k": {"type": "integer", "description": "chunks to return (default 3, max 5)"}},
           ["query"]),
     _spec("run_python",
@@ -367,7 +375,11 @@ def dispatch(tool, args, ws, executor):
         return ws.search_engineering_standards(args.get("query", ""),
                                                args.get("collection", "engineering_standards_S100"),
                                                args.get("top_k", config.RAG_TOP_K),
-                                               args.get("clause", ""), args.get("chapter", ""))
+                                               args.get("clause", ""), args.get("chapter", ""),
+                                               type=args.get("type", ""), doc=args.get("doc", ""),
+                                               want_commentary=bool(args.get("want_commentary", False)),
+                                               context_neighbors=args.get("context_neighbors"),
+                                               purpose=args.get("purpose", ""))
     return {"error": f"unknown tool '{tool}'"}
 
 
@@ -916,8 +928,10 @@ def _tool_title(name, args):
     if name == "run_python":
         return f"run_python · {_code_label(a.get('code',''))}"
     if name == "search_engineering_standards":
-        coll = (a.get("collection") or "engineering_standards_S100").replace("engineering_standards_", "")
+        coll = (a.get("doc") or a.get("collection") or "engineering_standards_S100").replace("engineering_standards_", "")
         flt = "".join(f" [{k}={a[k]}]" for k in ("clause", "chapter") if a.get(k))
+        if a.get("type"):                                   # the policy form: `exact_equation G5-1`
+            return f"search {coll} {a['type']} ‹{(a.get('query') or '')[:64]}›{flt}"
         return f"search {coll} ‹{(a.get('query') or '')[:64]}›{flt}"
     if name == "write_file":   return f"write_file {a.get('path','')}"
     if name == "read_file":    return f"read_file {a.get('path','')}"
@@ -950,6 +964,8 @@ def _result_preview(name, result):
         if result.get("disabled"): return "RAG disabled — using cited AISI knowledge"
         res = result.get("results") if isinstance(result.get("results"), list) else None
         bits = [f"{len(res) if res is not None else 0} hits"]
+        if result.get("policy"):                             # what actually went to the QFM
+            bits.append("sent as " + str(result["policy"])[:120])
         cl = result.get("clauses_found") or []
         if cl: bits.append("clauses " + ", ".join(cl[:6]))
         if result.get("saved"): bits.append("saved " + result["saved"])
