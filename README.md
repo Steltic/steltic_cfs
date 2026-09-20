@@ -103,6 +103,17 @@ Two options:
    starter kit. Then put the connection in the environment (or a `.env` next to where you launch):
    `RAG_API_URL=http://your-server:8080/query` and, if your server enforces one, `RAG_API_TOKEN=...`.
 
+## A tool call the model never finished
+
+A provider behind OpenRouter validates the whole conversation on every request. If a turn is cut off
+in the middle of a tool call's arguments (`{` and nothing more), a provider such as Together refuses
+the *next* request with `400 Invalid JSON in tool call arguments` — a 400 the retry net does not
+retry, so the run ended, and the cut-off turn saved in `conversation.json` broke every *Continue*
+after it. The agent now keeps every tool call in the history parseable (`{}` stands in for
+arguments that did not parse), never runs such a call, answers it with an error that asks the model
+to repeat it with complete arguments, and heals a conversation saved by an older version when it is
+resumed. `tests/test_tool_call_healing.py`.
+
 ## Repo map
 
 `steltic/` FastAPI app + agent loop + sandbox executors · `steel_engine/` OpenSees modelling,
