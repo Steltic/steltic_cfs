@@ -69,6 +69,19 @@ def request_cancel(run_key: str) -> bool:
             return True
         return False
 
+def stop(run_key: str) -> bool:
+    """What /api/stop needs: flag the run to halt AND free its concurrency slot at once, keeping the
+    flag. request_cancel() followed by quota_release() looked the same but quota_release() discards
+    the flag, so the run never saw the stop (2026-09-20: the hub's Stop button did nothing for CFS).
+    The flag is cleared when the run ends (quota_release in its finally) or the next run of the same
+    project acquires the slot."""
+    with _lock:
+        was_active = run_key in _runs
+        _runs.pop(run_key, None)
+        if was_active:
+            _cancel.add(run_key)
+        return was_active
+
 def is_cancelled(run_key: str) -> bool:
     return run_key in _cancel
 

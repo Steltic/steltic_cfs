@@ -549,8 +549,7 @@ async def stop(request: Request, user: str = Depends(current_user)):
     body = await request.json()
     building = _clean_name(body.get("building") or "")
     run_key = f"{get_sid(request)}:{building}"
-    was_active = gate.request_cancel(run_key)
-    gate.quota_release(run_key)
+    was_active = gate.stop(run_key)          # flag + free the slot, without clearing the flag
     flagged = ctl.cancel_set(user)
     return {"ok": True, "stopped": building, "was_active": was_active, "fleet_flag": flagged}
 
