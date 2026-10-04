@@ -661,7 +661,9 @@ def design_and_report(name, cfg, outdir=None, do_report=True):
         # OUT OF SCOPE with DC = 0, and the package headlines component_mode.
         # The agent's real deliverables live in the schedules + extra blocks.
         import cfs_frame as CF
-        cfgc = dict(cfg, base="fixed", structure_kind="portal")
+        # first-order (pdelta=False): the surrogate skeleton is not a design model and a
+        # second-order solve of an arbitrary shell can be sway-unstable (garbage envelopes)
+        cfgc = dict(cfg, base="fixed", structure_kind="portal", pdelta=False)
         res = CF.run(cfgc)
         p, pkg = write_portal_package(name, cfgc, res, ddir)
         pkg["component_mode"] = (

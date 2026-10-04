@@ -2086,6 +2086,10 @@ def run(cfg):
                             "C1.1.1.2(b)(1)) -- state the basis" % notional)
     strength = [(n, c) for n, c in combos if combo_role(n) == "strength"]
     nply = {g: secs[g]["n_ply"] for g in ("col", "raf")}
+    pdi = 2 if cfg.get("pdelta", True) else 0
+    if not pdi:
+        pw.append("P-DELTA OFF (cfg['pdelta']=False): first-order envelopes -- not a design "
+                  "analysis (AISI S100 C1.1 / ASCE 7-22 12.8.7 require second-order effects)")
 
     def analyze(props):
         """eff_stiffness callback: props are PER PLY (single channel / tube); the frame is
@@ -2097,7 +2101,7 @@ def run(cfg):
         env_all = {}
         for name, combo in strength:
             _f, mm, _meta, sol = _solve_combo(cfg, s2, combo, cases, scale, notional=notional,
-                                              template=tmpl, tau_b=da)
+                                              template=tmpl, tau_b=da, pdelta_iters=pdi)
             env = _member_envelope(_f, mm, sol)
             for lab, e in env.items():
                 if lab.startswith("kb"):
@@ -2129,7 +2133,8 @@ def run(cfg):
     combo_out = {}
     for name, combo in combos:
         _f, mm, meta, sol = _solve_combo(cfg, secs_eff, combo, cases, scale,
-                                         notional=notional, template=tmpl, tau_b=da)
+                                         notional=notional, template=tmpl, tau_b=da,
+                                         pdelta_iters=pdi)
         env = _member_envelope(_f, mm, sol)
         R = {t: (round(r[0], 2), round(r[1], 2), round(r[2], 2))
              for t, r in sol["reactions"].items()}      # (Rx, Ry, Mz) -- Mz nonzero at fixed bases
