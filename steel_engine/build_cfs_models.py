@@ -402,7 +402,7 @@ cfg = dict(span_ft={s['span']}, eave_ft={s['eave']}, apex_ft={s['apex']}, spacin
   seis=dict(SDS={s.get('SDS', 0.25)}, R=3.0, Ie=1.0, W_frame_kip=None),
   pattern_snow={s.get('snow_pg', 0.0) > 0}, structure_kind={s.get('structure_kind')!r},
   analysis_fidelity={s.get('tier', 1)}, direct_analysis=True,{ov})
-res = CF.run(cfg)   # cases -> LRFD combos (0.8E + notional + P-Delta) -> Tier-1 eff-stiffness
+res = CF.run(cfg)   # cases -> LRFD combos (S100 C1.1 0.9 tau_b + Yi/240 + P-Delta) -> Tier-1
                     # -> envelopes, reactions (NET UPLIFT), service drift, torsion companion"""
 
 
@@ -420,7 +420,8 @@ def gates_portal(s, cfg, res):
         Ry = sum(r[1] for r in d14["reactions_kip"].values())
         raf_len = 2.0 * ((cfg["span_ft"] / 2.0) ** 2 +
                          (cfg["apex_ft"] - cfg["eave_ft"]) ** 2) ** 0.5
-        Wd = 1.4 * cfg["D_roof"] * cfg["spacing_ft"] * raf_len / 1000.0
+        Wd = 1.4 * (cfg["D_roof"] * cfg["spacing_ft"] * raf_len / 1000.0 +
+                    res.get("frame_self_weight_kip", 0.0))       # D includes self-weight
         if abs(Ry - Wd) / Wd > 0.02:
             probs.append("1.4D reactions %.2f != %.2f dead" % (Ry, Wd))
     up = res["combos"].get("0.9D+1.0W")
@@ -441,11 +442,13 @@ def gates_portal(s, cfg, res):
 
 def presults_block(res):
     out = []
-    for mkey, lab in (("col", "col_L"), ("raf", "raf_L")):
+    for mkey in ("col", "raf"):
         g = res["governing"][mkey]
+        lab = res["governing_label"][mkey]                      # envelope of BOTH sides
         e = res["combos"][g]["envelope"][lab]
-        out.append("%s (%s): governing %s -- P=%.1f kip, M=%.0f kip-in, V=%.1f kip"
-                   % (mkey, res["sections"][mkey], g, e["P_kip"], e["M_kipin"], e["V_kip"]))
+        out.append("%s (%s): governing %s on %s -- P=%.1f kip, M=%.0f kip-in, V=%.1f kip"
+                   % (mkey, res["sections"][mkey], g, lab, e["P_kip"], e["M_kipin"],
+                      e["V_kip"]))
     up = res["combos"]["0.9D+1.0W"]
     Tmax = max((-r[1] for r in up["reactions_kip"].values()), default=0.0)
     out.append("0.9D+1.0W: net uplift %s (max %.1f kip/base); service eave sway %.2f in "
@@ -454,7 +457,8 @@ def presults_block(res):
     if "eff_stiffness" in res:
         r = res["eff_stiffness"]["ratios"]
         out.append("Tier-1 effective stiffness (converged): col I/Ig=%.2f, raf I/Ig=%.2f "
-                   "(0.8E + 0.002 notional + P-Delta on strength combos)"
+                   "(AISI S100-16 C1.1: 0.90 EA/EI x tau_b + Yi/240 notional + P-Delta "
+                   "on strength combos)"
                    % (r["col"]["I_over_gross"], r["raf"]["I_over_gross"]))
     if res.get("torsion_companion"):
         t = res["torsion_companion"][0]
@@ -493,7 +497,8 @@ PSPECS = [
       desc="40-ft clear span, 16-ft eave / 20-ft apex, frames at 20 ft, back-to-back deep "
            "channels, SDC C site with 115 mph wind. The 'hello world' of the portal path: "
            "full LRFD combo set incl. the 0.9D+1.0W net-uplift anchorage case, Tier-1 "
-           "effective-stiffness iteration, direct analysis (0.8E + notional + P-Delta).",
+           "effective-stiffness iteration, direct analysis (AISI S100-16 C1.1: 0.90 tau_b "
+           "stiffness + Yi/240 notional + P-Delta).",
       span=40.0, eave=16.0, apex=20.0, spacing=20.0, col="2x1200S350-118",
       raf="2x1200S350-97", D_roof=5.0, Lr=20.0, snow_pg=15.0, V_mph=115, SDS=0.50,
       SDC="C", feature="starter,LRFD combos,net uplift,Tier 1,direct analysis"),
