@@ -95,7 +95,7 @@ TOOL_SPECS = [
           "Execute Python in an ISOLATED SANDBOX with the steel engine importable and cwd=jobs/<name>/. "
           "Drive pipeline.design_and_report(name, cfg). No network, no installs.",
           {"code": {"type": "string", "description": "Python source to execute"}}, ["code"]),
-    _spec("write_file", "Write a file into the workspace (e.g. jobs/<name>/cfg.py or design/calc_package.json).",
+    _spec("write_file", "Write a file into the workspace (e.g. jobs/<name>/cfg.py or design/calc_package_cfs.json).",
           {"path": {"type": "string"}, "content": {"type": "string"}}, ["path", "content"]),
     _spec("read_file", "Read a file (job workspace or engine source). Returns <=600 lines; paginate with offset/limit.",
           {"path": {"type": "string"}, "offset": {"type": "integer"}, "limit": {"type": "integer"}}, ["path"]),
@@ -213,56 +213,184 @@ def _r21_gate(ws, code):
 
 
 # ---------------- hardening #2: blocking completion gate (app-side, engine-free) ----------------
+def _dcnum(x):
+    """A D/C as a number: numbers pass through; a string counts when it STARTS with a number
+    ('0.93 (governs)'); qualitative strings ('OK', 'n/a') are not a D/C."""
+    if isinstance(x, bool):
+        return None
+    if isinstance(x, (int, float)):
+        return float(x)
+    if isinstance(x, str):
+        m = re.match(r"\s*(-?\d*\.?\d+)", x)
+        if m:
+            try:
+                return float(m.group(1))
+            except ValueError:
+                return None
+    return None
+
+
 def _dc_and_cite(x):
-    """(dcs, cited) across a slot's top level and its checks list."""
+    """(dcs, cited) across a slot's top level, its checks list and its schedule rows."""
     checks = [c for c in (x.get("checks") or []) if isinstance(c, dict)]
-    dcs = [d for d in [x.get("DC")] + [c.get("DC") for c in checks] if isinstance(d, (int, float))]
+    rows = [r for r in (x.get("rows") or []) if isinstance(r, dict)] if isinstance(x.get("rows"), list) else []
+    dcs = [d for d in [_dcnum(x.get("DC"))] + [_dcnum(c.get("DC")) for c in checks]
+           + [_dcnum(r.get("DC")) for r in rows] if d is not None]
     cited = bool(x.get("cited")) or any(c.get("cited") for c in checks)
     return dcs, cited
 
 
-def _completion_gate(ws):
-    """Lightweight JSON checks on jobs/<building>/design/calc_package.json before a final answer
-    is accepted. Returns a list of problems ([] = clean). Understands BOTH package shapes:
-    the CFS wall-path schema (wall_lines / holddowns / studs / collectors seeded by cfs_pipeline)
-    and the frame-path members/connections schema (portals). A slot may carry
-    {'waived': '<engineering justification>'} instead of capacities to pass explicitly."""
+_WAIVER_SCOPE_WORDS = ("existing", "retrofit", "by others", "out of scope", "not in scope",
+                       "outside the scope", "delegated", "handed off", "eor of record",
+                       "not applicable", "does not apply")
+
+
+def _waiver_problem(label, x):
+    """A waiver is an explicit, justified exemption: >= 15 characters of reason; an NG (D/C > 1)
+    waiver additionally needs a declared scope (existing / by others / out of scope)."""
+    w = x.get("waived")
+    txt = w if isinstance(w, str) else ""
+    if len(txt.strip()) < 15:
+        return "%s '%s' is waived without an engineering justification (waived=%r)" % (
+            label, x.get("id") or x.get("check"), w)
+    dcs, _c = _dc_and_cite(x)
+    if dcs and max(dcs) > 1.001:
+        scope = str(x.get("waiver_scope") or "").lower()
+        if scope not in ("existing", "by_others", "out_of_scope", "not_applicable") and \
+                not any(k in txt.lower() for k in _WAIVER_SCOPE_WORDS):
+            return ("%s '%s' is WAIVED at D/C = %.3f > 1.0 -- only a scoped existing / by-others "
+                    "item may be waived NG (set waiver_scope + justification) -- redesign it"
+                    % (label, x.get("id") or x.get("check"), max(dcs)))
+    return None
+
+
+def _drift_row_problem(r):
+    """Failing drift / theta row (mirrors consistency._drift_table_issues)."""
+    if not isinstance(r, dict) or r.get("waived"):
+        return None
+    rid = r.get("check") or "%s line %s story %s" % (r.get("direction"), r.get("line"), r.get("story"))
+    def num(k):
+        v = r.get(k)
+        return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else None
+    val = next((num(k) for k in ("drift_design", "drift_amplified_design", "drift_amplified",
+                                 "ratio", "drift_ratio", "value_ratio", "theta") if num(k) is not None), None)
+    lim = next((num(k) for k in ("limit", "limit_ratio", "drift_limit", "theta_max")
+                if num(k) is not None), None)
+    dc = _dcnum(r.get("DC"))
+    dd = num("drift_design")
+    fail = (r.get("ok") is False) or (dc is not None and dc > 1.001) or \
+           (val is not None and lim and val > lim * (1 + 1e-6))
+    if fail and dd is not None and lim and dd <= lim and r.get("ok") is not False:
+        fail = False
+    if fail:
+        return ("drift/stability row '%s' FAILS (%s vs limit %s) -- stiffen and re-run; a "
+                "*_resolution note does not clear a failing row" % (rid, val if val is not None else dc, lim))
+    if r.get("ok") is None and dc is None:
+        return "drift/serviceability row '%s' has no verdict -- state the criterion and set ok / DC" % rid
+    return None
+
+
+def _theta_problems(pkg):
+    out = []
+    def walk(o, path):
+        if isinstance(o, dict):
+            th = o.get("theta")
+            if isinstance(th, (int, float)) and not isinstance(th, bool) and not o.get("waived"):
+                lim = next((o.get(k) for k in ("theta_max", "theta_limit", "limit")
+                            if isinstance(o.get(k), (int, float)) and not isinstance(o.get(k), bool)), None)
+                lim = min(float(lim), 0.25) if lim else 0.25
+                if th > lim + 1e-9 or o.get("ok") is False:
+                    out.append("P-Delta theta = %.3f > theta_max = %.3f at %s (ASCE 7-22 12.8.7) -- "
+                               "stiffen the structure" % (th, lim, path or "package"))
+            for k, v in o.items():
+                if k != "combos":
+                    walk(v, (path + "." + str(k)) if path else str(k))
+        elif isinstance(o, list):
+            for i, v in enumerate(o):
+                walk(v, "%s[%d]" % (path, i))
+    walk(pkg, "")
+    return out
+
+
+def _resolve_package(jd):
+    """(path, problems) for the ONE authoritative package (same rule as
+    consistency.package_path): calc_package_cfs.json on CFS jobs; a legacy calc_package.json is
+    read only when it is the sole file; both present = a problem."""
     import pathlib
+    d = pathlib.Path(jd) / "design"
+    cfs, hr = d / "calc_package_cfs.json", d / "calc_package.json"
+    cfg_txt = ""
+    try:
+        cfg_txt = (pathlib.Path(jd) / "cfg.py").read_text(errors="replace")
+    except Exception:
+        pass
+    cfs_job = cfs.exists() or bool(re.search(r"\b(lines_x|lines_y|span_ft)\b", cfg_txt))
+    if cfs_job and cfs.exists() and hr.exists():
+        return cfs, ["TWO package files (design/calc_package_cfs.json AND design/calc_package.json) -- "
+                     "the CFS package is calc_package_cfs.json; merge any fills from calc_package.json "
+                     "into it and delete calc_package.json"]
+    if cfs.exists():
+        return cfs, []
+    if hr.exists():
+        return hr, []
+    return None, ["design/%s does not exist -- run pipeline.design_and_report first"
+                  % ("calc_package_cfs.json" if cfs_job else "calc_package.json")]
+
+
+def _completion_gate(ws):
+    """Checks on the job's ONE authoritative package (design/calc_package_cfs.json on CFS jobs)
+    before a final answer is accepted. Returns a list of problems ([] = clean). Engine-free
+    (the engine runs in the sandbox), so it reads what the engine wrote:
+      * every slot: numeric D/C (string D/Cs parsed) <= 1.0 + a cited clause, or a JUSTIFIED
+        waiver (an NG waiver needs a declared existing / by-others scope);
+      * CFS completeness (sheathing + fasteners, hold-downs designed, connections, collectors);
+      * drift_table rows and any reported P-Delta theta must PASS -- a *_resolution note never
+        clears a failing row; unresolved model-vs-tributary / drift flags; a declared two-stage
+        podium must be ELIGIBLE in the framework block;
+      * consistency.check must have run CLEAN on THIS package: design/consistency_result.json
+        (written by consistency.check) must say PASS and carry the package's current sha1;
+      * report.html must be newer than the package (re-render with report.build_report).
+    HR-14 port: the gate now fails on the consistency result, drift/theta and the sanity flags,
+    not only on the slot D/Cs."""
+    import pathlib, hashlib
     probs = []
     try:
         jd = ws._job_dir() if hasattr(ws, "_job_dir") else None
         if not jd:
             return []
-        cp = pathlib.Path(jd) / "design" / "calc_package.json"
-        if not cp.exists():
-            cp2 = pathlib.Path(jd) / "design" / "calc_package_cfs.json"
-            if cp2.exists():
-                cp = cp2
-            else:
-                return ["design/calc_package.json does not exist -- run pipeline.design_and_report first"]
-        pkg = json.loads(cp.read_text(errors="replace"))
+        cp, p0 = _resolve_package(jd)
+        probs += p0
+        if cp is None:
+            return probs
+        raw = cp.read_bytes()
+        pkg = json.loads(raw.decode("utf-8", errors="replace"))
         walls = pkg.get("wall_lines") or []
         hds = pkg.get("holddowns") or []
         studs = pkg.get("studs") or []
         colls = pkg.get("collectors") or []
         mem = pkg.get("members") or []
         con = pkg.get("connections") or []
-        cfs = bool(walls or hds)
+        cfs = bool(walls or hds) or pkg.get("kind") == "cfs_portal"
         # ---- generic D/C + citation discipline on every slot type ----
         for label, lst in (("wall", walls), ("hold-down", hds), ("stud", studs),
                            ("collector", colls), ("member", mem), ("connection", con),
                            ("anchorage", pkg.get("anchorage") or []),
                            ("schedule", pkg.get("schedules") or [])):
             for x in lst:
-                if not isinstance(x, dict) or x.get("waived"):
+                if not isinstance(x, dict):
+                    continue
+                if x.get("waived"):
+                    wp = _waiver_problem(label, x)
+                    if wp:
+                        probs.append(wp)
                     continue
                 dcs, cited = _dc_and_cite(x)
                 if not dcs:
-                    probs.append("%s '%s' has no D/C (top-level or in checks) and no waiver"
+                    probs.append("%s '%s' has no numeric D/C (top-level, in checks or rows) and no waiver"
                                  % (label, x.get("id")))
                 elif max(dcs) > 1.001:
                     probs.append("%s '%s' has D/C = %.3f > 1.0 -- redesign (denser fastener schedule / "
-                                 "added wall / heavier mil / rod switch) or waive with justification"
+                                 "added wall / heavier mil / rod switch) or waive a scoped existing item"
                                  % (label, x.get("id"), max(dcs)))
                 if not cited:
                     probs.append("%s '%s' has no cited clause (AISI S100/S240/S400)"
@@ -300,7 +428,12 @@ def _completion_gate(ws):
                 probs.append("framework screen: plan is re-entrant/setback but NO designed collector "
                              "exists in the package -- add a collector entry with demand (Om0 share), "
                              "components and D/C (or a waiver with justification)")
-        # unresolved framework gates surfaced in the package must be addressed in prose fields
+        # ---- sanity: drift rows, theta, framework gates (HR-14 / CFS-29) ----
+        for r in pkg.get("drift_table") or []:
+            dp = _drift_row_problem(r)
+            if dp:
+                probs.append(dp)
+        probs += _theta_problems(pkg)
         for key, what in (("model_vs_tributary_flags", "model-vs-tributary divergence"),
                           ("drift_flags", "drift limit exceedance")):
             flags = pkg.get(key) or []
@@ -308,27 +441,62 @@ def _completion_gate(ws):
                 probs.append("%d unresolved %s flag(s) -- fix the design and re-run, or write the "
                              "engineering justification into pkg['%s_resolution']"
                              % (len(flags), what, key))
+        ts = pkg.get("two_stage_framework")
+        if isinstance(ts, dict):
+            for d, v in (ts.get("by_direction") or {}).items():
+                if str(v.get("status", "")).upper() != "ELIGIBLE":
+                    probs.append("two-stage podium (12.2.3.2) %s: %s -- supply the podium data in "
+                                 "cfg['two_stage'] and re-run, or design as a single structure"
+                                 % (d, v.get("status") or "NOT EVALUATED"))
+        # ---- consistency.check must be CLEAN on THIS package ----
+        stamp = pathlib.Path(jd) / "design" / "consistency_result.json"
+        sha = hashlib.sha1(raw).hexdigest()
+        if not stamp.exists():
+            probs.append("consistency.check(name) has not been run on the final package -- run it "
+                         "and reconcile every issue")
+        else:
+            try:
+                st = json.loads(stamp.read_text(errors="replace"))
+            except Exception:
+                st = {}
+            if st.get("package") != cp.name or st.get("package_sha1") != sha:
+                probs.append("the package changed after the last consistency.check -- re-run "
+                             "consistency.check(name) on the final %s" % cp.name)
+            elif st.get("n_issues", 1) or st.get("result") != "PASS":
+                iss = st.get("issues") or []
+                probs.append("consistency.check FAILS with %s issue(s): %s" % (
+                    st.get("n_issues"), " | ".join(str(i)[:140] for i in iss[:3])))
+        # ---- the report must render the final package ----
+        rep = pathlib.Path(jd) / "report.html"
+        if not rep.exists():
+            probs.append("report.html missing -- render it with report.build_report(name)")
+        elif rep.stat().st_mtime + 1e-6 < cp.stat().st_mtime:
+            probs.append("report.html is older than the package -- re-render with "
+                         "report.build_report(name) so the deliverable shows the final values")
     except Exception as e:
-        return ["completion gate could not read calc_package.json: %s" % e]
-    return probs[:12]
+        return ["completion gate could not read the calc package: %s" % e]
+    return probs[:14]
 
 
 
 # hardening #7: phase-sliced contract hints -- tiny, in-context, fired at most once each.
 _PHASE_HINTS = (
     ("feet", re.compile(r"look like FEET", re.I),
-     "UNITS: the engine is KIP-INCH. Multiply every story height / bay spacing by 12 and re-run "
-     "design_and_report BEFORE chasing analysis numbers (a feet-cfg makes every result ~12x wrong)."),
+     "UNITS: this cfg went to the HOT-ROLLED grid engine (KIP-INCH). A CFS building must use the "
+     "wall-path (lines_x/lines_y, heights_ft) or portal-path (span_ft ...) schema, both in FEET; a "
+     "grid cfg needs every story height / bay spacing x12. Fix the cfg and re-run design_and_report "
+     "BEFORE chasing analysis numbers."),
     ("orient", re.compile(r"ORIENTATION: drift in [XY] is", re.I),
      "ORIENTATION (frame path -- portals): a frame column's STRONG axis must lie IN its "
      "frame's plane. Set strong_dir per line in add_column; fix strong_dir, rebuild, re-check -- "
      "do not resize members to chase orientation drift."),
     ("tribgate", re.compile(r"model.vs.tributary|model_vs_tributary", re.I),
-     "MODEL-VS-TRIBUTARY GATE: the OpenSees wall model and the independent tributary validator "
-     "disagree on a line's shear. Either the model is wrong (fix segments/positions/stiffness "
-     "inputs and re-run) or the divergence is real physics (open front, plan offset, mixed "
-     "diaphragms) -- then write the justification into pkg['model_vs_tributary_flags_resolution']. "
-     "Never leave the flag unaddressed."),
+     "MODEL-VS-TRIBUTARY GATE: a line's engine shear disagrees with the independent simple-span "
+     "tributary recomputation from the line positions (flexible) or with the tributary split "
+     "(semi-rigid coupled solve). Either the model is wrong (coincident/mis-fitted positions, a line "
+     "with no wall at a story, a patched distribution -- fix and re-run) or it is a stated "
+     "idealization (trib_scale, open front, plan offset) -- then write the justification into "
+     "pkg['model_vs_tributary_flags_resolution']. Never leave the flag unaddressed."),
     ("preflight", re.compile(r"\[preflight\] R22.*\[ERROR\]", re.S),
      "PREFLIGHT ERRORS above are cfg mis-declarations -- fix them in cfg.py and re-run the pipeline "
      "before doing ANY member design; every downstream number changes."),
@@ -617,8 +785,9 @@ def _resume_preamble(ws, building):
         if p.exists():
             src = p.read_text(encoding="utf-8", errors="replace")[:20000]
             return ("RESUME -- a previous design for this building exists. Below is its saved cfg.py: read it, keep "
-                    "what is sound, apply any requested change, then re-run pipeline.design_and_report and update "
-                    "calc_package.json.\n\nEXISTING cfg.py:\n```python\n%s\n```\n\n" % src)
+                    "what is sound, apply any requested change, then re-run pipeline.design_and_report (a FILLED "
+                    "package is backed up to design/calc_package_cfs.json.filled.bak; pipeline.merge_fills(name) "
+                    "carries the fills back) and update design/calc_package_cfs.json.\n\nEXISTING cfg.py:\n```python\n%s\n```\n\n" % src)
     except Exception:
         pass
     return ""
@@ -707,7 +876,7 @@ def run_design(ws, executor, base_url, api_key, model, building, brief, max_tok=
                 messages.append({"role": "user", "content":
                     brief + "\n\n(Apply this change to the existing design: edit jobs/" + building +
                     "/cfg.py, re-run pipeline.design_and_report for fresh demands, re-derive the affected "
-                    "AISI capacities/schedules into calc_package.json, run consistency.check, then re-render with "
+                    "AISI capacities/schedules into design/calc_package_cfs.json, run consistency.check, then re-render with "
                     "report.build_report. Keep everything else as-is.)"})
                 yield {"type": "status", "text": f"continuing '{building}' with your new instruction ({len(messages)} messages in context)"}
             else:                           # empty brief -> plain resume of an interrupted run
@@ -772,7 +941,7 @@ def run_design(ws, executor, base_url, api_key, model, building, brief, max_tok=
             nudged = True
             messages.append({"role": "user", "content":
                 "You have gathered ample AISI references -- STOP searching now and DERIVE the capacities: apply "
-                "the clauses you found to the demands and fill every seeded slot in design/calc_package.json "
+                "the clauses you found to the demands and fill every seeded slot in design/calc_package_cfs.json "
                 "(wall_lines with sheathing + fastener_schedule, holddowns, studs, collectors, connections, "
                 "capacity_design), then run consistency.check and report.build_report. "
                 "Re-search only ONE specific equation if it is genuinely missing."})
@@ -821,7 +990,7 @@ def run_design(ws, executor, base_url, api_key, model, building, brief, max_tok=
                     "Your previous turn was " + ("cut off before making a tool call. Use LESS reasoning" if truncated
                     else "EMPTY -- you produced no text and no tool call") + ". Do NOT stop here -- the design is not "
                     "finished. CONTINUE with your NEXT tool call (write cfg.py, run pipeline.design_and_report, derive "
-                    "AISI capacities/schedules into calc_package.json, run consistency.check, build the report). Give a final "
+                    "AISI capacities/schedules into design/calc_package_cfs.json, run consistency.check, build the report). Give a final "
                     "written answer ONLY if the design is genuinely complete (report built, consistency.check passes)."})
                 continue
             if not final_text:                                  # exhausted nudges, still empty -> pause, never fake 'done'
@@ -838,7 +1007,7 @@ def run_design(ws, executor, base_url, api_key, model, building, brief, max_tok=
                 yield {"type": "milestone", "text": "completion gate: %d problem(s) -- run continues"
                        % len(_gate_probs)}
                 messages.append({"role": "user", "content":
-                    "COMPLETION GATE (enforced): the design is NOT done -- calc_package.json has "
+                    "COMPLETION GATE (enforced): the design is NOT done -- the calc package has "
                     "unresolved problems:\n- " + "\n- ".join(_gate_probs) +
                     "\nFix each one (resize the member and re-run the pipeline, design the missing "
                     "connection/collector, or add {'waived': '<engineering justification>'} to the entry "
@@ -1036,7 +1205,8 @@ def _milestones(name, args, result):
     if name == "write_file":
         p = (args.get("path") or "").lower()
         if p.endswith("cfg.py"): out.append("cfg.py saved")
-        elif p.endswith("calc_package.json"): out.append("Capacities written to calc_package.json")
+        elif p.endswith("calc_package_cfs.json") or p.endswith("calc_package.json"):
+            out.append("Capacities written to " + p.rsplit("/", 1)[-1])
     if name == "run_python" and result.get("returncode") == 0:
         c = args.get("code", "")
         if "design_and_report" in c: out.append("Model analysed — demands + figures + report generated")
