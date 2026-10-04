@@ -1232,81 +1232,226 @@ def write_package(name, cfg, res, outdir="."):
 
 # ---------------- Stage 4: portal package ----------------
 
+PORTAL_COMBOS_NOTE = (
+    "ASCE 7-22 2.3.1 LRFD: 1.4D; 1.2D+1.6L+(0.5Lr or 0.3S) [crane/point L]; "
+    "1.2D+(1.6Lr or 1.0S)+(L or 0.5W) -- BOTH branches (wind-free and every wind case); "
+    "1.2D+1.0W+L+(0.5Lr or 0.3S); 0.9D+1.0W (NET UPLIFT, a REQUIRED anchorage case); 2.3.6 "
+    "(1.2+0.2SDS)D+rho*E+L+0.15S and (0.9-0.2SDS)D+rho*E for +/-E, plus the Omega_0 pair "
+    "(role 'overstrength'). Wind: both directions, both internal-pressure signs, both "
+    "windward-roof Cp branches and the along-ridge case. Analysis: AISI S100-16 C1.1 direct "
+    "analysis (0.90 EA/EI x tau_b, notional Ni = Yi/240, P-Delta).")
+
+
+def _pair_rows(env):
+    out = []
+    for key, basis in (("M_max", "max |M|"), ("M_inside_max", "max M, inside flange in tension"),
+                       ("M_outside_max", "max M, outside flange in tension"),
+                       ("Pc_max", "max compression"), ("Pt_max", "max tension (uplift)"),
+                       ("V_max", "max shear")):
+        e = env.get(key)
+        if e:
+            out.append(dict(basis=basis, combo=e["combo"], label=e["label"],
+                            M_kipin=e["M_kipin"], M_pos_kipin=e["M_pos_kipin"],
+                            M_neg_kipin=e["M_neg_kipin"], Pc_kip=e["Pc_kip"],
+                            Pt_kip=e["Pt_kip"], V_kip=e["V_kip"]))
+    return out
+
+
 def build_portal_package(name, cfg, res):
     """calc_package for the PORTAL path (cfs_frame.run() result). Same contract discipline:
-    demand slots seeded, every capacity/citation field left for the agent. Slots: frame members
-    (col/raf envelope + governing combo), knee/apex connection transfer, base anchorage
-    (max shear + NET UPLIFT across combos), purlin/girt/strap schedule seeds, torsion table
-    (single channels), eave-drift serviceability row."""
-    pkg = dict(building=name, code="AISI S100-16(R2020)+S2/S3 -- LRFD; ASCE 7-22",
-               kind="cfs_portal", system="portal frame",
-               structure_kind=res["structure_kind"], combos_note=COMBOS_NOTE,
+    demand slots seeded, every capacity/citation field left for the agent.
+    Member slots envelope EVERY column (col_L, col_R, interior) and EVERY rafter (raf_L,
+    raf_R) over the strength combinations with wind from both sides (CFS-02); each carries
+    the governing (max |M|) combo with its PAIRED P/V and the max-compression / max-tension /
+    inside- and outside-flange pairs (CFS-26). Joint slots: BOTH knees and the apex (the
+    rafter end AT the ridge -- a prior version seeded the apex with the eave-end moment),
+    signed (+ = inside flange in tension). Monoslopes have no ridge joint. Anchorage: max
+    shear, NET UPLIFT, compression and base moment, plus Omega_0-level seeds when seismic.
+    Seismic (drift Cd delta_xe/Ie, theta, rho, Omega_0), SBMF screens/Ve, crane and fatigue
+    slots when declared."""
+    pkg = dict(building=name, code="AISI S100-16(R2020)+S2/S3, S400-20 -- LRFD; ASCE 7-22",
+               kind="cfs_portal", system=cfg.get("system") or "portal frame",
+               structure_kind=res["structure_kind"], combos_note=PORTAL_COMBOS_NOTE,
+               combos=[dict(label=n, role=c.get("role", "strength"))
+                       for n, c in res["combos"].items()],
                sections=res["sections"], members=[], connections=[], anchorage=[],
                schedules=[], drift_table=[],
                preflight_warnings=res.get("preflight_warnings", []),
                wind_basis=res.get("wind_basis", {}), notes=list(res.get("notes", [])))
-    if "eff_stiffness" in res:
-        pkg["analysis_basis"] = dict(
-            tier=cfg.get("analysis_fidelity", 1),
-            direct_analysis=cfg.get("direct_analysis", True),
-            eff_stiffness=res["eff_stiffness"]["ratios"],
-            note="Tier-1 effective-stiffness iterated (0.8E + notional + P-Delta on strength "
-                 "combos); member capacities incl. distortional/global + H1 are the AGENT's")
-    for mkey, lab in (("col", "col_L"), ("raf", "raf_L")):
-        gname = res["governing"][mkey]
-        env = res["combos"][gname]["envelope"][lab]
+    da = res.get("direct_analysis") or {}
+    pkg["analysis_basis"] = dict(
+        tier=cfg.get("analysis_fidelity", 1),
+        direct_analysis=cfg.get("direct_analysis", True),
+        direct_analysis_basis=da.get("basis"),
+        max_second_order_amplification=da.get("max_amplification"),
+        eff_stiffness=(res.get("eff_stiffness") or {}).get("ratios"),
+        n_ply=(res.get("eff_stiffness") or {}).get("n_ply"),
+        frame_self_weight_kip=res.get("frame_self_weight_kip"),
+        note="Tier-1 effective-stiffness iterated on PER-PLY demands (S100 App. 1 EWM); "
+             "direct analysis per AISI S100-16 C1.1 (0.90 EA/EI x tau_b, notional Ni = "
+             "Yi/240 in the destabilising direction, P-Delta) on the strength combos; member "
+             "capacities incl. distortional/global + H1 are the AGENT's (K = 1, C1.1.2)")
+    for g, label in (("col", "columns (col_L, col_R%s)" % (", interior" if cfg.get("spans")
+                                                           else "")),
+                     ("raf", "rafters (raf_L, raf_R)")):
+        env = (res.get("member_envelopes") or {}).get(g)
+        if not env:
+            continue
+        mx = env["M_max"]
         pkg["members"].append(dict(
-            id="frame-%s" % mkey, member=mkey, section=res["sections"][mkey],
-            governing_combo=gname, P_kip=env["P_kip"], V_kip=env["V_kip"],
-            M_kipin=env["M_kipin"],
-            note="AGENT: EWM local+distortional+global, H1 interaction; knee-region "
-                 "distortional with the UNBRACED inside flange; uplift-reversal unbraced case",
+            id="frame-%s" % g, member=g, section=res["sections"][g],
+            governing_combo=mx["combo"], governing_label=mx["label"],
+            P_kip=mx["P_kip"], Pc_paired_kip=mx["Pc_kip"], Pt_paired_kip=mx["Pt_kip"],
+            V_kip=mx["V_kip"], M_kipin=mx["M_kipin"],
+            M_signed_kipin=(mx["M_pos_kipin"] if mx["M_pos_kipin"] >= -mx["M_neg_kipin"]
+                            else mx["M_neg_kipin"]),
+            demand_pairs=_pair_rows(env),
+            envelope_basis="envelope of ALL %s over every strength combination, wind from "
+                           "both sides; M + = inside flange in tension" % label,
+            note="AGENT: EWM local+distortional+global, H1 interaction for EVERY demand pair "
+                 "(max M with its P, max compression with its M, uplift tension with its M); "
+                 "knee-region distortional with the UNBRACED inside flange; uplift-reversal "
+                 "unbraced case",
             limit_state=None, cited=None, capacity=None, DC=None))
-    # knee/apex transfer = max member end moment at those joints across combos
-    knee = apex = 0.0
-    for cname, cd in res["combos"].items():
-        for lab in ("col_L", "col_R"):
-            knee = max(knee, abs(cd["envelope"][lab]["M_kipin_stations"][-1]))
-        for lab in ("raf_L", "raf_R"):
-            apex = max(apex, abs(cd["envelope"][lab]["M_kipin_stations"][-1]))
-    for jname, M in (("knee", knee), ("apex", apex)):
+    kb = (res.get("member_envelopes") or {}).get("kb")
+    if kb:
+        pkg["members"].append(dict(
+            id="frame-kb", member="kb", section=(cfg.get("knee_braces") or {}).get("section"),
+            governing_combo=kb["Pc_max"]["combo"], P_kip=max(kb["Pc_max"]["Pc_kip"],
+                                                             kb["Pt_max"]["Pt_kip"]),
+            Pc_kip=kb["Pc_max"]["Pc_kip"], Pt_kip=kb["Pt_max"]["Pt_kip"], V_kip=0.0,
+            M_kipin=0.0, demand_pairs=_pair_rows(kb),
+            note="AGENT: pin-ended knee brace -- compression (E, K = 1) and tension + end "
+                 "connections", limit_state=None, cited=None, capacity=None, DC=None))
+    joints = res.get("joints") or {}
+
+    def conn(jid, jname, keys, note):
+        rows = {k: joints[k] for k in keys if k in joints}
+        if not rows:
+            return
+        Mpos = max(r["M_pos"] for r in rows.values())
+        Mneg = min(r["M_neg"] for r in rows.values())
+        kp = max(rows, key=lambda k: rows[k]["M_pos"])
+        kn = min(rows, key=lambda k: rows[k]["M_neg"])
         pkg["connections"].append(dict(
-            id="conn-%s" % jname, joint=jname, M_transfer_kipin=round(M, 1),
-            note="AGENT: bolted gusset bracket -- bolt group, bearing, net section, "
-                 "gusset buckling; bracing assumption at the joint STATED",
-            limit_state=None, cited=None, capacity=None, DC=None))
-    Vmax = Tup = Mmax = 0.0
-    up_combo = None
+            id=jid, joint=jname, M_transfer_kipin=round(max(Mpos, -Mneg), 1),
+            M_pos_kipin=round(Mpos, 1), combo_pos=rows[kp]["combo_pos"], at_pos=kp,
+            M_neg_kipin=round(Mneg, 1), combo_neg=rows[kn]["combo_neg"], at_neg=kn,
+            V_max_kip=round(max(r["V_max"] for r in rows.values()), 2),
+            by_joint={k: dict(M_pos=v["M_pos"], combo_pos=v["combo_pos"], M_neg=v["M_neg"],
+                              combo_neg=v["combo_neg"], V_max=v["V_max"])
+                      for k, v in rows.items()},
+            sign="M + = inside flange in tension (both signs must be detailed)",
+            note=note, limit_state=None, cited=None, capacity=None, DC=None))
+    conn("conn-knee", "knee", ("knee_L", "knee_R"),
+         "AGENT: bolted gusset bracket at BOTH knees (windward and leeward envelope) -- bolt "
+         "group, bearing, net section, gusset buckling, for BOTH moment signs; bracing "
+         "assumption at the joint STATED")
+    apex_keys = [k for k in joints if k.startswith("apex")]
+    if apex_keys:
+        conn("conn-apex", "apex", apex_keys,
+             "AGENT: ridge splice -- moment AT THE RIDGE (rafter end at the apex node), both "
+             "signs")
+    elif cfg.get("monoslope"):
+        pkg["notes"].append("monoslope: no ridge joint -- the rafter is continuous; add a "
+                            "splice slot only if the rafter is spliced")
+    valley = [k for k in joints if k.startswith("valley")]
+    if valley:
+        conn("conn-valley", "valley", valley, "AGENT: valley column-to-rafter joints")
+    Vmax = Tup = Mmax = Cmax = 0.0
+    up_combo = v_combo = c_combo = None
+    per_base = {}
     for cname, cd in res["combos"].items():
+        if cd.get("role") != "strength":
+            continue
         for t, r in cd["reactions_kip"].items():
-            Vmax = max(Vmax, abs(r[0]))
+            pb = per_base.setdefault(str(t), dict(V=0.0, T=0.0, C=0.0, M=0.0))
+            pb["V"] = max(pb["V"], abs(r[0]))
+            pb["T"] = max(pb["T"], -r[1])
+            pb["C"] = max(pb["C"], r[1])
             if len(r) > 2:
+                pb["M"] = max(pb["M"], abs(r[2]))
                 Mmax = max(Mmax, abs(r[2]))
+            if abs(r[0]) > Vmax:
+                Vmax, v_combo = abs(r[0]), cname
+            if r[1] > Cmax:
+                Cmax, c_combo = r[1], cname
             if r[1] < -Tup:
                 Tup, up_combo = -r[1], cname
-    pkg["anchorage"].append(dict(
-        id="base-anchor", V_base_kip=round(Vmax, 2), T_net_uplift_kip=round(Tup, 2),
-        M_base_kipin=round(Mmax, 1), uplift_combo=up_combo,
-        note="AGENT: base plate + anchor rods; NET UPLIFT is a required case (0.9D+1.0W)"
-             + ("; FIXED base -- design the anchor group for M_base too" if Mmax > 1.0
-                else ""),
-        limit_state=None, cited=None, capacity=None, DC=None))
+    anc = dict(
+        id="base-anchor", V_base_kip=round(Vmax, 2), V_combo=v_combo,
+        T_net_uplift_kip=round(Tup, 2), uplift_combo=up_combo,
+        C_base_kip=round(Cmax, 2), C_combo=c_combo, M_base_kipin=round(Mmax, 1),
+        per_base={k: {kk: round(vv, 2) for kk, vv in v.items()} for k, v in per_base.items()},
+        note="AGENT: base plate + anchor rods; NET UPLIFT is a required case (0.9D+1.0W, every "
+             "wind case)" + ("; FIXED base -- design the anchor group for M_base too"
+                            if Mmax > 1.0 else ""),
+        limit_state=None, cited=None, capacity=None, DC=None)
+    om = [n for n, c in res["combos"].items() if c.get("role") == "overstrength"]
+    if om:
+        Vo = max(abs(r[0]) for n in om for r in res["combos"][n]["reactions_kip"].values())
+        To = max(max(-r[1], 0.0) for n in om for r in res["combos"][n]["reactions_kip"].values())
+        anc.update(V_Om0_kip=round(Vo, 2), T_Om0_kip=round(To, 2),
+                   Om0_note="Omega_0-level seeds (2.3.6 overstrength pair) where the anchorage "
+                            "must be designed with overstrength (e.g. ACI 318 17.10 "
+                            "non-ductile anchors) -- agent states which applies")
+    pkg["anchorage"].append(anc)
     for sched, note in (("purlin", "Z-purlins, lap/continuity + uplift R-factor basis STATED"),
                         ("girt", "wall girts, C&C wind"),
                         ("strap", "longitudinal tension-only X-straps: An*Fu vs Ag*Fy, "
-                                  "connection at least strap strength")):
+                                  "connection at least strap strength%s"
+                         % ("; carries the crane LONGITUDINAL force %.2f kip (4.9.5)"
+                            % res["crane"]["longitudinal_kip"] if res.get("crane") else ""))):
         pkg["schedules"].append(dict(id="sched-%s" % sched, schedule=sched, rows=None,
                                      note="AGENT: " + note,
                                      limit_state=None, cited=None, capacity=None, DC=None))
+    if res.get("crane"):
+        pkg["crane"] = res["crane"]
+        pkg["schedules"].append(dict(
+            id="sched-crane", schedule="crane", rows=None,
+            note="AGENT: runway / monorail beam and hangers or brackets (vertical incl. "
+                 "impact, lateral, longitudinal per ASCE 7-22 4.9) and the FATIGUE scope "
+                 "(AISI S100 Chapter M: stress range, number of cycles, detail category) -- "
+                 "the frame demands above already include the crane as L",
+            fatigue_scope=None, limit_state=None, cited=None, capacity=None, DC=None))
     if res.get("torsion_companion"):
         pkg["torsion_companion"] = res["torsion_companion"]
     sv = res["service"]
     pkg["drift_table"].append(dict(check="eave_sway", value_in=sv["eave_sway_in"],
-                                   H_over=sv["H_over"], basis=sv["note"], ok=None,
+                                   H_over=sv["H_over"], wind_case=sv.get("governing_wind_case"),
+                                   basis=sv["note"], ok=None,
                                    criterion="AGENT states (e.g., H/60 metal bldg, H/240 "
                                              "w/brittle finishes) and verdicts"))
-    pkg["drift_table"].append(dict(check="apex_deflection", value_in=sv["apex_defl_in"],
+    pkg["drift_table"].append(dict(check="apex_deflection", value_in=sv.get("apex_defl_in"),
+                                   basis=sv.get("apex_defl_case"),
                                    ok=None, criterion="AGENT states span criterion"))
+    se = res.get("seismic")
+    if se:
+        pkg["seismic"] = se
+        if se.get("Delta_in") is not None:
+            pkg["drift_table"].append(dict(
+                check="seismic_drift", value_in=se["Delta_in"], ratio=se["drift_ratio"],
+                limit=se["drift_limit"], ok=se["ok"],
+                basis="Delta = Cd delta_xe / Ie = %.2f x %.4f / %.2f (12.8.6, rho = 1); limit "
+                      "%s" % (se["Cd"], se["delta_xe_in"], se["Ie"], se["drift_limit_basis"]),
+                criterion="ASCE 7-22 Table 12.12-1 (agent confirms the row)"))
+            pkg["drift_table"].append(dict(
+                check="stability_theta", value=se["theta"], limit=se["theta_max"],
+                ok=se["theta"] <= se["theta_max"], basis=se["theta_basis"],
+                criterion="ASCE 7-22 12.8.7 Eq. 12.8-16 / 12.8-17"))
+    if res.get("sbmf"):
+        sb = res["sbmf"]
+        pkg["sbmf"] = sb
+        ve = sb.get("expected_shear") or {}
+        pkg["capacity_design"] = dict(
+            basis="AISI S400-20 E4.3: beams, columns and bolt bearing plates of the CFS-SBMF "
+                  "are designed for the EXPECTED connection shear Ve = VS + VB (E4.3.3 -- bolt "
+                  "SLIP + BEARING of the 8-bolt connection), Emh need not exceed Omega_0 Eh "
+                  "(E4.3.1); the mechanism is the bolted connection, NOT Ry*Fy*Ag of a member",
+            Ve_seed=ve,
+            note="AGENT: confirm the bolt pattern (Table E4.3.3-1), t/Fu/Rt of the connected "
+                 "parts (S400 Table A3.2-1) and propagate Ve (or Omega_0 Eh where smaller) "
+                 "into the beam, column and bolt-bearing-plate (E4.3.1.2) slots")
     return pkg
 
 
@@ -1346,7 +1491,9 @@ def design_and_report(name, cfg, outdir=None, do_report=True):
         # OUT OF SCOPE with DC = 0, and the package headlines component_mode.
         # The agent's real deliverables live in the schedules + extra blocks.
         import cfs_frame as CF
-        cfgc = dict(cfg, base="fixed", structure_kind="portal")
+        # first-order (pdelta=False): the surrogate skeleton is not a design model and a
+        # second-order solve of an arbitrary shell can be sway-unstable (garbage envelopes)
+        cfgc = dict(cfg, base="fixed", structure_kind="portal", pdelta=False)
         res = CF.run(cfgc)
         p, pkg = write_portal_package(name, cfgc, res, ddir)
         pkg["component_mode"] = (
@@ -1445,7 +1592,7 @@ def _selftest():
     p2, ppkg = write_portal_package("portal-demo", pcfg, pres, tempfile.gettempdir())
     assert len(ppkg["members"]) == 2 and len(ppkg["connections"]) == 2
     assert ppkg["anchorage"][0]["T_net_uplift_kip"] > 0, "uplift anchorage slot must be live"
-    assert ppkg["anchorage"][0]["uplift_combo"] == "0.9D+1.0W"
+    assert ppkg["anchorage"][0]["uplift_combo"].startswith("0.9D+1.0W")
     assert all(m["capacity"] is None for m in ppkg["members"]), "capacity fields stay empty"
     assert len(ppkg["schedules"]) == 3 and ppkg["drift_table"][0]["ok"] is None
     scfg = dict(pcfg, col_section="1000S250-97", raf_section="1000S250-97",
