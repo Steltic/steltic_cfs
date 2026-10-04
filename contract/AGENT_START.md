@@ -626,7 +626,9 @@ with signed max/min; the apex slot is the ridge-node moment — none on a monosl
 `anchorage` (per base: V, NET UPLIFT, compression, base M, Ω0 seeds), `schedules`
 (purlin/girt/strap rows), `pkg['combos']` (every ASCE 7-22 2.3.1/2.3.6 combination run) and
 `drift_table` — eave sway / apex (YOU state the criterion and verdict) plus `seismic_drift`
-(Cd·δxe/Ie vs Table 12.12-1, ÷ρ in SDC D–F) and `stability_theta` (12.8.7) rows the gates read.
+(Cd·δxe/Ie vs Table 12.12-1, ÷ρ in SDC D–F; the 0.025 row needs `drift_tolerant_finishes=True`,
+undeclared → 0.020 'all other structures', stated in the basis) and `stability_theta` (12.8.7;
+θ = Px·Δxe/(Vx·hsx) from one loading, independent of `seis['T_drift']`) rows the gates read.
 Preflight prefixes to resolve: `WIND ENCLOSURE:`, `SEISMIC DRIFT NG`, `THETA … > theta_max`,
 `SEISMIC SYSTEM SCREEN:`, `SBMF SCREEN FAIL (…)`, `P-DELTA DIVERGED`, `P-DELTA OFF`.
 

@@ -2341,6 +2341,7 @@ def _seismic_block(cfg, secs_eff, cases, tmpl, meta0, fr0, sh, pw):
             worst = (u / h_n, u, h_n)
     dxe = worst[1]
     hsx = worst[2]
+    dxe_V = dxe            # elastic displacement under the strength-level V (12.8.7 Vx / Delta_xe)
     out["K_kip_in"] = round(sh["V_kip"] / max(abs(_sway(sol, meta)), 1e-9), 3)
     if s.get("T_drift"):
         # 12.8.6.2: drift forces may use the computed period without the Cu Ta cap;
@@ -2368,10 +2369,22 @@ def _seismic_block(cfg, secs_eff, cases, tmpl, meta0, fr0, sh, pw):
     lim = cfg.get("drift_limit")
     lim_basis = "cfg['drift_limit'] (declared)"
     if lim is None:
-        lim = CS.drift_limit(sysname if sysname in CS.SYSTEMS else "not_detailed", 1,
-                             str(cfg.get("risk_cat", "II")).upper())
-        lim_basis = "cfs_systems.drift_limit (Table 12.12-1)"
-    if cfg.get("drift_no_limit_single_story"):
+        # Table 12.12-1 row 1 (0.025 at RC I/II) needs DECLARED drift-tolerant finishes
+        # (cfg['drift_tolerant_finishes'], as on the wall path, cfs_engine.drift_limit_for);
+        # undeclared -> 'all other structures' (a portal is not a light-frame wall system),
+        # stated in the basis. (cfs_systems.drift_limit(None) returns the PERMISSIVE row-1
+        # value meant for screens only -- it must not set the design limit silently.)
+        acc = cfg.get("drift_tolerant_finishes")
+        lim, b_ = CS.drift_limit(sysname if sysname in CS.SYSTEMS else "not_detailed", 1,
+                                 str(cfg.get("risk_cat", "II")).upper(),
+                                 finishes_accommodate=bool(acc) if acc is not None else False,
+                                 with_basis=True)
+        lim_basis = "cfs_systems.drift_limit: " + b_
+        if acc is None:
+            lim_basis += ("; cfg['drift_tolerant_finishes'] NOT declared -> 'all other "
+                          "structures' assumed (declare True where the walls, partitions and "
+                          "ceilings accommodate the story drift)")
+    if cfg.get("drift_no_limit_single_story") or cfg.get("drift_limit_no_limit_single_story"):
         lim = None
         lim_basis = "Table 12.12-1 footnote a (declared: single story, finishes accommodate)"
     if lim is not None and _sdc(cfg) in ("D", "E", "F"):
@@ -2391,10 +2404,14 @@ def _seismic_block(cfg, secs_eff, cases, tmpl, meta0, fr0, sh, pw):
     # Eq. 12.8-19: beta >= 1.25/Omega_0; theta_max need not be taken < 0.10 (7-22)
     _om0v = out.get("Om0")
     beta = max(float(s.get("beta", 1.0)), 1.25 / float(_om0v) if _om0v else 0.0)
-    theta = Px * Delta * Ie / (sh["V_kip"] * hsx * Cd) if sh["V_kip"] else 0.0
+    # Vx and Delta_xe from the SAME loading (Eq. 12.8-18: Vx/Delta_xe is the story stiffness):
+    # the strength-level V with its own displacement -- NOT the 12.8.6.2 T_drift-scaled
+    # displacement over the unscaled V (that understated theta by Cs_drift/Cs).
+    theta = Px * dxe_V / (sh["V_kip"] * hsx) if sh["V_kip"] else 0.0
     tmax = max(min(0.5 / (beta * Cd), 0.25), 0.10)
     out.update(theta=round(theta, 4), theta_max=round(tmax, 4), Px_kip=round(Px, 2),
-               theta_basis="ASCE 7-22 Eq. 12.8-18 theta = Px Delta Ie / (Vx hsx Cd), Px = "
+               theta_basis="ASCE 7-22 Eq. 12.8-18 theta = Px Delta_xe / (Vx hsx) (Vx and the "
+                           "elastic Delta_xe of the same strength-level loading), Px = "
                            "D + L + 0.15S (>= the 12.8.6.1 expected gravity 1.0D + 0.5L; no "
                            "factor > 1.0), Eq. 12.8-19 theta_max = "
                            "0.5/(beta Cd) <= 0.25, >= 0.10, with beta = %.2f%s"
