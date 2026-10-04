@@ -23,7 +23,17 @@ cfg = dict(
   diaphragm="flexible",                     # or "semi-rigid" (Stage 2c: coupling elements)
   wall_props=dict(chord_area_in2=1.2, Gp_kip_in=9.0, en_in=0.03, k_anchor_kip_in=50.0),
   analysis_fidelity=0,
-  # optional: partition_psf=10.0 (12.7.2 weight, floors only, W only);
+  # optional: partition_psf=10.0 (12.7.2 weight, floors only, W only; min 10 psf) or
+  #   partitions=True; storage=True / storage_levels=[...] (12.7.2 item 1: 25% of the floor
+  #   live in W; L_by_level={k: psf}); storage_5pct_exception=True (12.7.2 exc. (a), opt-in);
+  #   extra_mass_floors={k: psf} (items 3/6);
+  # structure_kind='platform'/'mezzanine' or top_level_is_floor=True -- a single elevated
+  #   level is a FLOOR (D_floor + live + storage), never a roof;
+  # seis_by_dir={'X':..,'Y':..} / system_by_dir / rho_by_dir -- 12.2.2 different systems per
+  #   direction; line_systems={'X:A': key} -- 12.2.3.3 horizontal combination (least R), with
+  #   use_12_2_3_3_exception=True for per-line R (RC I/II, <= 2 stories, light-frame);
+  # drift_tolerant_finishes=True/False -- Table 12.12-1 row 1 (<= 4 stories) vs 'all other';
+  #   drift_limit_no_limit_single_story=True (footnote a); drift_limit= (tighter only);
   # area_sf= / perimeter_ft= (TRUE values for T/U/L plans on a bounding-box model --
   #   pair with wall_line.fit_positions for line placement);
   # per-line drift props / partial-depth lines: WallLine(..., wall_props=..., trib_scale=...)
@@ -43,33 +53,222 @@ except Exception:
 
 # ---------------- weights & ELF ----------------
 
-def story_weight(cfg, k):
-    """Seismic weight (kip) at level k (1..N, N = roof). Mirrors engine3d.floor_w: area dead +
-    tributary cladding + 15% flat snow at the roof ONLY where pf > 45 psf (ASCE 7-22
-    12.7.2 item 4; below 45 psf snow is excluded from W).
+PLATFORM_KINDS = ("platform", "mezzanine")
+
+
+def top_is_floor(cfg):
+    """True when the TOP level N is a floor, not a roof: a single elevated platform /
+    storage mezzanine (structure_kind 'platform'/'mezzanine', or cfg['top_level_is_floor']),
+    or a top level listed in cfg['storage_levels']. Then level N takes D_floor + live load
+    (gravity seeds) and the 12.7.2 storage/partition terms (seismic weight), not D_roof."""
+    if cfg.get("top_level_is_floor"):
+        return True
+    if str(cfg.get("structure_kind", "")).lower() in PLATFORM_KINDS:
+        return True
+    lv = cfg.get("storage_levels") or ()
+    return int(cfg["stories"]) in {int(i) for i in lv}
+
+
+def level_live_psf(cfg, k):
+    """Floor live load (psf) at level k: cfg['L_by_level'][k] override, else L_floor."""
+    by = cfg.get("L_by_level") or {}
+    if k in by or str(k) in by:
+        return float(by[k] if k in by else by[str(k)])
+    return float(cfg.get("L_floor", 0.0) or 0.0)
+
+
+def is_storage_level(cfg, k):
+    """ASCE 7-22 12.7.2 item 1 storage area at level k: cfg['storage']=True (every FLOOR level;
+    the top level only when it is a floor, see top_is_floor) or k in cfg['storage_levels']."""
+    lv = cfg.get("storage_levels")
+    if lv and k in {int(i) for i in lv}:
+        return True
+    if cfg.get("storage"):
+        return k < int(cfg["stories"]) or top_is_floor(cfg)
+    return False
+
+
+def _partition_psf(cfg):
+    """12.7.2 item 2 partition weight (psf of floor area): where provision for partitions is
+    made (cfg['partition_psf'] given, or cfg['partitions']=True) the actual weight or 10 psf,
+    whichever is greater. Returns (psf, note or None)."""
+    p = cfg.get("partition_psf")
+    if p is None and not cfg.get("partitions"):
+        return 0.0, None
+    p = float(p or 0.0)
+    if p < 10.0:
+        return 10.0, ("partition weight raised to 10 psf (ASCE 7-22 12.7.2 item 2: actual "
+                      "partition weight or 10 psf, whichever is greater; declared %.1f psf)" % p)
+    return p, None
+
+
+def story_weight(cfg, k, detail=False):
+    """Seismic weight (kip) at level k (1..N, N = roof unless top_is_floor). Mirrors
+    engine3d.floor_w (ASCE 7-22 12.7.2): area dead + tributary cladding
+      + item 1: 25% of the floor live load in STORAGE areas (cfg['storage'] / ['storage_levels'],
+        live per L_by_level / L_floor). Exception (a): where items 1/3/5/6 add <= 5% of W at
+        the level they need not be included -- applied ONLY when cfg['storage_5pct_exception']
+        is True (default: always included, conservative); the share is reported either way.
+      + item 2: partitions at FLOOR levels (cfg['partition_psf'], min 10 psf where partitions
+        are provided -- cfg['partitions']=True or a partition_psf value)
+      + item 3/6: cfg['extra_mass_floors'] = {level: psf} (permanent equipment, bulk material)
+      + item 4: 15% of flat snow at the ROOF only where pf > 45 psf.
     Optional cfg keys (irregular T/U/L plans -- pair with wall_line.fit_positions):
       area_sf       -- TRUE floor area (default Lx*Ly) so W is exact on a bounding-box model
       perimeter_ft  -- TRUE cladding perimeter (default 2*(Lx+Ly))
-      partition_psf -- partition weight in W at FLOOR levels only (ASCE 7-22 12.7.2,
-                       >= 10 psf where partitions occur) -- keeps D_floor = true dead for
-                       member design and the gravity stud stack"""
+      partition_psf -- partition weight in W at FLOOR levels only -- keeps D_floor = true dead
+                       for member design and the gravity stud stack
+      structure_kind='platform'/'mezzanine' or top_level_is_floor=True -- a single elevated
+                       level is a FLOOR (D_floor, storage, partitions), never a roof.
+    detail=True returns (w, breakdown dict)."""
     Lx, Ly = cfg["plan_ft"]
     A = cfg.get("area_sf") or (Lx * Ly)
     N = cfg["stories"]
-    roof = (k == N)
-    d = cfg["D_roof"] if roof else (cfg["D_floor"] + cfg.get("partition_psf", 0.0))
-    w = d * A / 1000.0
+    roof = (k == N) and not top_is_floor(cfg)
+    bd = {}
+    if roof:
+        bd["dead"] = cfg["D_roof"] * A / 1000.0
+    else:
+        bd["dead"] = cfg["D_floor"] * A / 1000.0
+        ppsf, _note = _partition_psf(cfg)
+        if ppsf:
+            bd["partitions"] = ppsf * A / 1000.0
     per = cfg.get("perimeter_ft") or (2.0 * (Lx + Ly))
     h = cfg["heights_ft"][k - 1]
-    w += cfg.get("clad", 0.0) * per * (h / 2.0 if roof else h) / 1000.0
+    bd["cladding"] = cfg.get("clad", 0.0) * per * (h / 2.0 if k == N else h) / 1000.0
     if roof and cfg.get("snow", 0.0) > 45.0:
-        w += 0.15 * cfg["snow"] * A / 1000.0     # 12.7.2 item 4: 15% of pf where pf > 45 psf
-    return w
+        bd["snow"] = 0.15 * cfg["snow"] * A / 1000.0     # 12.7.2 item 4: 15% of pf where pf > 45
+    if not roof and is_storage_level(cfg, k):
+        bd["storage"] = 0.25 * level_live_psf(cfg, k) * A / 1000.0      # 12.7.2 item 1
+    xm = (cfg.get("extra_mass_floors") or {})
+    xv = xm.get(k, xm.get(str(k), 0.0)) if isinstance(xm, dict) else 0.0
+    if xv:
+        bd["equipment_bulk"] = float(xv) * A / 1000.0                   # 12.7.2 items 3/6
+    w = sum(bd.values())
+    items_1356 = bd.get("storage", 0.0) + bd.get("equipment_bulk", 0.0)
+    bd["items_1_3_5_6_share"] = (items_1356 / w) if w > 0 else 0.0
+    if items_1356 and cfg.get("storage_5pct_exception") and bd["items_1_3_5_6_share"] <= 0.05:
+        w -= items_1356                                                  # 12.7.2 exception (a)
+        bd["exception_a_applied"] = True
+    return (w, bd) if detail else w
 
 
-def elf(cfg):
-    """ASCE 7-22 12.8 ELF. Returns dict(V, Cs, Ta, T_used, k, Fx={level: kip}, W)."""
-    s = cfg["seis"]
+def load_screens(cfg):
+    """Seismic-weight / occupancy screens for the WALL path (the CFS twin of the hot-rolled
+    preflight storage + platform screens, which never ran on CFS). Returns warning strings."""
+    out = []
+    N = int(cfg["stories"])
+    Lf = cfg.get("L_floor")
+    lv_max = max([level_live_psf(cfg, k) for k in range(1, N + 1)] + [float(Lf or 0.0)])
+    storage = bool(cfg.get("storage") or cfg.get("storage_levels"))
+    if lv_max >= 125.0 and not storage:
+        out.append("floor live %.0f psf suggests STORAGE occupancy -- ASCE 7-22 12.7.2 item 1 "
+                   "requires >= 25%% of the storage live load in W: set cfg['storage']=True "
+                   "or cfg['storage_levels']=[...]" % lv_max)
+    kind = str(cfg.get("structure_kind", "")).lower()
+    arch = (str(cfg.get("arch", "")) + " " + kind).lower()
+    platformish = any(w in arch for w in ("platform", "mezzanine", "catwalk"))
+    if platformish:
+        out.append("platform/mezzanine: classify per ASCE 7-22 15.1.1 -- an OCCUPIED platform "
+                   "(e.g. storage mezzanine with pickers) is a Ch. 12 building structure "
+                   "(Table 12.2-1 R/Cd/Omega0); Ch. 15 applies to UNOCCUPIED nonbuilding "
+                   "structures (15.4.1(1)(a) still permits Table 12.2-1 for building-like "
+                   "ones). Document the classification; joist/beam/post schedules with L/360 "
+                   "live-load deflection ARE deliverables")
+    if N == 1 and storage and not top_is_floor(cfg):
+        out.append("single-level model with storage declared but the level is treated as a "
+                   "ROOF (D_roof, no live, no storage weight) -- declare structure_kind="
+                   "'platform'/'mezzanine' or top_level_is_floor=True so the 12.7.2 storage "
+                   "weight and the floor live load are carried")
+    if platformish and not top_is_floor(cfg):
+        out.append("platform/mezzanine keywords but the top level is modelled as a ROOF -- set "
+                   "structure_kind='platform'/'mezzanine' (or top_level_is_floor=True)")
+    _p, note = _partition_psf(cfg)
+    if note:
+        out.append(note)
+    if cfg.get("storage_5pct_exception"):
+        for k in range(1, N + 1):
+            _w, bd = story_weight(cfg, k, detail=True)
+            if bd.get("storage") and not bd.get("exception_a_applied"):
+                out.append("level %d: storage weight is %.1f%% of W > 5%% -- 12.7.2 "
+                           "exception (a) does not apply (storage weight kept)"
+                           % (k, 100 * bd["items_1_3_5_6_share"]))
+    return out
+
+
+# ---------------- seismic system per direction (12.2.2) / per line (12.2.3.3 exception) -------
+
+def _line_system_override(cfg, dirn, line):
+    ls = cfg.get("line_systems") or {}
+    return ls.get("%s:%s" % (dirn, line.name)) or ls.get(line.name) or \
+        getattr(line, "system", None)
+
+
+def direction_seismic(cfg, dirn):
+    """Seismic parameters for one direction. ASCE 7-22 12.2.2: a different SFRS per
+    orthogonal direction is permitted -- cfg['seis_by_dir'] = {'X': seis, 'Y': seis},
+    cfg['system_by_dir'] = {'X': key, 'Y': key} (optional cfg['rho_by_dir']); default the
+    building-wide cfg['seis'] / cfg['system'].
+    Horizontal combinations in ONE direction (lines with different systems via
+    cfg['line_systems'] = {'X:A': 'strap_braced', ...}): 12.2.3.3 -- R for the direction is
+    the LEAST R of the systems used, Cd and Omega0 consistent with it; EXCEPTION (RC I/II,
+    <= 2 stories above grade plane, light-frame construction or flexible diaphragms): each
+    independent line may use its own least R -- requested with
+    cfg['use_12_2_3_3_exception']=True (refused, with a warning, if a condition fails).
+    Returns dict(seis, system, per_line={name: (system, seis)} or None, notes=[...])."""
+    import copy as _copy
+    base = (cfg.get("seis_by_dir") or {}).get(dirn) or cfg["seis"]
+    sysname = (cfg.get("system_by_dir") or {}).get(dirn) or cfg.get("system", "wsp_shearwall")
+    lines = cfg["lines_x"] if dirn == "X" else cfg["lines_y"]
+    notes = []
+    line_sys = {ln.name: (_line_system_override(cfg, dirn, ln) or sysname) for ln in lines}
+    systems = sorted(set(line_sys.values()))
+
+    def seis_of(key):
+        s2 = _copy.deepcopy(base)
+        t = CS.SYSTEMS[key]
+        s2.update(R=t["R"], Cd=t["Cd"], Om0=t["Om0"], system=key)
+        return s2
+    if len(systems) <= 1:
+        if systems and systems[0] != sysname and systems[0] in CS.SYSTEMS:
+            notes.append("every %s line declares %s (line_systems) -- its Table 12.2-1 "
+                         "R/Cd/Omega0 replace cfg['seis'] for the direction" % (dirn, systems[0]))
+            return dict(seis=seis_of(systems[0]), system=systems[0], per_line=None, notes=notes)
+        return dict(seis=base, system=sysname, per_line=None, notes=notes)
+    unknown = [x for x in systems if x not in CS.SYSTEMS]
+    if unknown:
+        raise KeyError("line_systems %s not in the CFS system table" % unknown)
+    least = min(systems, key=lambda k: CS.SYSTEMS[k]["R"])
+    rc_ok = str(cfg.get("risk_cat", "II")).upper() in ("I", "II", "1", "2")
+    n_ag = int(cfg.get("stories_above_grade", cfg["stories"]))
+    lf_ok = all(CS.SYSTEMS[k].get("light_frame") for k in systems) or \
+        str(cfg.get("diaphragm", "flexible")).lower() == "flexible"
+    if cfg.get("use_12_2_3_3_exception"):
+        if rc_ok and n_ag <= 2 and lf_ok:
+            notes.append("ASCE 7-22 12.2.3.3 EXCEPTION: each line designed with its own system "
+                         "R (RC I/II, %d stories above grade, light-frame/flexible); the "
+                         "diaphragm uses the least R in the direction (%s, R=%.1f)"
+                         % (n_ag, least, CS.SYSTEMS[least]["R"]))
+            return dict(seis=seis_of(least), system=least,
+                        per_line={nm: (k, seis_of(k)) for nm, k in line_sys.items()},
+                        notes=notes)
+        notes.append("12.2.3.3 exception REFUSED (needs RC I/II [%s], <= 2 stories above grade "
+                     "[%d], light-frame or flexible diaphragms [%s]) -- least R used for the "
+                     "whole direction" % (cfg.get("risk_cat", "II"), n_ag, lf_ok))
+    notes.append("ASCE 7-22 12.2.3.3: lines in %s use %s -- R = least R (%s, R=%.1f), Cd and "
+                 "Omega0 consistent with it, for the whole direction"
+                 % (dirn, "/".join(systems), least, CS.SYSTEMS[least]["R"]))
+    return dict(seis=seis_of(least), system=least, per_line=None, notes=notes)
+
+
+def elf(cfg, direction=None, seis=None):
+    """ASCE 7-22 12.8 ELF. Returns dict(V, Cs, Ta, T_used, k, Fx={level: kip}, W, R, Cd, Om0).
+    direction='X'/'Y' uses that direction's seismic parameters (12.2.2, direction_seismic);
+    seis= overrides. Default: cfg['seis'] (backward compatible)."""
+    if seis is None:
+        s = direction_seismic(cfg, direction)["seis"] if direction else cfg["seis"]
+    else:
+        s = seis
     N = cfg["stories"]
     W = sum(story_weight(cfg, k) for k in range(1, N + 1))
     hn = sum(cfg["heights_ft"])
@@ -92,8 +291,30 @@ def elf(cfg):
         z.append(z[-1] + h)
     whk = {k: story_weight(cfg, k) * z[k] ** kk for k in range(1, N + 1)}
     ss = sum(whk.values())
-    return dict(V=V, Cs=Cs, Ta=Ta, T_used=T, k=kk, W=W,
-                Fx={k: V * whk[k] / ss for k in range(1, N + 1)})
+    return dict(V=V, Cs=Cs, Ta=Ta, T_used=T, k=kk, W=W, R=R, Cd=s.get("Cd"),
+                Om0=s.get("Om0"), Fx={k: V * whk[k] / ss for k in range(1, N + 1)})
+
+
+def fpx(cfg, e=None, direction=None):
+    """Diaphragm design forces per ASCE 7-22 12.10.1.1 for one direction (pure ELF, rho = 1
+    per 12.3.4.1 item 7): Fpx = (sum_{i>=x} Fi / sum_{i>=x} wi) * wpx (Eq. 12.10-1), not less
+    than 0.2 SDS Ie wpx (12.10-2), need not exceed 0.4 SDS Ie wpx (12.10-3); wpx = level
+    seismic weight (story_weight). Returns {level: dict(Fx, wpx, Fpx_eq1, Fpx_min, Fpx_max,
+    Fpx)} (kip)."""
+    e = e or elf(cfg, direction)
+    s = direction_seismic(cfg, direction)["seis"] if direction else cfg["seis"]
+    N = cfg["stories"]
+    w = {k: story_weight(cfg, k) for k in range(1, N + 1)}
+    out = {}
+    for x in range(1, N + 1):
+        sF = sum(e["Fx"][i] for i in range(x, N + 1))
+        sW = sum(w[i] for i in range(x, N + 1))
+        f1 = sF / sW * w[x] if sW > 0 else 0.0
+        fmin = 0.2 * s["SDS"] * s["Ie"] * w[x]
+        fmax = 0.4 * s["SDS"] * s["Ie"] * w[x]
+        out[x] = dict(Fx=e["Fx"][x], wpx=w[x], Fpx_eq1=f1, Fpx_min=fmin, Fpx_max=fmax,
+                      Fpx=min(max(f1, fmin), fmax))
+    return out
 
 
 # ---------------- per-line spring model (the OpenSees-equivalent stack) ----------------
@@ -143,39 +364,101 @@ def analyze_line(cfg, line, story_shears, n_iter=3):
     return out
 
 
+def drift_limit_for(cfg, dirn=None, system=None):
+    """(allowable drift ratio or None, basis) for the wall path -- ASCE 7-22 Table 12.12-1 via
+    cfs_systems.drift_limit with the DECLARED finishes flag cfg['drift_tolerant_finishes']
+    (True: the <= 4-story row applies to ANY non-masonry structure, incl. SBMF/portals).
+    Not declared: legacy -- light-frame wall systems keep the 0.025 row (stated as an
+    assumption in the basis), other systems take the 'all other structures' row.
+    cfg['drift_limit_no_limit_single_story']=True invokes footnote a (single story).
+    A tighter cfg['drift_limit'] is honoured (never a looser one). 12.12.1.1 Delta_a/rho for
+    moment-frame-only systems in SDC D-F."""
+    sysname = system or ((cfg.get("system_by_dir") or {}).get(dirn) if dirn else None) or \
+        cfg.get("system", "wsp_shearwall")
+    acc = cfg.get("drift_tolerant_finishes")
+    assumed = acc is None
+    if assumed:
+        acc = sysname in CS.LIGHT_FRAME_SYSTEMS
+    s = (cfg.get("seis_by_dir") or {}).get(dirn) if dirn else None
+    s = s or cfg["seis"]
+    cat = CS.sdc(s.get("SDS", 0.0), s.get("SD1", 0.0), s.get("S1", 0.0),
+                 cfg.get("risk_cat", "II"))
+    rho = (cfg.get("rho_by_dir") or {}).get(dirn) if dirn else None
+    rho = rho if rho is not None else cfg.get("rho")
+    if rho is None:
+        rho = 1.3 if cat in ("D", "E", "F") else 1.0
+    dl, basis = CS.drift_limit(sysname, cfg["stories"], cfg.get("risk_cat", "II"),
+                               finishes_accommodate=acc, SDC=cat, rho=rho,
+                               single_story_no_limit=bool(
+                                   cfg.get("drift_limit_no_limit_single_story")),
+                               with_basis=True)
+    if assumed:
+        basis += ("; cfg['drift_tolerant_finishes'] NOT declared -> %s assumed (declare True/"
+                  "False)" % ("finishes accommodate drift" if acc else "'all other structures'"))
+    user = cfg.get("drift_limit")
+    if dl is not None and isinstance(user, (int, float)) and float(user) < dl:
+        dl = float(user)
+        basis += "; tighter cfg['drift_limit']=%.3f used" % dl
+    return dl, basis
+
+
 def run(cfg):
     """Full light-frame run for BOTH directions: ELF -> tributary distribution -> per-line
     spring solve -> drift screen -> comparison gate (spring-model line shears vs tributary --
     identical by construction under 'flexible'; the gate becomes meaningful when the
-    semi-rigid/OpenSees path replaces analyze_line). Returns the result dict."""
-    e = elf(cfg)
-    res = dict(elf=e, directions={})
+    semi-rigid/OpenSees path replaces analyze_line). Returns the result dict.
+    Per-direction seismic systems (12.2.2, cfg['seis_by_dir']/['system_by_dir']) and the
+    12.2.3.3 per-line exception are honoured: res['elf'] is the ELF of cfg['seis'] (backward
+    compatible), res['elf_by_dir'] holds each direction's, and each direction carries its system, R/Cd/Om0."""
+    seis_dir = {d: direction_seismic(cfg, d) for d in ("X", "Y")}
+    e_dir = {d: elf(cfg, seis=seis_dir[d]["seis"]) for d in ("X", "Y")}
+    e = elf(cfg)                     # building-wide cfg['seis'] (backward compatible)
+    res = dict(elf=e, elf_by_dir=e_dir, directions={})
     warn = CS.preflight_fidelity(cfg.get("structure_kind", "wall"),
                                  cfg.get("analysis_fidelity", 0))
+    warn = list(warn or []) + load_screens(cfg)
+    for d in ("X", "Y"):
+        warn += ["%s: %s" % (d, n) for n in seis_dir[d]["notes"]]
+        if seis_dir[d]["per_line"] and cfg.get("diaphragm", "flexible") == "semi-rigid":
+            warn.append("%s: 12.2.3.3 per-line R is not combined with the semi-rigid solve -- "
+                        "the least R is used for every line" % d)
+            seis_dir[d]["per_line"] = None
     if warn:
         res["preflight_warnings"] = warn
-    dl = CS.drift_limit(cfg.get("system", "wsp_shearwall"), cfg["stories"],
-                        cfg.get("risk_cat", "II"))
-    Cd, Ie = cfg["seis"]["Cd"], cfg["seis"]["Ie"]
+    Ie = cfg["seis"]["Ie"]
     semirigid = cfg.get("diaphragm", "flexible") == "semi-rigid"
     for dirn, lines, dim in (("X", cfg["lines_x"], cfg["plan_ft"][1]),
                              ("Y", cfg["lines_y"], cfg["plan_ft"][0])):
-        dist = WL.distribute(e["Fx"], lines, dim)
-        model_shears = {k: {} for k in e["Fx"]}
+        sd = seis_dir[dirn]
+        ed = e_dir[dirn]
+        Cd = sd["seis"]["Cd"]
+        dl, dl_basis = drift_limit_for(cfg, dirn, sd["system"])
+        dist = WL.distribute(ed["Fx"], lines, dim)
+        line_Cd = {}
+        if sd["per_line"] and not semirigid:
+            # 12.2.3.3 exception: each line's forces from ITS system's ELF (same tributaries)
+            by_sys = {}
+            for nm, (skey, sseis) in sd["per_line"].items():
+                if skey not in by_sys:
+                    by_sys[skey] = WL.distribute(elf(cfg, seis=sseis)["Fx"], lines, dim)
+                for k in dist:
+                    dist[k][nm] = by_sys[skey][k][nm]
+                line_Cd[nm] = sseis["Cd"]
+        model_shears = {k: {} for k in ed["Fx"]}
         if semirigid:
             depth = cfg["plan_ft"][0] if dirn == "X" else cfg["plan_ft"][1]
             dres = analyze_semirigid(cfg, lines, dist, depth)
             for ln in lines:
-                for k in e["Fx"]:
+                for k in ed["Fx"]:
                     model_shears[k][ln.name] = dres[ln.name][k]["V"] - \
                         dres[ln.name].get(k + 1, {}).get("V", 0.0)
         else:
             dres = {}
             for ln in lines:
-                shears = {k: dist[k][ln.name]["V_shifted"] for k in e["Fx"]}
+                shears = {k: dist[k][ln.name]["V_shifted"] for k in ed["Fx"]}
                 lr = analyze_line(cfg, ln, shears)
                 dres[ln.name] = lr
-                for k in e["Fx"]:
+                for k in ed["Fx"]:
                     model_shears[k][ln.name] = lr[k]["V"] - (
                         lr.get(k + 1, {}).get("V", 0.0)
                         if isinstance(lr.get(k + 1), dict) else 0.0)
@@ -183,18 +466,27 @@ def run(cfg):
         drift_flags = []
         for name, lr in dres.items():
             for k, r in lr.items():
-                amp = Cd * r["dr_ratio"] / Ie
+                amp = line_Cd.get(name, Cd) * r["dr_ratio"] / Ie
                 r["drift_amplified"] = amp
-                if amp > dl:
+                if dl is not None and amp > dl:
                     drift_flags.append("%s line %s story %d: Cd*dr/Ie = %.4f > %.3f"
                                        % (dirn, name, k, amp, dl))
         gate = WL.compare_with_model(
             dist, {k: {ln.name: dres[ln.name][k]["V"] - (dres[ln.name][k + 1]["V"]
                        if (k + 1) in dres[ln.name] else 0.0) for ln in lines}
-                   for k in e["Fx"]})
+                   for k in ed["Fx"]})
         res["directions"][dirn] = dict(dist=dist, lines=dres, drift_flags=drift_flags,
-                                       gate_flags=gate, drift_limit=dl,
-                                       diaphragm="semi-rigid" if semirigid else "flexible")
+                                       gate_flags=gate,
+                                       # footnote a (no limit): 1.0 keeps consumers numeric
+                                       drift_limit=dl if dl is not None else 1.0,
+                                       drift_limit_none=dl is None,
+                                       drift_limit_basis=dl_basis,
+                                       diaphragm="semi-rigid" if semirigid else "flexible",
+                                       system=sd["system"], seis=sd["seis"],
+                                       line_systems=({nm: v[0] for nm, v in
+                                                      sd["per_line"].items()}
+                                                     if sd["per_line"] else None),
+                                       elf=ed)
     return res
 
 
