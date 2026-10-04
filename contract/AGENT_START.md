@@ -21,17 +21,27 @@ your own analysis scripts; drive the framework instead.
 > res = pipeline.design_and_report(name, cfg)   # model + loads + per-line DEMANDS + figures + report
 > ```
 >
-> This registers your `cfg`, runs the preflight + sanity suite, the tributary distribution and (for
-> frame paths) the OpenSees solve, the model-vs-tributary comparison GATE, the drift table, the
-> figures, and the report → `<name>/report.html`. Your job: get the **cfg** right (geometry, loads,
-> wall lines / frame layout, system, fidelity tier), ground every governing check in the RAG and cite
-> it, fill every seeded slot in `design/calc_package.json`, resize/re-sheathe any NG item and re-run,
-> then read the report. Spot-checks may use `cfs_engine.run` / `wall_line` / `cfs_sections.props` /
-> `cfs_systems`; the deliverables come from the pipeline.
+> This runs the CFS preflight, the tributary distribution (wall path) or the planar portal-frame
+> solve (portal path, `cfs_frame`), the independent tributary check, the drift table, the
+> two-stage podium check where declared, and the report → `<name>/report.html`. Your job: get the
+> **cfg** right (geometry, loads, wall lines / frame layout, system, fidelity tier), ground every
+> governing check in the RAG and cite it, fill every seeded slot in `design/calc_package_cfs.json`,
+> resize/re-sheathe any NG item and re-run, then read the report. Spot-checks may use
+> `cfs_engine.run` / `wall_line` / `cfs_sections.gross_props` / `cfs_systems`; the deliverables
+> come from the pipeline.
 >
 > 🆕 **Design FRESH under the user's exact building name.** `jobs/` is normally EMPTY — do NOT look
 > for an example or prior-job cfg. Compose a new `cfg` from the user's brief, register it, pass THIS
 > name to `design_and_report`.
+>
+> 🚫 **Scope.** Storage racks (ASCE 7 Ch. 15 / RMI MH16.1) are OUT OF SCOPE of this module — say so
+> and stop. Wall-framed buildings, podiums, CFS portal frames/canopies, purlin/girt component jobs and
+> occupied CFS mezzanines/platforms are in scope.
+>
+> 📝 **Brief deviations.** "Follow the brief exactly" — but if the brief is infeasible or
+> self-contradictory as written, design the closest feasible variant and record every departure in
+> the package as `brief_deviations` (item, brief value, value used, reason, consequence); the report
+> prints it. Never deviate silently.
 
 You have these tools: a RAG search (the AISI specs), a Python runner (the CFS engine +
 `pipeline` importable), workspace file read/write, and an activity log (`new_activity_log`,
@@ -46,50 +56,67 @@ You have these tools: a RAG search (the AISI specs), a Python runner (the CFS en
 > score ties by default.
 
 ## THIS IS NOT A HOT-ROLLED BUILDING — the #1 failure mode
-A CFS light-frame building has **no beams and columns to design**. It is wall lines of closely
+A CFS light-frame WALL building is not a frame of beams and columns. It is wall lines of closely
 spaced studs with sheathed (or strap-braced) shear-wall segments, track at top and bottom, joists,
 chord studs at segment ends, and hold-downs/rods carrying overturning tension to the foundation.
-If your deliverable talks about "moment frames", W-shapes, A992 steel, SCWB ratios, or AISC 341,
-you have failed the brief. Design what is actually there: **stud schedules, per-line per-story
-sheathing + fastener schedules, chord studs, hold-down/rod schedules, collectors, a drift table.**
-Portal frames ARE frame structures — but of CFS channels checked to AISI S100, never AISC.
+If your deliverable talks about W-shapes, A992 steel, SCWB ratios, or AISC 341/360, you have failed
+the brief. Design what is actually there: **stud schedules, per-line per-story sheathing + fastener
+schedules, chord studs, hold-down/rod schedules, collectors, a drift table.** CFS beams, posts and
+joists ARE designed — to AISI S100/S240 — where the structure has them: headers and joists, portal
+frames and canopies, CFS special bolted moment frames (S400 E4), and occupied mezzanines/platforms
+(ASCE 7 Ch. 12 buildings; see step 0a). Those are never AISC designs.
 
 ## Filesystem — ONE workspace, addressed by paths RELATIVE to your job folder
 Your tools — `run_python`, `read_file`, `write_file`, `list_files` — all act on ONE Linux filesystem
 (a sandboxed container). There is **no Windows drive, no `C:\...`, no `/mnt/c`, and no
 "outputs"/"Cowork" mount**. After `new_activity_log("<name>")`, **`run_python`'s cwd IS your job
 folder `jobs/<name>/`, and `read_file` / `write_file` / `list_files` resolve relative to it.** So
-address every job file RELATIVE to the job folder — `cfg.py`, `design/calc_package.json`,
+address every job file RELATIVE to the job folder — `cfg.py`, `design/calc_package_cfs.json`,
 `report.html` — NOT `jobs/<name>/...` and never an absolute path. If a `read_file` misses, it
 returns the folder's actual contents — read those, don't guess again.
-- **After a pipeline run the job folder contains:** `cfg.py`; `design/` (`calc_package.json` —
-  demands + seeded slots, **you** fill the capacities; demand summaries; schedule CSVs); `figs/`;
-  `report.html`; the activity log; `rag/` (your saved RAG hits).
-- **The ONE authoritative `calc_package.json` is `design/calc_package.json`** — edit it in place;
-  never copy or duplicate it.
+- **After a pipeline run the job folder contains:** `cfg.py`; `design/` (`calc_package_cfs.json` —
+  demands + seeded slots, **you** fill the capacities; `consistency_result.json` after you run
+  `consistency.check`); `report.html`; `viewer_3d.html`; the activity log; `rag/` (your saved RAG
+  hits).
+- **The ONE authoritative package is `design/calc_package_cfs.json`** — edit it in place; never
+  copy or duplicate it. (The hot-rolled grid path uses `design/calc_package.json`; on a CFS job a
+  legacy `calc_package.json` is read only when it is the sole file, and BOTH files present is a
+  consistency FAIL.) Re-running `design_and_report` re-seeds the package: a FILLED package is first
+  backed up to `design/calc_package_cfs.json.filled.bak` (warned in the output);
+  `pipeline.merge_fills(name)` — or `design_and_report(name, cfg, keep_fills=True)` — carries your
+  fills back by slot id and clears the D/C of every slot whose seeded demand changed.
 - **Delivery is automatic.** The app serves `report.html` and offers a Download. Nothing to copy or
   hand the user a path to — just finish the design.
 
-## Units — the light-frame cfg is BRIEF-FACING: FEET / PSF / KIP
+## Units — BOTH CFS cfgs are BRIEF-FACING: FEET / PSF / KIP
 The wall-framed `cfg` (the `cfs_engine` schema) takes geometry in **feet** (`heights_ft`,
 `plan_ft`, wall-segment lengths), area loads in **psf**, wind speed in mph, and reports forces in
 **kips** and unit shears in **plf** — the same units as the brief, so transcribe directly. The
-**frame path** (portals via `engine3d`) is **KIP-INCH like the hot-rolled engine — convert
-lengths ×12 there**, or the model is ~12× wrong (tiny periods, huge base shear). Section
-designators (600S162-54) carry their own mil thickness; `Fy` in ksi (33 or 50; E = 29,500 ksi per
-AISI — not 29,000). If the geometry check flags story heights that "look like INCHES" on the wall
-path or "look like FEET" on the frame path, fix the cfg BEFORE chasing numbers.
+**portal path is `cfs_frame`, also in FEET/psf** (`span_ft`, `eave_ft`, `apex_ft`, `spacing_ft`;
+schema below) — it converts to kip-inch internally. Do **NOT** build a CFS portal through
+`engine3d`/`custom_build` with lengths ×12: any cfg carrying `span_ft` goes to `cfs_frame`
+(where `custom_build` is ignored), and a cfg with neither `lines_x` nor `span_ft` goes to the
+HOT-ROLLED grid engine (AISC sections — wrong for CFS). Section designators (600S162-54) carry
+their own mil thickness; `Fy` in ksi (33 or 50; E = 29,500 ksi per AISI — not 29,000). The
+preflight flags heights that "look like INCHES" and portal spans/eaves/spacing that look like
+inches — fix the cfg BEFORE chasing numbers.
 
 ## Gotchas that fail SILENTLY (read once — they will not error loudly)
-- **Diaphragm default is FLEXIBLE** (ASCE 7-22 12.3.1.1 for light-frame). Shear goes to wall lines
-  by **tributary area**; accidental torsion is a **5% tributary shift**, not master-node rotation.
-  Rigid-diaphragm torsional redistribution in a light-frame building without explicit justification
-  is a red-flag error. Declare `cfg['diaphragm']` and justify any departure.
-- **The model-vs-tributary GATE.** The wall-line tributary solver is an independent validator: the
-  pipeline compares the model's per-line shears against it and writes
-  `model_vs_tributary_flags` into the package. A divergence is either a bug (fix the model) or real
-  physics you must JUSTIFY in the package (open front, plan offset, mixed diaphragms). Never leave
-  a flag unaddressed.
+- **Diaphragm default is FLEXIBLE** (ASCE 7-22 12.3.1.1 for light-frame, where its conditions hold —
+  a concrete topping is not flexible). Shear goes to wall lines by **tributary area**. Accidental
+  torsion (12.8.4.2) applies only where diaphragms are NOT flexible; the engine's flexible-path
+  "5% shift" moves each interior tributary boundary 5% of its span toward the line — a
+  conservative envelope, not the 12.8.4.2 5%-of-building-dimension rule. Rigid-diaphragm
+  torsional redistribution in a light-frame building without explicit justification is a red-flag
+  error. Declare `cfg['diaphragm']` and justify any departure.
+- **The model-vs-tributary GATE.** On a FLEXIBLE diaphragm the spring model is loaded by the
+  tributary distribution itself, so the pipeline adds an INDEPENDENT recomputation: simple-span
+  tributary widths from the line POSITIONS × the ELF story forces, compared with every line's
+  engine shear (expected 1.00–1.05). Divergence (coincident/mis-fitted positions, a declared
+  `trib_scale`, a line with no wall at a story, a patched distribution) is written to
+  `model_vs_tributary_flags`. On a SEMI-RIGID diaphragm the coupled solve is compared with
+  tributary directly. Each flag is either a model error (fix and re-run) or a stated idealization
+  you JUSTIFY in `model_vs_tributary_flags_resolution`.
 - **Cumulative bookkeeping runs TOP-DOWN.** Stud axial, chord tension, and hold-down/rod forces
   accumulate story-by-story; live-load reduction compounds down the stack. The stud schedule steps
   DOWN with height and is **never lighter below**. The pipeline seeds the stacks
@@ -106,18 +133,31 @@ path or "look like FEET" on the frame path, fix the cfg BEFORE chasing numbers.
   a column with no bracing statement — or claimed sheathing-braced on an unsheathed line — fails
   review. State it in the package and the report.
 - **Both hazards, always.** Run wind AND seismic and state which governs per line/direction. Low-R
-  systems (gypsum R=2) and coastal sites are usually wind-governed — S400's wind columns still
-  apply to wall capacity. **Net uplift 0.9D+1.0W is a REQUIRED anchorage case**: the uplift path
-  must be continuous roof→wall→floor→foundation.
+  systems (gypsum R=2) and coastal sites are usually wind-governed. **S400 is the SEISMIC standard
+  — it has no wind columns.** Wind-designed shear walls take their nominal strength from **AISI S240
+  B5.2.2.3** (Tables B5.2.2.3-1 steel sheet, -2 WSP, -3 gypsum, -4 fiberboard; Type II Ca at
+  B5.2.2.2) with **φv = 0.65 (LRFD, S240 B5.2.3)**; seismic capacity per S400 (WSP φv = 0.60 at
+  E1.3.2). **Net uplift 0.9D+1.0W is a REQUIRED anchorage case**: the uplift path must be
+  continuous roof→wall→floor→foundation.
+- **Sheathing-braced studs need the unsheathed check.** Where studs are designed sheathing-braced,
+  S240 **B1.2.2.4** (US) requires them ALSO to be evaluated WITHOUT the sheathing bracing for
+  1.2D + (0.5L or 0.2S) + 0.2W (Eq. B1.2.2-1) — the construction-stage / sheathing-lost case.
 - **Type II (perforated) walls:** adjustment factor computed and shown; hold-downs at the wall ENDS
   only, PLUS distributed track anchorage between — a hold-down at every pier silently reverts the
   wall to Type I (fail). A stepped wall line violates the uniform-height rule → split the line.
 - **Mixed / direction-specific systems:** different R per direction → each direction designed with
   its OWN R/Cd/Ω0. Two systems sharing one axis → the LEAST R governs that axis (or a seismic
   joint). Never average.
-- **Podiums (CFS over concrete/steel):** two-stage ELF only if eligibility computes (podium ≥10×
-  stiffness, period ≤1.1×); amplify reactions to the podium by (R_upper/ρ_upper)/(R_lower/ρ_lower).
-  The CFS base = top of podium for height limits and drift.
+- **Podiums (CFS over concrete/steel) — ASCE 7-22 12.2.3.2, evaluated by the pipeline.** Model the
+  CFS upper portion with its base at the podium top, set `structure_kind="podium"` and declare
+  `cfg['two_stage'] = dict(R_lower=..., rho_lower=..., K_lower_kip_in=<podium V/δe at its top, per
+  direction allowed as {'X':..,'Y':..}>, T_combined_s=<entire structure> or W_lower_kip=... (+
+  podium_height_ft) for the framework's Rayleigh estimate, lower_system=..., irregular_transition=
+  False)`. The package block `two_stage_framework` checks (a) K_lower ≥ 10·K_upper (K = V/δe at the
+  top of each portion under the 12.8 forces), (b) T_entire ≤ 1.1·T_upper (Rayleigh T of the upper
+  stacks), computes the (d) amplification (R/ρ)_upper ÷ (R/ρ)_lower ≥ 1.0 and lists the amplified
+  per-line reactions to hand to the podium designer. Status ELIGIBLE / NOT ELIGIBLE / NOT EVALUATED
+  — anything but ELIGIBLE FAILS consistency. Height limits (f) and drift use the podium top as base.
 - **Irregular plans (T/U/L/notched) — the tributary model is 1-D per direction.** Model on the
   BOUNDING rectangle with `cfg['area_sf']` and `cfg['perimeter_ft']` set to the TRUE values (so W
   and cladding stay exact), and place lines with `wall_line.fit_positions(true_areas, dim)` — you
@@ -136,15 +176,17 @@ path or "look like FEET" on the frame path, fix the cfg BEFORE chasing numbers.
   second. Wall-path briefs that are partially enclosed/open-front set `cfg['wind']['Cnet']`.
   If the runner reports **P-DELTA DIVERGED**, the frame is sway-unstable at the trial sections —
   resize; that combo's envelope is meaningless.
-- **Analysis-fidelity tier is user-selected but SCREENED.** `cfg['analysis_fidelity']` = 0 (walls),
-  1 (portals/canopies — thin-walled elements), 2 (torsion-critical single-channel work). The
-  preflight WARNS on a mismatch (Tier 0 on a portal = mis-stated warping/torsion stiffness);
-  honor the warning or justify explicitly. Effective-section stiffness: frame members get the
-  decoupled EA(Ae)/EI(I_eff) iteration — state it; a gross-property-only analysis of slender CFS
-  members must be flagged.
-- **Grounding evidence = activity log OR calc_package.** Chapter 13 credits a required standard
+- **Analysis-fidelity tier is user-selected but SCREENED — know what each tier really does.**
+  `cfg['analysis_fidelity']` = 0 (walls: secant shear-spring stacks; on a portal, GROSS-stiffness
+  planar frame), 1 (portals/canopies: the planar EA/EI frame with the decoupled effective-section
+  EA(Ae)/EI(I_eff) iteration, 0.8 stiffness + notional loads + P-Δ on strength combos), 2 (currently
+  the SAME analysis as Tier 1 — there is no warping/torsion DOF or thin-walled element in the
+  code). Single-channel torsion is an analytic SEED table (`torsion_companion`), not an analysis:
+  do the torsion/bimoment check yourself and say so. The preflight WARNS on a tier/structure
+  mismatch; honor it or justify explicitly.
+- **Grounding evidence = activity log OR calc package.** Chapter 13 credits a required standard
   (S100/S240/S400) if EITHER the activity log has a `search_engineering_standards` record OR
-  a `cited` clause in `calc_package.json` references it. The collection name in square brackets in
+  a `cited` clause in `design/calc_package_cfs.json` references it. The collection name in square brackets in
   the log `detail` is what the grounding counter parses.
 - **Optional figures are OFF by default.** Offer them at the end (see *Optimisation*).
 
@@ -169,17 +211,24 @@ Then, for a WALL-FRAMED building, state your **RESOLVED WALL PLAN:** block:
 note tells you when rods are forced), Type I vs Type II per wall; **(f) Collector lines** — every
 re-entrant corner / step / diaphragm throat, listed in `cfg['collector_lines']`.
 For a PORTAL, state the frame layout instead (spans, column lines, joint and base fixity — use
-the brief's data when supplied, never silent defaults over it) and build via the frame path
-(`custom_build`, kip-inch). Non-primary appendages may be modelled as
-MASS, not framing — state the idealization.
+the brief's data when supplied, never silent defaults over it) and build via the portal path
+(`cfs_frame` schema below, FEET). Non-primary appendages may be modelled as MASS, not framing —
+state the idealization. For an occupied MEZZANINE / PLATFORM: it is an ASCE 7 **Ch. 12 building**
+(15.1.1 limits Ch. 15 to unoccupied nonbuilding structures; a self-supporting unit is not a Ch. 13
+component, 13.1.1) — beams, posts and joists ARE designed (S100/S240) and are NOT a failed brief;
+model its lateral system on the wall path with the top level as a FLOOR (live + 12.7.2 storage
+weight, declare `cfg['storage']`/`storage_levels`), state the classification, posted load and
+guard loads.
 
 **1. Build the cfg** (schema below; wall path is `cfs_engine`'s brief-facing schema).
 
-**2. Run `pipeline.design_and_report(name, cfg)`.** It computes weights, ELF (+ two-stage podium
-where eligible), wind, the tributary distribution with the 5% shift, per-line unit shears, the
-cumulative chord/hold-down stacks, the S400 four-term drift vs the limit, the comparison gate, and
-writes the seeded `design/calc_package.json` + report scaffold. Fix every preflight `[ERROR]`
-before any member design.
+**2. Run `pipeline.design_and_report(name, cfg)`.** It runs the CFS preflight, computes weights,
+ELF, wind seeds, the tributary distribution with the 5% shift, per-line unit shears, the
+cumulative chord/hold-down stacks, a four-term wall-deflection drift SCREEN vs the limit, the
+independent tributary check, the Rayleigh period per direction (`period_rayleigh`; T used for ELF
+≤ Cu·Ta — adopt it with `cfg['T_analytical']`), the 12.2.3.2 two-stage block (podium jobs), and
+writes the seeded `design/calc_package_cfs.json` + report. Fix every preflight `[ERROR]` before any
+member design.
 
 **3. Ground and fill EVERY seeded slot** (this is the real work — see *The split* and
 *What to deliver*). Derive each capacity from the RAG (S100/S240/S400), write
@@ -188,11 +237,10 @@ fasteners, stud/track sections, device/rod sizes, strap + connection components)
 
 **4. Resize, reconcile, finish.** NG or infeasible → change the design (longer/added wall, denser
 fastener schedule, two-sided sheathing, heavier stud mil, rod switch), re-run the pipeline, re-derive.
-Then `consistency.check(name)`, fix every flag, and re-render: **CFS jobs use
-`report.build_report_cfs_from_disk(name)`** (re-runs the engine for demands, loads your FILLED
-`design/calc_package_cfs.json`, renders); hot-rolled grid jobs use `report.build_report(name)`.
-NEVER re-render via `design_and_report`, which regenerates demands and would drop your filled
-capacities (it backs them up and warns).
+Then `consistency.check(name)`, fix every flag, and re-render with **`report.build_report(name)`**
+(on a CFS job it dispatches to `build_report_cfs_from_disk`: re-runs the engine for demands, loads
+your FILLED `design/calc_package_cfs.json`, renders). NEVER re-render via `design_and_report`, which
+re-seeds the package (it backs a filled one up to `calc_package_cfs.json.filled.bak` and warns).
 
 ## WHEN THE MODEL WON'T BUILD OR EIGEN FAILS — read the OpenSees docs, do not guess (R21)
 (Frame paths and the emitted wall-spring stacks.) On the FIRST OpenSees error, STOP retrying
@@ -208,15 +256,26 @@ OpenSees — read the schema in this file and `cfs_engine.py`'s docstring instea
   `steelsheet_wall`, `gypsum_wall`, `strap_braced`, `sbmf`, `not_detailed`). NEVER rely on
   inference from R. `consistency.check` FAILS if unset. Mixed
   directions: declare per direction.
-- **Risk Category:** Ie and `drift_limit` together. Light-frame ≤4 stories gets the 0.025 row
-  (RC I/II); otherwise 0.020, tightened for RC III/IV.
+- **Risk Category:** declare `cfg['risk_cat']` (the report never infers it from Ie) and Ie, and
+  `drift_limit` together. ASCE 7-22 Table 12.12-1 row 1 — "structures, other than masonry shear
+  wall structures, four stories or less above the base, with interior walls, partitions and
+  ceilings designed to accommodate the drifts" — is 0.025 / 0.020 / 0.015 h_sx for RC I–II / III /
+  IV. It is NOT a light-frame-only row: an SBMF or portal of ≤ 4 stories qualifies when the finishes
+  are designed to accommodate the drift (state it). Footnote a: NO drift limit for single-story
+  structures whose finishes accommodate the drift (separation still applies). All other structures:
+  0.020 / 0.015 / 0.010. Moment frames in SDC D–F: Δa/ρ (12.12.1.1). If the engine's seeded limit
+  differs from the row you justify, state the basis in the package.
 - **Height limits:** 65 ft in SDC D/E/F for WSP/steel-sheet/strap; 35 ft for SBMF; gypsum NP in
   E/F. On the knife edge (hn near the limit), show the number.
-- **Wind-governed briefs:** S400 still supplies wall capacities (its WIND columns); C&C on
-  cladding/fasteners; enclosure classification where the brief raises it (open/partially enclosed).
+- **Wind-governed briefs:** wall capacities from **S240 B5.2.2.3** with φv = 0.65 (B5.2.3) — S400
+  has no wind provisions; C&C on cladding/fasteners; enclosure classification where the brief
+  raises it (open/partially enclosed).
 - **Existing/retrofit, fatigue (monorails), foundations, seismic joints:** SCOPE these explicitly
-  as separate stages where the brief raises them — never silently pretend (e.g. fatigue is scoped,
-  not claimed, from a static run; separation = sum of the two Cd-amplified drifts).
+  as separate stages where the brief raises them — never silently pretend. Fatigue of CFS members
+  and connections is **AISI S100 Chapter M** (Design for Fatigue) — computed from the stress range
+  and cycle count, not claimed from a static run. Seismic separation: ASCE 7-22 **12.12.2** —
+  separations allow for the Design Earthquake Displacement δDE (12.8.6); adjacent structures on the
+  same property δSS = √(δDE1² + δDE2²) (Eq. 12.12-2); a property-line setback ≥ δDE.
 
 ## The split — what the tooling does vs. what YOU do
 **Tooling (you cannot reason these out — they require solving the model):**
@@ -250,14 +309,18 @@ distinct derivations typically cover the building.
    (Chapter 13 verifies and flags anything MISSING):**
    - **`engineering_standards_S100`** — REQUIRED always: member limit states (compression E2/E3/E4
      incl. distortional, flexure F2/F3/F4, shear G2, **web crippling G5** — it governs at tracks),
-     combined H1, screws/welds/bolts Ch. J, strap tension (An·Fu ≥ Ag·Fy). Effective-width
-     properties come from `cfs_sections` (Appendix 1 EWM) — cite the App. 1 basis.
+     combined H1, screws/welds/bolts Ch. J, strap tension (An·Fu ≥ Ag·Fy), fatigue **Ch. M** where
+     cyclic loads exist. Effective-width properties come from `cfs_sections` (Appendix 1 EWM) —
+     cite the App. 1 basis. The elastic buckling values E2/E4/F2/F4 need (F_cre, P_crd, M_cre,
+     M_crd) are **Appendix 2 "Elastic Buckling Analysis of Members"** — cite App. 2 for them.
    - **`engineering_standards_S240`** — REQUIRED for every light-frame brief: stud/track/joist
      framing rules, built-up member interconnection, bracing, truss provisions. S240 has NO
      hot-rolled analogue — designing framing without it is incomplete.
-   - **`engineering_standards_S400`** — REQUIRED for every wall/strap/SBMF brief INCLUDING
-     wind-governed ones (use the wind table columns): wall shear capacities (sheathing + fastener +
-     aspect ratio), Type II provisions, capacity-design chains (E1–E4), drift expression terms.
+   - **`engineering_standards_S400`** — REQUIRED for the SEISMIC design of an S400 system (WSP E1,
+     steel sheet E2, strap E3, SBMF E4, gypsum/fiberboard E6 — E5 is a Canada-only system): seismic
+     wall capacities, Type II provisions, capacity-design chains, the design deflection
+     (**E1.4.1.4 / E2.4.1.4**, E1.4.2.3 Type II). Per **S400 A1.2.3** an R = 3 system in SDC B or C
+     needs only S100/S240. Wind-designed walls are **S240 B5** (see *Both hazards*).
    - **NOT ingested:** AISI S310 (deck diaphragms) and S220 (nonstructural). If a brief needs S310
      (bare-deck diaphragm), SAY SO and ground the deck values another way (manufacturer/test basis,
      stated) — **never fabricate S310 clause numbers**. Citing AISC 341/360, or retired S110/S213/
@@ -267,13 +330,17 @@ distinct derivations typically cover the building.
 3. **Run the pipeline for the DEMANDS; derive every capacity yourself from the RAG.** The framework
    computes NO capacity — no wall table, no E2/G5/H1 check exists in code. For each
    governing item: query, select the limit state, apply the exact equation with its φ and limits,
-   compute capacity and D/C, cite, and write into `calc_package.json`. You MAY probe
+   compute capacity and D/C, cite, and write into `design/calc_package_cfs.json`. You MAY probe
    `cfs_design_examples` for a worked method (see the example index), but that collection may be
    EMPTY (not yet authored) — an empty result is normal, never retry it; the spec text is
    sufficient and authoritative on its own.
-4. **Drift and serviceability the code way:** amplified drift Cd·δ/Ie vs the Table 12.12-1 limit
-   (the pipeline's drift table shows this per line per story — reconcile any `drift_flags`); joist/
-   header deflection L/360 / L/240 on the frame path.
+4. **Drift and serviceability the code way:** amplified drift Cd·δ/Ie vs the Table 12.12-1 limit.
+   The seeded drift table is the engine's four-term SCREEN; compute the S400 design deflection of
+   your selected schedule (E1.4.1.4 WSP, E2.4.1.4 steel sheet, E1.4.2.3 Type II, E3.4.4 strap) and
+   write it into each row (`drift_design`, `ok`). **A failing drift row FAILS consistency** — a
+   `drift_flags_resolution` note does not clear it; redesign, or waive a row only with a stated
+   reason (e.g. a declared split-level offset). Report the P-Δ stability coefficient θ (12.8.7) —
+   any θ > θmax fails the gate. Joist/header deflection L/360 / L/240.
 5. **Do NOT read `eval_tests/answer_key/`** — off-limits and blocked.
 
 ## HOW TO ASK THE RAG — one document, the exact id, the printed words
@@ -422,24 +489,34 @@ run present the new schedules and WAIT for the user before updating the report.
   effective-stiffness statement.)
 - Confirmation the sanity suite + comparison gate pass, `model_vs_tributary_flags` and
   `drift_flags` reconciled.
-- **You MUST fill `design/calc_package.json` in place.** Every seeded slot (`wall_lines`,
-  `holddowns`, `studs`, `collectors`, plus `connections` and frame `members` where present) carries
-  inputs/demand, the cited clause + limit state, capacity, DC — or `{'waived': '<justification>'}`
-  where a slot genuinely does not apply.
+- **You MUST fill `design/calc_package_cfs.json` in place.** Every seeded slot (`wall_lines`,
+  `holddowns`, `studs`, `collectors`, plus `connections`, frame `members`, `anchorage` and
+  `schedules` where present) carries inputs/demand, the cited clause + limit state, capacity, DC —
+  or `{'waived': '<justification>'}` where a slot genuinely does not apply. A waiver is a sentence of
+  engineering reason; a waived item with D/C > 1.0 is allowed only for a scoped existing / by-others
+  item (`waiver_scope: "existing" | "by_others" | "out_of_scope"`) and is listed in the report.
+  Hold-downs: write the DESIGN tension (`T_design_kip`) — the seed `T_cum_kip` is the ρ-ELF stack,
+  not the capacity-design demand.
 
-> ✅ **COMPLETION GATE — do NOT declare done until ALL hold in `calc_package.json`:**
-> 1. Every `wall_lines` slot has sheathing + fastener_schedule + capacity + DC, cited to S400.
+> ✅ **COMPLETION GATE (enforced by the app) — do NOT declare done until ALL hold in
+> `design/calc_package_cfs.json`:**
+> 1. Every `wall_lines` slot has sheathing + fastener_schedule + capacity + DC, cited (S400 seismic /
+>    S240 B5 wind).
 > 2. Every `holddowns` slot resolved for TENSION (device within band, or rod designed); every
 >    `studs` entry has a section per story group with the bracing assumption; every seeded
->    `collectors` slot designed or waived with justification.
-> 3. The capacity-design chain block exists for R>3 systems (strap/WSP/steel-sheet/SBMF), grounded
->    in S400. S240 grounding present for framing. No D/C > 1.0 anywhere.
-> 4. `consistency.check("<building>")` clean: same value everywhere, DC = demand ÷ capacity, no
->    empty limit_state/capacity/DC without a waiver.
+>    `collectors`, `anchorage` and `schedules` slot designed or waived with justification.
+> 3. The capacity-design chain block exists for R>3 systems (strap/WSP/steel-sheet/SBMF) with
+>    COMPUTED numbers (seed text does not count), grounded in S400. S240 grounding present for
+>    framing. No D/C > 1.0 anywhere (an NG waiver only for a scoped existing / by-others item).
+> 4. Every `drift_table` row passes, θ ≤ θmax, every `model_vs_tributary` / drift flag fixed or
+>    justified, and a declared two-stage podium is ELIGIBLE.
+> 5. `consistency.check("<building>")` PASSES on the final package (it writes
+>    `design/consistency_result.json`; the gate rejects a stale or failing result).
+> 6. `report.build_report("<building>")` re-run AFTER the last package edit (report newer than the
+>    package).
 >
 > Chapter 13's grounding verification reads your activity log and marks anything MISSING — if you
-> finish without S240/S400, your own deliverable will say so. Re-run
-> `report.build_report` after writing them.
+> finish without the required standards, your own deliverable will say so.
 
 ## Analysis API (spot-check helpers; the pipeline is the required path)
 - `cfs_systems.SYSTEMS` / `seis_cfs(SDS,SD1,S1,system)` / `height_check` / `drift_limit` /
@@ -448,10 +525,39 @@ run present the new schedules and WAIT for the user before updating the report.
 - `wall_line.WallLine(name, pos_ft, {story: [(L_ft, h_ft), ...]})` — wall-line objects;
   `wall_line.s400_deflection(...)` — the four-term drift; `wall_line.compare_with_model(...)` —
   the validator.
-- `cfs_sections.props("600S162-54")` — gross properties; `cfs_sections` effective-width routines —
-  Ae/Se/Ixe at stress (S100 App. 1 EWM), validated against the SFIA tables.
-- `cfs_pipeline.build_package` — the package seeder (the pipeline calls it for you).
-- Frame path: `engine3d` (kip-inch) with `custom_build`, Tier 1/2 elements per the fidelity tier.
+- `cfs_sections.gross_props("600S162-54")` — gross properties; `cfs_sections.effective_area(name, f)`
+  / `effective_Ix(name, f)` — Ae / Ixe at stress (S100 App. 1 EWM), validated against the SFIA
+  tables.
+- `cfs_pipeline.build_package` — the package seeder (the pipeline calls it for you);
+  `pipeline.merge_fills(name)` — carry fills from a `.filled.bak` into a re-seeded package.
+- Portal path: `cfs_frame.run(cfg)` — planar frame, FEET schema below (never `engine3d`).
+
+### Portal-path cfg schema (`cfs_frame`; feet / psf / kip — brief-facing)
+```python
+cfg = dict(
+  structure_kind="portal",        # "canopy", "portal_singlechannel", "component" (Tier-0 component job)
+  analysis_fidelity=1, direct_analysis=True,        # Tier 1: Ae/I_eff iteration, 0.8E, notional, P-Delta
+  span_ft=60.0, eave_ft=20.0, apex_ft=26.0,         # apex = ridge height above the base (FEET)
+  spacing_ft=25.0,                                  # frame spacing = load tributary
+  purlin_spacing_ft=5.0, girt_spacing_ft=6.0,       # brace/load stations
+  col_section="2x800S250-97", raf_section="2x800S250-97",   # "2x" = back-to-back built-up
+  base="pinned",                                    # or "fixed"
+  D_roof=4.5, collateral=0.0, Lr=20.0,              # psf
+  snow_pg=25.0, snow_ce=1.0, snow_ct=1.0, snow_is=1.0,      # ps = 0.7 Ce Ct Is pg; snow_ps=... overrides
+  pattern_snow=True, unbalanced_factors=(0.3, 1.5),         # gable unbalanced seed (agent verifies 7.6)
+  wind=dict(V=115.0, exposure="C", enclosed=True),          # seeded MWFRS, two GCpi cases W / W2
+  # wind_pressures_psf=dict(wall_wind=.., wall_lee=.., roof_wind=.., roof_lee=..,
+  #                         case_neg=dict(...)),  # override (keep case_neg for the 2nd GCpi case)
+  seis=dict(SDS=0.5, SD1=0.3, S1=0.2, R=3.0, Cd=3.0, Om0=3.0, Ie=1.0,
+            W_frame_kip=12.0),                      # E = SDS/(R/Ie) x W_frame at the eaves
+  system="not_detailed",                            # or "sbmf" (S400 E4)
+  # optional: monoslope=True, overhang_ft=..., spans=[dict(span_ft=.., apex_ft=..), ...],
+  #           truss_roof=True (roof gravity to the column tops), service_wind_factor=0.42
+)
+```
+The package (`kind="cfs_portal"`) seeds `members` (frame-col/frame-raf: governing combo P/V/M),
+`connections` (knee/apex), `anchorage` (V, NET UPLIFT, base M), `schedules`
+(purlin/girt/strap rows) and `drift_table` (eave sway / apex — YOU state the criterion and verdict).
 
 ### Wall-path cfg schema (feet / psf / kip — brief-facing)
 ```python
@@ -481,6 +587,9 @@ spans (the SFIA span data ends there) — deeper unit plans need an intermediate
 floor trusses; don't force a catalog joist past the table.
 
 ## Engine additions (2026-07-31, post-batch-5 fix pass)
+- **(2026-10) Gates that can fail:** independent tributary check, failing drift rows and θ fail
+  consistency, waivers need a scoped justification, seed text never counts as evidence, the
+  completion gate requires a fresh PASSING `consistency_result.json` and a re-rendered report.
 - **`wall_line.fit_positions`** is now robust: it keeps the legacy result
   bit-for-bit when that result is already monotone, otherwise optimizes the
   free DOF (maximin gap); if the target widths are provably un-orderable it
