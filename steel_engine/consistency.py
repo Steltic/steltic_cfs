@@ -19,14 +19,126 @@ For every member AND connection it checks:
 
 check(name) prints a PASS/FAIL summary and returns the list of issue strings ([] == consistent).
 Never raises -- a malformed package is itself reported as an issue.
-"""
-import os, json, re
 
-TOL = 0.04   # 4% relative tolerance on recomputed ratios
+PACKAGE FILE (CFS-13). ONE authoritative package per job:
+  * CFS jobs (wall path lines_x/lines_y, portal path span_ft) -> design/calc_package_cfs.json
+    (written by cfs_pipeline; the name the report, the completion gate and the contract use);
+  * hot-rolled grid jobs -> design/calc_package.json.
+package_path() resolves it. A CFS job that only has a legacy design/calc_package.json is still
+read (compatibility), and a CFS job that has BOTH files is an ISSUE (the duplicate is never
+silently ignored -- merge it into calc_package_cfs.json and delete it).
+
+check() also writes design/consistency_result.json (issues + the sha1/mtime of the package it
+checked) -- the app-side completion gate requires that stamp to be clean and fresh.
+"""
+import os, json, re, hashlib, time
+
+TOL = 0.04       # 4% relative tolerance on recomputed ratios
+ABS_TOL = 0.01   # ...with an absolute floor: |D/C - demand/capacity| <= 0.01 always passes (CFS-30)
+
+PKG_CFS = "calc_package_cfs.json"
+PKG_HR = "calc_package.json"
 
 
 def _here_repo():
     return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # repo root (engine/..)
+
+
+def is_cfs_cfg(cfg):
+    """Same test as pipeline._is_cfs_cfg: wall path carries lines_x/lines_y, portal span_ft."""
+    return isinstance(cfg, dict) and ("lines_x" in cfg or "lines_y" in cfg or "span_ft" in cfg)
+
+
+def package_path(root, cfg=None):
+    """(path, notes, issues) for the job's ONE authoritative calc package (CFS-13).
+    path is None when no package exists. notes are informational (compatibility read);
+    issues are gate failures (two package files on one CFS job)."""
+    d = os.path.join(root, "design")
+    p_cfs, p_hr = os.path.join(d, PKG_CFS), os.path.join(d, PKG_HR)
+    has_cfs, has_hr = os.path.exists(p_cfs), os.path.exists(p_hr)
+    cfs_job = has_cfs or is_cfs_cfg(cfg)
+    notes, issues = [], []
+    if not cfs_job:
+        return (p_hr if has_hr else None), notes, issues
+    if has_cfs and has_hr:
+        issues.append("TWO package files: design/%s (authoritative, CFS) AND design/%s -- the "
+                      "second is NOT read by the report/gate; merge any fills it holds into "
+                      "design/%s and delete design/%s" % (PKG_CFS, PKG_HR, PKG_CFS, PKG_HR))
+        return p_cfs, notes, issues
+    if has_cfs:
+        return p_cfs, notes, issues
+    if has_hr:
+        notes.append("legacy package name design/%s read on a CFS job (compatibility) -- the "
+                     "authoritative CFS name is design/%s" % (PKG_HR, PKG_CFS))
+        return p_hr, notes, issues
+    return None, notes, issues
+
+
+# ---- seed-owned package keys (CFS-29/30) -------------------------------------------------------
+# Text the PIPELINE writes into the package must never satisfy (or trip) a gate that is meant to
+# test the AGENT's work. These keys are skipped when the gates scan for agent evidence.
+SEED_KEYS = frozenset((
+    "basis", "note", "notes", "instruction", "seed_basis", "Om0_eff_basis", "dead_relief_basis",
+    "demand_basis", "governing_basis", "feasibility_note", "rho_basis", "combos", "combos_note",
+    "preflight_warnings", "wind_basis", "elf", "code", "building", "Ry_by_Fy", "Rt_by_Fy",
+    "analysis_basis", "uplift_note", "Om0", "Om0_eff", "Ve_cap_by_story_kip", "T_cd_seed_kip",
+    "dead_relief_kip_available", "Ve_cap_bay_by_story_kip", "T_cd_bay_seed_kip", "T_cum_kip",
+    "T_bay_seed_kip", "T_wind_kip", "k_kip_in", "v_unit_plf", "V_kip", "v_wind_plf",
+    "P_cum_kip_by_story", "trib_ft", "model_vs_tributary_flags", "drift_flags", "framework_screen",
+    "two_stage_framework", "independent_tributary", "period_rayleigh", "sections", "kind",
+    "structure_kind", "system", "rho", "id", "direction", "line", "story", "component_mode"))
+
+
+def _walk_agent(obj, skip=SEED_KEYS):
+    """Yield (key, value) leaves of obj, skipping seed-owned keys at every depth."""
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            if str(k) in skip:
+                continue
+            if isinstance(v, (dict, list)):
+                yield str(k), None
+                for kv in _walk_agent(v, skip):
+                    yield kv
+            else:
+                yield str(k), v
+    elif isinstance(obj, list):
+        for v in obj:
+            for kv in _walk_agent(v, skip):
+                yield kv
+
+
+def _agent_text(obj):
+    """Lower-case blob of agent-owned KEYS + string values (seed-owned keys excluded)."""
+    parts = []
+    for k, v in _walk_agent(obj):
+        parts.append(k)
+        if isinstance(v, str):
+            parts.append(v)
+    return " ".join(parts).lower()
+
+
+def _agent_has_number(obj):
+    for k, v in _walk_agent(obj):
+        if isinstance(v, (int, float)) and not isinstance(v, bool):
+            return True
+        if isinstance(v, str) and re.search(r"\d", v):
+            return True
+    return False
+
+
+_NEG = re.compile(r"\b(no|not|non|without|none|never|n/a)\b[\w\s,/()-]{0,25}$")
+
+
+def _mentions(blob, term):
+    """True if `term` occurs in blob at least once NOT preceded (within ~25 chars on the same
+    clause) by a negation (no / not / non / without / none / never / n/a) -- CFS-30: 'no Type II
+    walls' must not trip the Type II screen."""
+    for m in re.finditer(re.escape(term), blob):
+        pre = blob[max(0, m.start() - 30):m.start()]
+        pre = re.split(r"[.;:\n]", pre)[-1]
+        if not _NEG.search(pre):
+            return True
+    return False
 
 
 def _num(x):
@@ -62,24 +174,60 @@ def _dc_num(x):
     return None
 
 
-def _close(a, b, tol=TOL):
+def _close(a, b, tol=TOL, abs_tol=ABS_TOL):
     if a is None or b is None:
         return True
-    if abs(a) < 1e-9 and abs(b) < 1e-9:
+    if abs(a - b) <= abs_tol:          # absolute floor: 0.010 vs 0.012 at tiny D/C is not a conflict
         return True
     return abs(a - b) / max(abs(a), abs(b), 1e-9) <= tol
 
 
-def _find(d, *subs):
-    """First numeric value in dict d whose key contains any of the substrings (case-insensitive)."""
+_UNIT_SUFFIXES = ("_kip_in", "_kip_ft", "_kipin", "_kipft", "_k_in", "_k_ft", "_kips", "_kip",
+                  "_kft", "_kin", "_plf", "_klf", "_lbs", "_lb", "_in", "_ksi", "_psf", "_kn")
+
+
+def _norm_key(k):
+    """'phiPn_kip' -> 'phipn', 'T_design_kip' -> 'tdesign', 'Mu_kipin' -> 'mu' (unit suffix and
+    separators stripped) so demand/capacity keys are matched EXACTLY, never by substring."""
+    k = str(k).strip().lower().replace("φ", "phi")
+    changed = True
+    while changed:
+        changed = False
+        for suf in _UNIT_SUFFIXES:
+            if k.endswith(suf) and len(k) > len(suf):
+                k = k[:-len(suf)]
+                changed = True
+    return re.sub(r"[\s_\-\.]", "", k)
+
+
+# EXACT (normalized) demand / capacity field names (CFS-30: the old substring match read
+# phiPn_kip as BOTH the demand ('_kip') and the capacity ('phi') -> '50/50 = 1.000').
+DEMAND_KEYS = frozenset(("demand", "required", "requiredstrength", "ru", "pu", "mu", "vu", "tu",
+                         "mux", "muy", "pr", "mr", "vr", "tr", "nu", "tdesign", "designt",
+                         "tdemand", "demandt", "puplift", "tuplift", "vdesign", "pdesign",
+                         "mdesign"))
+CAPACITY_KEYS = frozenset(("capacity", "phirn", "phipn", "phimn", "phivn", "phitn", "phipne",
+                           "phipnl", "phipnd", "phimne", "phimnl", "phimnd", "phivnw",
+                           "available", "availablestrength", "designstrength", "phirnw",
+                           "phitnrod", "phipnb", "phipnov", "phipnot"))
+
+
+def _find(d, keys):
+    """First numeric value in dict d whose NORMALIZED key is in `keys` (exact match)."""
     if not isinstance(d, dict):
         return None
     for k, v in d.items():
-        if any(s in str(k).lower() for s in subs):
+        if _norm_key(k) in keys:
             n = _num(v)
             if n is not None:
                 return n
     return None
+
+
+def _is_interaction(name):
+    """Interaction / combined rows (H1, H2, unity sums) are NOT a single demand/capacity ratio."""
+    s = str(name or "").lower()
+    return bool(re.search(r"\bh[123]\b|h1\.|h2\.|interaction|combined|unity|\+", s))
 
 
 def _demand_capacity_from_string(s):
@@ -201,8 +349,10 @@ def _entry_issues(kind, entry):
             continue
         cls = c.get("limit_state", c.get("name", "check"))
         cdc = _dc_num(c.get("DC"))
-        dem = _find(c, "demand", "ru", "required", "mu", "pu", "vu", "_kip", "_kft")
-        cap = _find(c, "capacity", "phirn", "phi", "available", "design_strength")
+        dem = _find(c, DEMAND_KEYS)
+        cap = _find(c, CAPACITY_KEYS)
+        if _is_interaction(cls) or _is_interaction(c.get("name")):
+            dem = cap = None                 # an H1 sum is not P/Pcap -- never recompute it
         if dem is not None and cap not in (None, 0.0):
             rec = dem / cap
             if cdc is not None and not _close(rec, cdc):
@@ -212,6 +362,19 @@ def _entry_issues(kind, entry):
                 cdc = rec
         if cdc is not None:
             check_dcs.append((cls, cdc))
+    # schedule rows (purlin/girt/strap/stud schedules) carry their own D/Cs -- they count too
+    for r in (entry.get("rows") if isinstance(entry.get("rows"), list) else []):
+        if isinstance(r, dict) and not r.get("waived"):
+            rid = r.get("id") or r.get("member") or r.get("panel") or r.get("zone") or "?"
+            rdc = _dc_num(r.get("DC"))
+            rdem, rcap = _find(r, DEMAND_KEYS), _find(r, CAPACITY_KEYS)
+            if rdc is not None and rdem is not None and rcap not in (None, 0.0) \
+                    and not _is_interaction(r.get("limit_state")):
+                if not _close(rdem / rcap, rdc):
+                    out.append(f"[{kind} {cid}] row '{rid}': D/C {rdc:.3f} != demand/capacity "
+                               f"{rdem:.3g}/{rcap:.3g} = {rdem / rcap:.3f} -- reconcile")
+            if rdc is not None:
+                check_dcs.append(("row %s" % rid, rdc))
 
     top_dc = _dc_num(entry.get("DC"))
     ls_present = bool(entry.get("limit_state")) or any(
@@ -228,8 +391,7 @@ def _entry_issues(kind, entry):
         worst = max(all_dcs)
         if worst > 1.0 + 1e-9:
             if entry.get("waived"):
-                pass   # explicitly waived with an engineering justification (completion-gate convention) --
-                       # e.g. an EXISTING member in a retrofit/addition job carried as a retrofit-scope item
+                out += _waiver_issues(kind, entry)   # NG waivers need a scoped justification (CFS-29d)
             else:
                 _sec_ = (entry.get("inputs") or {}).get("section") or entry.get("section")
                 out.append(f"[{kind} {cid}] worst D/C = {worst:.3f} > 1.0 (NG -- resize/redesign)"
@@ -248,7 +410,73 @@ def _entry_issues(kind, entry):
             out.append(f"[{kind} {cid}] demand/capacity {dem:.3g}/{cap:.3g} = {rec:.3f} "
                        f"!= reported D/C {max(all_dcs):.3f} -- reconcile")
 
-    out += _one_value_issues(kind, cid, entry)
+    # one-value screen on the entry's own text; schedule ROWS are different items by design
+    out += _one_value_issues(kind, cid, {k: v for k, v in entry.items() if k != "rows"})
+    return out
+
+
+def worst_dc(entry):
+    """Worst numeric D/C over an entry's headline, checks and schedule rows (None if none)."""
+    if not isinstance(entry, dict):
+        return None
+    vals = [_dc_num(entry.get("DC"))]
+    for c in (entry.get("checks") if isinstance(entry.get("checks"), list) else []):
+        if isinstance(c, dict):
+            vals.append(_dc_num(c.get("DC")))
+    for r in (entry.get("rows") if isinstance(entry.get("rows"), list) else []):
+        if isinstance(r, dict):
+            vals.append(_dc_num(r.get("DC")))
+    vals = [v for v in vals if v is not None]
+    return max(vals) if vals else None
+
+
+# a waiver of an NG (D/C > 1.0) result is acceptable ONLY for an item outside the design scope
+WAIVER_SCOPES = ("existing", "by_others", "out_of_scope", "not_applicable")
+_WAIVER_SCOPE_WORDS = ("existing", "retrofit", "by others", "out of scope", "not in scope",
+                       "outside the scope", "delegated", "handed off", "eor of record",
+                       "not applicable", "does not apply")
+
+
+def _waiver_issues(kind, entry):
+    """CFS-29(d): a waiver is an explicit, JUSTIFIED exemption -- never a silent pass.
+      * every waiver needs a real justification (>= 15 characters of text);
+      * a waived item that carries D/C > 1.0 additionally needs a declared scope
+        (entry['waiver_scope'] in WAIVER_SCOPES, or the justification says existing /
+        retrofit / by others / out of scope ...) -- a new member cannot be waived NG."""
+    out = []
+    cid = entry.get("id") or entry.get("check") or "?"
+    w = entry.get("waived")
+    txt = w if isinstance(w, str) else ""
+    if len(txt.strip()) < 15:
+        out.append("[%s %s] waived without an engineering justification (waived=%r) -- state "
+                   "why the slot does not apply (>= one sentence) or design it" % (kind, cid, w))
+    wd = worst_dc(entry)
+    if wd is not None and wd > 1.0 + 1e-9:
+        scope = str(entry.get("waiver_scope") or "").lower()
+        scoped = scope in WAIVER_SCOPES or any(s in txt.lower() for s in _WAIVER_SCOPE_WORDS)
+        if not scoped:
+            out.append("[%s %s] WAIVED with D/C = %.3f > 1.0 -- an NG result may be waived only "
+                       "for a scoped EXISTING / by-others / out-of-scope item: set "
+                       "waiver_scope (%s) with the justification, or redesign"
+                       % (kind, cid, wd, "/".join(WAIVER_SCOPES)))
+    return out
+
+
+def waived_ng_items(pkg):
+    """[(kind, id, D/C, justification)] for every waived entry whose D/C exceeds 1.0 -- the
+    report lists these explicitly (CFS-29d / CFS-31)."""
+    out = []
+    if not isinstance(pkg, dict):
+        return out
+    for kind, key in (("wall", "wall_lines"), ("hold-down", "holddowns"), ("stud", "studs"),
+                      ("collector", "collectors"), ("member", "members"),
+                      ("connection", "connections"), ("anchorage", "anchorage"),
+                      ("schedule", "schedules"), ("drift", "drift_table")):
+        for e in pkg.get(key) or []:
+            if isinstance(e, dict) and e.get("waived"):
+                wd = worst_dc(e)
+                if wd is not None and wd > 1.0 + 1e-9:
+                    out.append((kind, e.get("id") or e.get("check") or "?", wd, str(e["waived"])))
     return out
 
 
@@ -289,6 +517,29 @@ def _geometry_issues(cfg):
     units."""
     out = []
     if not isinstance(cfg, dict):
+        return out
+    if "span_ft" in cfg or "spans" in cfg:      # CFS PORTAL path (cfs_frame): FEET (CFS-12 lint)
+        spans = [cfg.get("span_ft")] + [s.get("span_ft") for s in (cfg.get("spans") or [])
+                                        if isinstance(s, dict)]
+        for sp in spans:
+            if _isnum(sp) and float(sp) > 200:
+                out.append("portal span_ft=%g looks like INCHES -- the portal path (cfs_frame) is "
+                           "FEET: a 48 ft span is 48, not 576" % float(sp))
+            elif _isnum(sp) and float(sp) < 8:
+                out.append("portal span_ft=%g ft is implausibly small for a portal frame -- "
+                           "confirm FEET" % float(sp))
+        e, a = cfg.get("eave_ft"), cfg.get("apex_ft")
+        if _isnum(e) and float(e) > 60:
+            out.append("portal eave_ft=%g looks like INCHES (cfs_frame takes FEET)" % float(e))
+        if _isnum(e) and float(e) < 6:
+            out.append("portal eave_ft=%g ft is implausibly low -- confirm FEET" % float(e))
+        if _isnum(e) and _isnum(a) and float(a) < float(e) - 1e-6 and not cfg.get("monoslope"):
+            out.append("portal apex_ft=%g < eave_ft=%g -- apex is the RIDGE height above the base "
+                       "(monoslope frames set monoslope=True)" % (float(a), float(e)))
+        s = cfg.get("spacing_ft")
+        if _isnum(s) and (float(s) > 60 or float(s) < 3):
+            out.append("portal spacing_ft=%g is implausible for CFS frames (typ. 8-30 ft) -- "
+                       "confirm FEET" % float(s))
         return out
     Hft = [float(h) for h in (cfg.get("heights_ft") or []) if _isnum(h)]
     if Hft:                                     # wall path: FEET expected (8-20 ft stories)
@@ -376,7 +627,11 @@ def _design_basis_issues(cfg, name=None, pkg=None):
             out.append("cfg['diaphragm']='rigid' on a light-frame wall building without justification "
                        "-- flexible is the 12.3.1.1 default; rigid-plate torsional redistribution "
                        "must be justified (e.g. concrete topping) or the model corrected")
-    if _dia in ("flexible","semi-rigid") and isinstance(pkg,dict):
+    _cfs_pkg = isinstance(pkg, dict) and (pkg.get("wall_lines") is not None
+                                          or pkg.get("kind") == "cfs_portal")
+    # (CFS packages are distributed by the tributary solver BY CONSTRUCTION -- the keyword test
+    #  below is only meaningful for hand-built frame-path packages; CFS-29b)
+    if _dia in ("flexible","semi-rigid") and isinstance(pkg,dict) and not _cfs_pkg:
         _blob2=_cd_blob(pkg)+" "+json.dumps(pkg).lower()
         if "tributary" not in _blob2:
             out.append("cfg['diaphragm']='%s' declared but calc_package never distributes lateral "
@@ -434,9 +689,13 @@ def _cd_blob(pkg):
     return " ".join(parts).lower()
 
 def _named_not_computed_issues(pkg):
+    """R9: a symbolic inequality in the AGENT's capacity_design text ('An*Fu >= Ag*Fy') with no
+    numbers substituted. The PIPELINE's own seed text (instruction / basis / note / seed_basis
+    ...) is exempt (CFS-30: the raw seed used to fail its own check, training agents to
+    rewrite framework text)."""
     out=[]; cd=pkg.get("capacity_design") if isinstance(pkg,dict) else None
     if cd is None: return out
-    txt=[]; _gather_text(cd,txt)
+    txt=[v for _k, v in _walk_agent(cd) if isinstance(v, str)]
     for t in txt:
         if not isinstance(t,str) or not re.search(r">=|<=|≥|≤",t): continue
         bare=set(v.lower() for v in re.findall(r"(?<![A-Za-z0-9])[A-Za-z](?![A-Za-z0-9])", t))  # single-letter symbols (t,h,L,e,...)
@@ -444,17 +703,50 @@ def _named_not_computed_issues(pkg):
             out.append("[capacity_design] '%s' is a symbolic REQUIREMENT, not a COMPUTED check -- substitute the section's numbers and give value vs limit + D/C"%t.strip()[:80])
     return out
 
+def _evidence(obj, kws):
+    """AGENT evidence for a required check: some dict node in obj (seed-owned keys excluded) whose
+    own keys / string values mention one of kws AND whose agent-owned subtree carries a number
+    (a computed value, not prose). CFS-29b: the seed text alone never satisfies it."""
+    if isinstance(obj, dict):
+        direct = []
+        for k, v in obj.items():
+            if str(k) in SEED_KEYS:
+                continue
+            direct.append(str(k).lower())
+            if isinstance(v, str):
+                direct.append(v.lower())
+        txt = " ".join(direct)
+        if any(kw in txt for kw in kws) and _agent_has_number(obj):
+            return True
+        return any(_evidence(v, kws) for k, v in obj.items()
+                   if str(k) not in SEED_KEYS and isinstance(v, (dict, list)))
+    if isinstance(obj, list):
+        return any(_evidence(v, kws) for v in obj)
+    return False
+
+
 def _system_checks_issues(cfg, pkg):
     out=[]
     if not isinstance(cfg, dict): return out
     sysname=str(cfg.get("system") or "").lower()
     if not sysname or not isinstance(pkg,dict): return out
-    blob=_cd_blob(pkg)
+    cd = pkg.get("capacity_design") or {}
+    # evidence may live in capacity_design OR in the designed slots themselves
+    where = [cd] + [pkg.get(k) for k in ("holddowns", "connections", "studs", "members",
+                                         "collectors", "anchorage")]
     for key,reqs in _SYS_REQUIRED.items():
         if key in sysname:
             for label,kws in reqs:
-                if not any(kw in blob for kw in kws):
-                    out.append("system '%s' requires check: %s -- not found in capacity_design (add it, computed)"%(cfg.get("system"),label))
+                if kws == ["fastener"]:
+                    ok = any(isinstance(w, dict) and w.get("fastener_schedule")
+                             for w in (pkg.get("wall_lines") or []))
+                else:
+                    ok = any(_evidence(o, kws) for o in where if o)
+                if not ok:
+                    out.append("system '%s' requires check: %s -- no COMPUTED evidence in the "
+                               "package (the pipeline's seed text does not count; add the check "
+                               "with its numbers to capacity_design or the slot)"
+                               % (cfg.get("system"), label))
     return out
 
 _CD_GATE_SYSTEMS = ("strap_braced", "wsp_shearwall", "steelsheet_wall")   # R>3 wall systems
@@ -595,9 +887,18 @@ def _consultancy_issues(cfg, pkg):
     if float(cfg.get("snow", 0) or 0) > 0 and stepish and "drift" not in blob.replace("drift_", ""):
         out.append("snow present with roof steps/parapets/setbacks and no DRIFT surcharge in the "
                    "package (ASCE 7-22 7.7/7.8) -- add the drift check to the step-adjacent members")
-    # B8 delegated-design register
-    if any(k in blob for k in ("joist", "sji", " deck", "brb", "stair", "curtain wall")) and \
-            "delegat" not in blob:
+    # B8 delegated-design register. CFS-30: CFS joists/framing are DESIGNED by the agent (S240),
+    # and seed text ('joist span', cfg joist_span_ft) mentions joists everywhere -- on a CFS
+    # package only proprietary/manufacturer-designed items count, in AGENT text, not negated.
+    _cfs = pkg.get("wall_lines") is not None or pkg.get("kind") == "cfs_portal"
+    if _cfs:
+        _ab = _agent_text(pkg)
+        _deleg_kw = ("sji", "open-web", "open web", "proprietary", "pre-engineered truss",
+                     "truss manufacturer", "brb", "stair", "curtain wall")
+        _b8 = any(_mentions(_ab, k) for k in _deleg_kw)
+    else:
+        _b8 = any(k in blob for k in ("joist", "sji", " deck", "brb", "stair", "curtain wall"))
+    if _b8 and "delegat" not in blob:
         out.append("delegated-design components referenced (joists/deck/BRBs/stairs/cladding) but no "
                    "'delegated_design' register in capacity_design -- list each delegated item, the "
                    "design criteria handed off, and the interface forces")
@@ -607,14 +908,43 @@ def _consultancy_issues(cfg, pkg):
 _HD_BANDS = {"strap": 5.0, "bolted": 20.0}      # kip; mirror wall_line.pick_holddown envelopes
 
 
+def hd_design_demand(h):
+    """(T_kip, source) -- the hold-down/chord DESIGN tension the agent filled: an explicit design
+    field, else DC x capacity; (None, None) when the slot is not designed yet."""
+    for k in ("T_design_kip", "design_T_kip", "T_demand_kip", "demand_kip", "Tu_kip", "T_u_kip",
+              "demand"):
+        v = _num(h.get(k))
+        if v is not None:
+            return v, k
+    dc = _num(h.get("DC")); cap = _num(h.get("capacity"))
+    if dc is not None and cap is not None and cap > 0:
+        return dc * cap, "DC x capacity"
+    return None, None
+
+
+def hd_band_tension(h):
+    """Tension a hold-down DEVICE must resist for the class-band screen (CFS-29e): the agent's
+    design tension when filled, else the largest seed -- max(T_cum (rho-ELF), T_bay, T_cd_seed
+    (Omega0-level capacity design), T_wind). Never the bare ELF T_cum when a larger seed exists."""
+    d, _src = hd_design_demand(h)
+    if d is not None:
+        return d, "design"
+    seeds = [_num(h.get(k)) for k in ("T_cum_kip", "T_bay_seed_kip", "T_cd_seed_kip",
+                                      "T_wind_kip")]
+    seeds = [x for x in seeds if x is not None]
+    return (max(seeds), "max seed") if seeds else (None, None)
+
+
 def _cfs_slot_issues(cfg, pkg):
-    """CFS-specific slot screens: sheathing+fastener completeness, hold-down band vs cumulative
-    TENSION (and the sized-for-shear red flag), Type II mechanics, the net-uplift path, and
-    unresolved pipeline gate flags."""
+    """CFS-specific slot screens: sheathing+fastener completeness, hold-down band vs the DESIGN
+    tension (and the sized-for-shear red flag), Type II mechanics, the net-uplift path, and
+    unresolved pipeline gate flags. Keyword screens read AGENT text only and ignore negated
+    mentions (CFS-29b/CFS-30)."""
     out = []
     if not isinstance(pkg, dict):
         return out
     blob = json.dumps(pkg).lower()
+    ablob = _agent_text(pkg)
     for w in pkg.get("wall_lines") or []:
         if isinstance(w, dict) and not w.get("waived") and \
                 not (w.get("sheathing") and w.get("fastener_schedule")):
@@ -623,36 +953,39 @@ def _cfs_slot_issues(cfg, pkg):
     for h in pkg.get("holddowns") or []:
         if not isinstance(h, dict) or h.get("waived"):
             continue
-        T = _num(h.get("T_cum_kip"))
-        dev = str(h.get("device_class") or "").lower()
+        T, src = hd_band_tension(h)
+        dev = str(h.get("device_class") or "").strip().lower()
         cap = _HD_BANDS.get(dev)
         if T is not None and cap is not None and T > cap * 1.02:
-            out.append("[hold-down %s] cumulative tension %.1f kip exceeds the %s-class envelope "
+            out.append("[hold-down %s] %s tension %.1f kip exceeds the %s-class envelope "
                        "(~%.0f kip) -- switch to a COMPUTED continuous rod (tension + PL/AE "
-                       "elongation + take-up; elongation feeds drift)" % (h.get("id"), T, dev, cap))
-        _basis = str(h.get("basis", "")).lower()
-        if "shear" in _basis and "tension" not in _basis:
+                       "elongation + take-up; elongation feeds drift)"
+                       % (h.get("id"), src, T, dev, cap))
+        if any("shear" in f and "tension" not in f
+               for f in (str(h.get("basis", "")).lower(), str(h.get("limit_state", "")).lower())):
             out.append("[hold-down %s] appears sized for SHEAR -- hold-downs resist the cumulative "
                        "OVERTURNING TENSION, never the shear (instant red flag)" % h.get("id"))
-    # Type II (perforated) mechanics
-    if ("type ii" in blob or "perforated" in blob):
-        if "adjustment" not in blob:
+    # Type II (perforated) mechanics -- only where Type II is actually DECLARED (not negated)
+    if _mentions(blob, "type ii") or _mentions(blob, "perforated"):
+        if "adjustment" not in blob and "ca" not in [_norm_key(k) for k, _v in _walk_agent(pkg)]:
             out.append("Type II (perforated) walls referenced but NO adjustment-factor calculation "
                        "in the package -- show the S400 Type II factor on the full-length capacity")
-        if not ("distributed" in blob and ("track" in blob or "anchorage" in blob)):
+        if not ("distributed" in ablob and ("track" in ablob or "anchorage" in ablob)):
             out.append("Type II walls need END hold-downs PLUS distributed track anchorage between "
                        "-- not evident in the package")
-        if any(k in blob for k in ("every pier", "each pier", "per pier")):
+        if any(_mentions(blob, k) for k in ("every pier", "each pier", "per pier")):
             out.append("Type II wall with hold-downs at EVERY PIER -- that silently reverts the "
                        "wall to Type I; anchor the wall ENDS only, distributed track anchorage between")
-    # net-uplift path on wind-relevant briefs
-    wind_v = _num((cfg or {}).get("wind", {}).get("V")) if isinstance(cfg, dict) else None
+    # net-uplift path on wind-relevant briefs -- the seed's COMBOS_NOTE / combo labels / slot
+    # notes do not count; the AGENT's design must carry it
+    _w = (cfg or {}).get("wind") if isinstance(cfg, dict) else None
+    wind_v = _num(_w.get("V")) if isinstance(_w, dict) else None
     windy = (isinstance(cfg, dict) and str(cfg.get("governing", "")).lower() == "wind") or \
             (wind_v is not None and wind_v >= 115)
-    if windy and not ("0.9" in blob and "uplift" in blob):
-        out.append("wind-governed/high-wind brief and no 0.9D+1.0W NET-UPLIFT case in the package "
+    if windy and not ("0.9" in ablob and "uplift" in ablob):
+        out.append("wind-governed/high-wind brief and no 0.9D+1.0W NET-UPLIFT design in the package "
                    "-- the uplift path (roof-to-wall, wall-to-floor, floor-to-foundation) is a "
-                   "REQUIRED anchorage design chain")
+                   "REQUIRED anchorage design chain (the seeded combo list alone does not count)")
     # unresolved pipeline gates
     for key, what in (("model_vs_tributary_flags", "model-vs-tributary divergence"),
                       ("drift_flags", "drift limit exceedance")):
@@ -663,30 +996,142 @@ def _cfs_slot_issues(cfg, pkg):
     return out
 
 
+_DRIFT_VALUE_KEYS = ("drift_design", "drift_amplified_design", "drift_amplified", "ratio",
+                     "drift_ratio", "value_ratio")
+_DRIFT_LIMIT_KEYS = ("limit", "limit_ratio", "drift_limit")
+
+
+def _drift_table_issues(pkg):
+    """CFS-29(c): every drift_table row is a CHECK. A failing row (ok False, D/C > 1, or value >
+    limit) FAILS the gate -- a blanket *_resolution string never clears it; fix the design, or
+    put the designed-schedule drift in the row (drift_design / drift_amplified + ok), or waive
+    the ROW with a justification (e.g. a declared split-level offset). Rows the pipeline seeds
+    with ok=None (portal eave sway / apex) need the agent's criterion + verdict."""
+    out = []
+    for r in (pkg.get("drift_table") or []) if isinstance(pkg, dict) else []:
+        if not isinstance(r, dict):
+            continue
+        rid = r.get("check") or "%s line %s story %s" % (r.get("direction"), r.get("line"),
+                                                          r.get("story"))
+        if r.get("waived"):
+            out += _waiver_issues("drift", dict(r, id=rid))
+            continue
+        val = next((_num(r.get(k)) for k in _DRIFT_VALUE_KEYS if _num(r.get(k)) is not None), None)
+        lim = next((_num(r.get(k)) for k in _DRIFT_LIMIT_KEYS if _num(r.get(k)) is not None), None)
+        dc = _dc_num(r.get("DC"))
+        ok = r.get("ok")
+        fail = (ok is False) or (dc is not None and dc > 1.0 + 1e-9) or \
+               (val is not None and lim is not None and lim > 0 and val > lim * (1 + 1e-6))
+        # an explicitly designed value that passes overrides a stale engine screen value
+        dd = _num(r.get("drift_design")) if r.get("drift_design") is not None else \
+            _num(r.get("drift_amplified_design"))
+        if fail and dd is not None and lim and dd <= lim and ok is not False:
+            fail = False
+        if fail:
+            shown = ("%.4g" % val) if val is not None else ("D/C %.3f" % dc if dc is not None else "?")
+            out.append("[drift %s] FAILS: %s vs limit %s -- stiffen/redesign and re-run (a "
+                       "drift_flags_resolution note does NOT clear a failing drift row; waive the "
+                       "row only with a justification such as a declared split-level offset)"
+                       % (rid, shown, ("%.4g" % lim) if lim is not None else "?"))
+        elif ok is None and dc is None:
+            out.append("[drift %s] has no verdict -- state the criterion (e.g. H/60, H/240 with "
+                       "brittle finishes, L/240 apex) and set ok / DC" % rid)
+    return out
+
+
+def _theta_issues(pkg):
+    """P-Delta stability coefficient (ASCE 7-22 12.8.7): any agent/framework block that reports a
+    numeric theta FAILS when theta > its stated theta_max (or > 0.25, the absolute ceiling of
+    Eq. 12.8-17) -- HR-14/CFS-29 port: a theta failure can never ship green."""
+    out = []
+    if not isinstance(pkg, dict):
+        return out
+
+    def walk(o, path):
+        if isinstance(o, dict):
+            th = None
+            for k in ("theta", "theta_max_story", "theta_story_max"):
+                if _num(o.get(k)) is not None and not isinstance(o.get(k), str):
+                    th = float(o[k]); break
+            if th is not None and not o.get("waived"):
+                lim = None
+                for k in ("theta_max", "theta_limit", "limit"):
+                    v = o.get(k)
+                    if isinstance(v, (int, float)) and not isinstance(v, bool):
+                        lim = float(v); break
+                lim = min(lim, 0.25) if lim else 0.25
+                if th > lim + 1e-9 or o.get("ok") is False:
+                    out.append("[stability %s] theta = %.3f > theta_max = %.3f (ASCE 7-22 12.8.7) "
+                               "-- the structure must be stiffened/redesigned" % (path, th, lim))
+            for k, v in o.items():
+                if str(k) not in ("combos",):
+                    walk(v, path + "." + str(k) if path else str(k))
+        elif isinstance(o, list):
+            for i, v in enumerate(o):
+                walk(v, "%s[%d]" % (path, i))
+    walk(pkg, "")
+    return out
+
+
+def _two_stage_issues(cfg, pkg):
+    """CFS-32: a podium / two-stage claim must be backed by the framework's 12.2.3.2 block
+    (pkg['two_stage_framework'], written by pipeline.design_and_report) with every eligibility
+    item EVALUATED and PASSING; the reported reaction amplification must be >= 1.0."""
+    out = []
+    if not isinstance(cfg, dict) or not isinstance(pkg, dict):
+        return out
+    claimed = str(cfg.get("structure_kind", "")).lower() == "podium" or bool(cfg.get("two_stage"))
+    if not claimed:
+        return out
+    ts = pkg.get("two_stage_framework")
+    if not isinstance(ts, dict):
+        out.append("two-stage podium (ASCE 7-22 12.2.3.2) declared but the package has no "
+                   "framework two_stage_framework block -- re-run pipeline.design_and_report "
+                   "with cfg['two_stage'] (K_lower_kip_in, T_combined_s or W_lower_kip, R_lower, "
+                   "rho_lower)")
+        return out
+    for dirn, d in (ts.get("by_direction") or {}).items():
+        st = str(d.get("status", "")).upper()
+        if st != "ELIGIBLE":
+            out.append("two-stage %s: %s -- %s" % (dirn, st or "NOT EVALUATED",
+                                                   "; ".join(d.get("messages") or [])
+                                                   or "supply the missing podium data"))
+    amp = _num(ts.get("amplification"))
+    if amp is not None and amp < 1.0 - 1e-9:
+        out.append("two-stage reaction amplification %.3f < 1.0 -- 12.2.3.2(d) floor is 1.0" % amp)
+    return out
+
+
 def check(name, root=None, pkg=None, verbose=True):
-    """Run the self-consistency check. Returns a list of issue strings ([] == consistent)."""
+    """Run the self-consistency check. Returns a list of issue strings ([] == consistent).
+    Reads the job's ONE authoritative package (package_path: calc_package_cfs.json on CFS jobs)
+    and, when it read the package from disk, stamps design/consistency_result.json for the
+    completion gate."""
     issues = []
+    path = None
+    if root is None:
+        base = os.environ.get("STEEL_BUILDER_JOBS") or _here_repo()
+        root = os.path.join(base, name)
+    _dcfg = _load_cfg(root, name)
     if pkg is None:
-        if root is None:
-            base = os.environ.get("STEEL_BUILDER_JOBS") or _here_repo()
-            root = os.path.join(base, name)
-        path = os.path.join(root, "design", "calc_package.json")
-        if not os.path.exists(path):
-            # CFS path (cfs_pipeline) writes calc_package_cfs.json -- fall back to it
-            _cfs = os.path.join(root, "design", "calc_package_cfs.json")
-            if os.path.exists(_cfs):
-                path = _cfs
-        if not os.path.exists(path):
-            issues.append(f"calc_package.json not found at {path} -- run design_and_report first")
+        path, _notes, _pissues = package_path(root, _dcfg)
+        issues += _pissues
+        if verbose:
+            for n in _notes:
+                print("[consistency] note:", n)
+        if path is None:
+            want = PKG_CFS if is_cfs_cfg(_dcfg) else "%s (or %s on CFS jobs)" % (PKG_HR, PKG_CFS)
+            issues.append(f"design/{want} not found under {root} -- run design_and_report first")
             if verbose:
                 _print(name, issues)
             return issues
         try:
             pkg = json.load(open(path, encoding="utf-8"))
         except Exception as ex:
-            issues.append(f"calc_package.json is not valid JSON: {ex}")
+            issues.append(f"{os.path.basename(path)} is not valid JSON: {ex}")
             if verbose:
                 _print(name, issues)
+            _stamp(root, path, issues)
             return issues
 
     members = pkg.get("members") or []
@@ -699,16 +1144,20 @@ def check(name, root=None, pkg=None, verbose=True):
                       ("wall", pkg.get("wall_lines") or []),
                       ("hold-down", pkg.get("holddowns") or []),
                       ("stud", pkg.get("studs") or []),
-                      ("collector", pkg.get("collectors") or [])):
+                      ("collector", pkg.get("collectors") or []),
+                      ("anchorage", pkg.get("anchorage") or []),     # CFS-29c: never unchecked
+                      ("schedule", pkg.get("schedules") or [])):
         for m in lst:
-            if isinstance(m, dict) and not m.get("waived"):
+            if not isinstance(m, dict):
+                continue
+            if m.get("waived"):
+                issues += _waiver_issues(kind, m)                    # CFS-29d
+            else:
                 issues += _entry_issues(kind, m)
 
-    _root = root if root else os.path.join(os.environ.get("STEEL_BUILDER_JOBS") or _here_repo(), name)
-    if not os.path.exists(os.path.join(_root, "cfg.py")):
+    if not os.path.exists(os.path.join(root, "cfg.py")):
         issues.append("jobs/%s/cfg.py not found -- write the building's cfg (including any custom_build) to cfg.py "
                       "FIRST and keep it; the saved OpenSees model must be reproducible and editable for later studies." % name)
-    _dcfg = _load_cfg(_root, name)
     issues += _geometry_issues(_dcfg)                       # units/geometry sanity (story heights in ft, etc.)
     issues += _design_basis_issues(_dcfg, name, pkg)        # R1/R2/R8/R12/R14/R16
     issues += _height_limit_issues(_dcfg)                   # R19 system height limit
@@ -719,10 +1168,38 @@ def check(name, root=None, pkg=None, verbose=True):
     issues += _system_checks_issues(_dcfg, pkg)             # per-system S400 required checks
     issues += _capacity_design_numeric_issues(_dcfg, pkg)   # NUMERIC gate: demand vs ELF seed (R>3 walls)
     issues += _cfs_slot_issues(_dcfg, pkg)                  # CFS slot screens (walls/HDs/TypeII/uplift/gates)
+    issues += _drift_table_issues(pkg)                      # CFS-29c: failing drift rows FAIL
+    issues += _theta_issues(pkg)                            # 12.8.7 theta <= theta_max
+    issues += _two_stage_issues(_dcfg, pkg)                 # CFS-32 two-stage eligibility
     issues += _completeness_issues(pkg)
+    if path is not None:
+        _stamp(root, path, issues)
     if verbose:
         _print(name, issues)
     return issues
+
+
+def _sha1(path):
+    h = hashlib.sha1()
+    with open(path, "rb") as f:
+        h.update(f.read())
+    return h.hexdigest()
+
+
+def _stamp(root, path, issues):
+    """design/consistency_result.json: what the app-side completion gate reads (it is
+    engine-free). Records WHICH package was checked (name + sha1 + mtime) so an edit after the
+    check makes the stamp stale."""
+    try:
+        out = dict(package=os.path.basename(path), package_sha1=_sha1(path),
+                   package_mtime=os.path.getmtime(path), checked_at=time.time(),
+                   n_issues=len(issues), issues=list(issues)[:200],
+                   result="PASS" if not issues else "FAIL")
+        with open(os.path.join(root, "design", "consistency_result.json"), "w",
+                  encoding="utf-8") as f:
+            json.dump(out, f, indent=1)
+    except Exception:
+        pass
 
 
 def _print(name, issues):
@@ -763,7 +1240,7 @@ def _selftest():
     for want in ("sheathing + fastener_schedule", "exceeds the bolted-class envelope",
                  "sized for SHEAR", "adjustment-factor", "EVERY PIER", "NET-UPLIFT",
                  "unresolved drift limit", "600S162-68", "65", "look like INCHES",
-                 "connections list is empty", "tributary"):
+                 "connections list is empty"):
         assert want in blob, "missing screen: %s\n%s" % (want, blob)
     # canonical SDC: SD1-governed site (SDS=0.30 says B, SD1=0.25 says D) must use the
     # WORSE bin; the old SD1-blind proxy called this SDC B and missed the gypsum 35-ft cap
@@ -805,7 +1282,9 @@ def _selftest():
         connections=[dict(id="uplift-clip", limit_state="screw shear", cited="S100 J", DC=0.8)],
         capacity_design=dict(system="wsp_shearwall",
                              note="expected wall strength to collectors; fastener schedule basis; "
-                                  "0.9D+1.0W net uplift path designed; tributary distribution"),
+                                  "0.9D+1.0W net uplift path designed; tributary distribution",
+                             expected_strength=dict(Omega_E=1.3, T_expected_kip=11.7),
+                             net_uplift=dict(combo="0.9D+1.0W", T_uplift_kip=3.1, DC=0.4)),
         drift_flags=[], model_vs_tributary_flags=[])
     iss2 = [i for i in check("SELFTEST", pkg=good, verbose=False)]
     iss2 += _design_basis_issues(cfg, "SELFTEST", good) + _cfs_slot_issues(cfg, good)
