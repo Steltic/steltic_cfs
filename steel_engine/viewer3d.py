@@ -89,47 +89,21 @@ def _model_used(root):
 
 # --------------------------------------------------------------- loads
 def _static_gravity(cfg, coords):
-    """Per-beam per-segment tributary w (kip/in) for D and L, replaying apply_gravity's math
-    on the build_static model (subdivided beams, true two-way tributary)."""
-    import engine3d as E, static_model as SM
-    m = SM.build_static(cfg)
-    NF = m["NF"]; SX, SY = cfg["SX"], cfg["SY"]
-    heights = cfg["heights"]; clad = cfg.get("clad", 0.0)
-    extra = cfg.get("extra_mass_floors", {})
-    D, L = [], []
-    totD = totL = 0.0
-    for b in m["beams"]:
-        i, j, k, dirn, Ln = b["i"], b["j"], b["k"], b["dir"], b["L"]
-        if not (1 <= k <= NF):
-            continue
-        n1 = E.ntag(i, j, k)
-        n2 = E.ntag(i + 1, j, k) if dirn == "X" else E.ntag(i, j + 1, k)
-        c1, c2 = coords.get(n1), coords.get(n2)
-        if c1 is None or c2 is None:
-            continue
-        roof = (k == NF)
-        pD = (cfg["D_roof"] if roof else cfg["D_floor"]) + extra.get(k, 0.0)
-        pL = 0.0 if roof else cfg["L_floor"]
-        nb = SM._bays_adjacent(m["present"].get(k, set()), i, j, dirn)
-        other = SY if dirn == "X" else SX
-        wcap = other / 2.0
-        th = heights[k - 1] / 12.0; th = th / 2.0 if roof else th
-        wclad = clad * th / 12000.0 if (clad and nb == 1) else 0.0
-        nseg = len(b["segs"])
-        wD, wL = [], []
-        for s in range(nseg):
-            smid = Ln * (s + 0.5) / nseg
-            width_in = min(smid, Ln - smid, wcap)
-            base = nb * (width_in / 12.0) / 12000.0        # psf -> kip/in per psf
-            wD.append(round(pD * base + wclad, 6))
-            wL.append(round(pL * base, 6))
-            totD += wD[-1] * Ln / nseg; totL += wL[-1] * Ln / nseg
-        seg = [round(c1[0], 1), round(c1[1], 1), round(c1[2], 1),
-               round(c2[0], 1), round(c2[1], 1), round(c2[2], 1)]
-        if any(wD):
-            D.append(seg + [wD])
-        if any(wL):
-            L.append(seg + [wL])
+    """Per-beam per-segment tributary w (kip/in) for D and L, exactly as the static demand model applies
+    them (static_model.beam_segment_loads: per-level loads, roof bays, split spans, one-/two-way)."""
+    import static_model as SM
+    out = {}
+    for name, (fD, fL) in (("D", (1.0, 0.0)), ("L", (0.0, 1.0))):
+        rows = []; tot = 0.0
+        for bm, ws in SM.beam_segment_loads(cfg, fD, fL, SM.RoofFactors()):
+            c1, c2 = bm["xyzA"], bm["xyzB"]
+            wl = [round(w, 6) for w in ws]
+            tot += sum(wl) * bm["L"] / max(len(wl), 1)
+            if any(wl):
+                rows.append([round(c1[0], 1), round(c1[1], 1), round(c1[2], 1),
+                             round(c2[0], 1), round(c2[1], 1), round(c2[2], 1), wl])
+        out[name] = (rows, tot)
+    D, totD = out["D"]; L, totL = out["L"]
     return {"D": {"beams": D, "total": round(totD, 0)},
             "L": {"beams": L, "total": round(totL, 0)}}
 
@@ -167,10 +141,14 @@ def _loads(cfg, info, coords, T1):
         pass
     # ---- ELF seismic story forces
     try:
-        Cs, V, Tu, Ta, kk, Fk, Wt = E.elf(cfg, T1)
+        # per direction (HR-01/02): each direction's own period and factors (engine3d.elf_dir)
+        rX = E.elf_dir(cfg, "X"); rY = E.elf_dir(cfg, "Y"); G = rX if rX[1] >= rY[1] else rY
         out["seis"] = {"z": [z[k] for k in range(1, NF + 1)],
-                       "F": [round(Fk[k], 1) for k in range(1, NF + 1)],
-                       "V": round(V, 1), "Cs": round(Cs, 4)}
+                       "X": [round(rX[5][k], 1) for k in range(1, NF + 1)],
+                       "Y": [round(rY[5][k], 1) for k in range(1, NF + 1)],
+                       "F": [round(G[5][k], 1) for k in range(1, NF + 1)],
+                       "V": round(G[1], 1), "Cs": round(G[0], 4),
+                       "VX": round(rX[1], 1), "VY": round(rY[1], 1)}
     except Exception:
         pass
     # ---- static model true tributary gravity (built LAST: build_static wipes the ops domain)
@@ -285,8 +263,8 @@ def _viewer_data(cfg, name, root):
     if umax is not None:
         stats.append(["Max D/C (screening)", "%.2f" % umax])
     if loads.get("seis"):
-        stats.append(["Seismic base shear V", "%.0f k (Cs=%.3f)" %
-                      (loads["seis"]["V"], loads["seis"]["Cs"])])
+        stats.append(["Seismic base shear V X / Y", "%.0f / %.0f k" %
+                      (loads["seis"].get("VX", loads["seis"]["V"]), loads["seis"].get("VY", loads["seis"]["V"]))])
     if loads.get("wind"):
         stats.append(["Wind base shear X / Y", "%.0f / %.0f k" %
                       (sum(loads["wind"]["X"]), sum(loads["wind"]["Y"]))])
