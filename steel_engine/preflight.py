@@ -49,11 +49,114 @@ _SYS = {
 }
 
 
+def _is_cfs(cfg):
+    return isinstance(cfg, dict) and ("lines_x" in cfg or "lines_y" in cfg or "span_ft" in cfg)
+
+
+_CFS_KINDS = ("wall", "podium", "portal", "canopy", "purlin", "portal_singlechannel", "component")
+import re as _re
+_RACK_RE = _re.compile(r"\b(storage|pallet|selective|drive-in|cantilever)?\s*racks?\b")
+_NONBLDG_RE = _re.compile(r"\b(platforms?|mezzanines?|vessels?|tanks?|bins?|silos?|"
+                          r"equipment supports?)\b")
+
+
+def _cfg_text(cfg):
+    keys = ("arch", "occupancy", "structure_kind", "use", "description", "brief", "notes",
+            "system")
+    return " ".join(str(cfg.get(k, "")) for k in keys).lower()
+
+
+def check_cfs(cfg):
+    """R22 preflight for the CFS paths (wall: cfs_engine FEET/psf schema; portal: cfs_frame FEET
+    schema). Runs from pipeline.design_and_report BEFORE the engine (CFS-39 companion: the
+    storage / platform / nonbuilding screens used to live only on the hot-rolled path)."""
+    out = []
+    say = lambda sev, msg: out.append((sev, msg))
+    try:
+        import consistency as _CC
+        for msg in _CC._geometry_issues(cfg):         # heights_ft / plan_ft / portal span lint
+            say("ERROR", msg)
+    except Exception as ex:
+        say("WARN", "geometry lint unavailable: %s" % ex)
+    s = cfg.get("seis") or {}
+    for k in ("SDS", "SD1", "R", "Cd", "Ie"):
+        if k not in s:
+            say("ERROR", "cfg['seis'] missing '%s'" % k)
+    sysname = str(cfg.get("system") or "").lower()
+    txt = _cfg_text(cfg)
+    try:
+        import cfs_systems as _CS
+        SYS = _CS.SYSTEMS
+    except Exception:
+        _CS, SYS = None, {}
+    if not sysname:
+        say("ERROR", "cfg['system'] not declared -- set the exact SFRS key (%s)"
+                     % "/".join(sorted(SYS)))
+    elif SYS and sysname not in SYS and "lines_x" in cfg:
+        say("ERROR", "cfg['system']=%r is not in the CFS system table (%s)"
+                     % (cfg.get("system"), "/".join(sorted(SYS))))
+    elif sysname in SYS and s.get("R") is not None:
+        r0 = SYS[sysname]["R"]
+        if abs(float(s["R"]) - r0) > 0.01:
+            say("WARN", "cfg['seis'] R=%.2f but %s is R=%.2f in Table 12.2-1 -- confirm"
+                        % (float(s["R"]), sysname, r0))
+    # ---- scope: storage racks are OUT OF SCOPE; Ch. 12 vs Ch. 15 classification ----
+    if _RACK_RE.search(txt):
+        say("ERROR", "storage racks / ASCE 7 Ch. 15 rack structures are OUT OF SCOPE of this "
+                     "module (no rack system, no RMI MH16.1 path) -- say so to the user and stop")
+    kind = str(cfg.get("structure_kind", "wall")).lower()
+    if _NONBLDG_RE.search(txt) or kind in ("platform", "mezzanine"):
+        say("WARN", "platform / mezzanine / equipment-support keywords: CLASSIFY per ASCE 7-22 "
+                    "15.1.1 -- an OCCUPIED mezzanine or platform is a BUILDING structure (Ch. 12, "
+                    "Table 12.2-1 system, beams/posts/joists designed to S100); a free-standing "
+                    "unit inside a building is not a Ch. 13 component when it is self-supporting "
+                    "(13.1.1); only an UNOCCUPIED nonbuilding structure goes to Ch. 15 (15.4.1(1)(a) "
+                    "still permits Table 12.2-1 for structures similar to buildings). State the "
+                    "classification; model a one-level mezzanine on the wall path with the top "
+                    "level as a FLOOR (live + storage), not a roof")
+    if kind not in _CFS_KINDS and kind not in ("platform", "mezzanine"):
+        say("WARN", "structure_kind=%r is not one of %s" % (kind, "/".join(_CFS_KINDS)))
+    # ---- storage weight (ASCE 7-22 12.7.2 item 1) ----
+    _Lf = cfg.get("L_floor")
+    storage_decl = any(cfg.get(k) for k in ("storage", "storage_levels", "storage_live_psf",
+                                            "storage_psf"))
+    storagey = (isinstance(_Lf, (int, float)) and _Lf >= 125) or \
+        bool(_re.search(r"\b(storage|stock ?room|archives?|library stacks?)\b", txt))
+    if storagey and not storage_decl:
+        say("WARN", "storage occupancy suspected (L_floor=%s psf / storage keywords) but no "
+                    "cfg['storage'] / cfg['storage_levels'] / cfg['storage_live_psf'] declared -- "
+                    "ASCE 7-22 12.7.2 item 1 requires >= 25%% of the floor live load in areas used "
+                    "for storage in the seismic weight W; declare it so W includes it (and use "
+                    "L = 1.0 in the seismic combos: the 2.3.6 Exception 1 factor 0.5 applies only "
+                    "where Lo <= 100 psf, not in garages or public assembly)" % (_Lf,))
+    # ---- drift limit vs Risk Category (Table 12.12-1 row-1 maxima) ----
+    rc = str(cfg.get("risk_cat", "II")).upper()
+    dl = cfg.get("drift_limit")
+    lim = {"I": 0.025, "II": 0.025, "III": 0.020, "IV": 0.015}.get(rc, 0.025)
+    if isinstance(dl, (int, float)) and dl > lim + 1e-9:
+        say("ERROR", "drift_limit=%.3f exceeds the largest Table 12.12-1 value for RC %s (%.3f)"
+                     % (dl, rc, lim))
+    # ---- podium / two-stage ----
+    if kind == "podium" and not cfg.get("two_stage"):
+        say("WARN", "structure_kind='podium' without cfg['two_stage'] -- the 12.2.3.2 two-stage "
+                    "procedure is NOT applied (declare two_stage=dict(K_lower_kip_in, R_lower, "
+                    "rho_lower, T_combined_s or W_lower_kip) to evaluate eligibility + reaction "
+                    "amplification), else design the whole structure with the least R")
+    # ---- both hazards ----
+    if "wind" not in cfg and "wind_pressures_psf" not in cfg and \
+            not any(w in txt for w in ("interior", "indoor", "enclosed within")):
+        say("WARN", "no cfg['wind'] -- run BOTH hazards (an interior mezzanine may state 'no "
+                    "wind', with the reason)")
+    return out
+
+
 def check(cfg):
     out = []
     say = lambda sev, msg: out.append((sev, msg))
     if not isinstance(cfg, dict):
         return [("ERROR", "cfg is not a dict")]
+    if _is_cfs(cfg):
+        return check_cfs(cfg)
     # ---- units ----
     H = [float(h) for h in (cfg.get("heights") or []) if isinstance(h, (int, float))]
     if not H:
@@ -150,9 +253,10 @@ def check(cfg):
                     "mean roof height, then HAND-CHECK unbalanced/sliding snow (ASCE 7-22 7.6/7.9), eave "
                     "drift, and rafter thrust; state the idealization")
     if any(k in arch for k in ("platform", "vessel", "tank", "bin", "silo")):
-        say("WARN", "B2 nonbuilding-structure keywords in cfg: Ch. 15 (NOT Ch. 12) R-values and "
-                    "detailing apply -- confirm the system row in Table 15.4-1/2 before using any "
-                    "building R")
+        say("WARN", "B2 nonbuilding-structure keywords in cfg: classify per ASCE 7-22 15.1.1 -- an "
+                    "OCCUPIED platform/mezzanine is a building (Ch. 12); only an unoccupied "
+                    "nonbuilding structure uses Ch. 15 (Table 15.4-1/2, or 15.4.1(1)(a) Table "
+                    "12.2-1 for structures similar to buildings)")
     try:
         LX = float(cfg.get("NX", 0)) * float(cfg.get("SX", 0)) / 12.0
         LY = float(cfg.get("NY", 0)) * float(cfg.get("SY", 0)) / 12.0
