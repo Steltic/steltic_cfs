@@ -32,7 +32,7 @@ sentences; pass `clause=`/`chapter=` for pinpoint lookups when you know the prov
 |---|---|---|
 | **`engineering_standards_S100`** | AISI S100-16 (R2020) w/S2,S3 *Specification* | **Primary grounding** for every member/connection limit state (E2/E3/E4, F2–F4, G2, G5 web crippling, H1, Ch. J screws/welds/bolts, App. 1 EWM) |
 | **`engineering_standards_S240`** | AISI S240-20 framing standard | Stud/track/joist rules, built-up interconnection, bracing, headers, trusses — REQUIRED on every light-frame brief |
-| **`engineering_standards_S400`** | AISI S400-20 seismic standard | Wall/strap/SBMF capacities (WIND and seismic columns), E1–E4 capacity-design chains, Type II, drift expression |
+| **`engineering_standards_S400`** | AISI S400-20 seismic standard | SEISMIC wall/strap/SBMF/gypsum capacities (E1 WSP, E2 steel sheet, E3 strap, E4 SBMF, E6 gypsum/fiberboard; E5 is Canada-only), capacity-design chains, Type II, design deflection E1.4.1.4 / E2.4.1.4. Wind shear walls are **S240 B5.2.2.3** (φv 0.65, B5.2.3) |
 | **`cfs_design_examples`** | Worked CFS problems + answers | MAY BE EMPTY (not yet authored) — probe at most once; empty is normal, never retry; the spec text is sufficient |
 | **`cfs_opensees_models`** | Validated CFS reference models (wall-line stacks, portals) | Retrieve the nearest model before building a frame path; diff constraints/mass/eigen recipes on failures |
 | `openseespy_documentation`, `opensees_documentation` | OpenSees command reference | Correct API on any OpenSees error (R21 gate) |
@@ -52,20 +52,25 @@ diaphragm idealization (flexible default); analysis-fidelity tier. These drive t
 RAG query.
 
 **Phase 1 — Build the cfg.** Wall path: the `cfs_engine` brief-facing schema (feet/psf/kip) with
-`wall_line.WallLine` objects per line — see AGENT_START's schema block. Frame path (portal):
-`engine3d` kip-inch cfg with a `custom_build`, Tier 1/2 elements per the fidelity tier, and the
-brief's connector M-θ / base-fixity data where supplied.
+`wall_line.WallLine` objects per line — see AGENT_START's schema block. Portal path: the
+`cfs_frame` schema, ALSO in FEET/psf (`span_ft`, `eave_ft`, `apex_ft`, `spacing_ft`, sections,
+loads, `seis.W_frame_kip`) — see AGENT_START's portal schema block. Never `engine3d`/`custom_build`
+for a CFS frame (that is the hot-rolled AISC grid engine).
 
-**Phase 2 — Run the pipeline (ONE call).** `pipeline.design_and_report(name, cfg)`: preflight,
-weights, ELF (+ two-stage podium), wind, tributary distribution + 5% shift, per-line unit shears,
-cumulative chord/hold-down/stud stacks, S400 four-term drift vs limit, the model-vs-tributary
-comparison gate, figures, the seeded `design/calc_package.json`, and the report scaffold. It
-computes **NO capacity**.
+**Phase 2 — Run the pipeline (ONE call).** `pipeline.design_and_report(name, cfg)`: CFS preflight,
+weights, ELF, wind seeds, tributary distribution + 5% shift, per-line unit shears, cumulative
+chord/hold-down/stud stacks, a four-term drift SCREEN vs limit, the independent tributary check,
+the Rayleigh period, the ASCE 7-22 12.2.3.2 two-stage block (podium jobs: `cfg['two_stage']`), the
+seeded `design/calc_package_cfs.json` (a filled one is backed up to `.filled.bak` first), and the
+report. It computes **NO capacity**.
 
 **Phase 3 — Ground every check in the AISI RAG (the real work).** For each governing item, query
 the right collection, apply the cited equation to the demand, compute capacity and D/C, and fill
 the slot. Check → query:
-- Wall shear → *"S400 E1 WSP nominal shear strength fastener spacing"* (+ aspect ratio, Type II)
+- Wall shear (seismic) → *"S400 E1 WSP nominal shear strength fastener spacing"* (+ aspect ratio, Type II); wind → *"S240 B5.2.2.3 nominal strength per unit length"* (φv 0.65 at B5.2.3)
+- Elastic buckling inputs → *"Appendix 2 elastic buckling analysis Fcre Pcrd Mcrd"* (S100 App. 2 — used by E2/E4/F2/F4)
+- Unsheathed stud case → *"S240 B1.2.2.4 sheathing braced design evaluated without sheathing"*
+- Fatigue (monorails, vibrating equipment) → *"S100 Chapter M design for fatigue stress range"*
 - Stud compression → *"E2 flexural buckling Fn effective area Ae"* + *"E4 distortional buckling"*
 - Track bearing → *"G5 web crippling one-flange end condition"*
 - Stud beam-column → *"H1 combined axial bending interaction"*
@@ -77,22 +82,23 @@ Cite editions (S100-16(R2020), S240-20, S400-20).
 
 **Phase 4 — Resize, reconcile, finish.** NG/infeasible → denser fastener schedule, two-sided
 sheathing, added/longer wall, heavier mil, rod switch — re-run the pipeline, re-derive. Then
-`consistency.check(name)`, reconcile every flag, re-render with
-`report.build_report_cfs_from_disk(name)` (CFS jobs; the hot-rolled grid path keeps
-`report.build_report(name)`), and end by OFFERING an optimisation pass.
+`consistency.check(name)` until it PASSES, re-render with `report.build_report(name)` (CFS jobs
+dispatch to the CFS report and keep your fills), and end by OFFERING an optimisation pass.
 
 ---
 
 ## 4. What "validated" means (the sanity/gate suite)
 A wall-path run is trustworthy when ALL pass: preflight clean (units, R/Cd/Ω0 vs declared system,
-height limit, tier vs structure kind); ELF recovered (ΣFx = V); the **model-vs-tributary gate**
-within tolerance on every line (or divergence justified); drift table clean (or flags reconciled);
-cumulative stacks monotone downward. Frame paths add: equilibrium, stability (eigen > 0),
-reasonable periods, modal mass ≥ 90%, P-Δ included.
+height limit, tier vs structure kind, storage weight, Ch. 12 vs 15 classification); ELF recovered
+(ΣFx = V); the **independent tributary check** within tolerance on every line (or the idealization
+justified); every drift_table row passing (rows are redesigned, never just annotated); θ ≤ θmax;
+two-stage ELIGIBLE where declared; cumulative stacks monotone downward. The portal path adds:
+P-Δ convergence on every strength combo and the eave-sway / apex criteria verdicted.
 
 ## 5. Caveats — state these in any output
-- **Elastic analysis** with secant wall-spring stiffness (Tier 0) or thin-walled elements +
-  effective-stiffness iteration (Tier 1/2). No inelastic wall hysteresis.
+- **Elastic analysis** with secant wall-spring stiffness (wall path) or a planar EA/EI frame with
+  the effective-stiffness iteration (portal Tier 1; Tier 2 currently = Tier 1 — no warping/torsion
+  DOF; single-channel torsion is an analytic seed table). No inelastic wall hysteresis.
 - **Hardware bands are class envelopes** — "representative of commercially available devices; the
   EOR substitutes a specific product" (delegated-design posture). Rods are computed, not banded.
 - **Sections/schedules are DESIGNED here** from S100/S240/S400 via the RAG; the engine never
@@ -103,7 +109,7 @@ reasonable periods, modal mass ≥ 90%, P-Δ included.
 ---
 
 ## 6. Deliverables — the design package (minimum set)
-1. **Design basis sheet** — codes/editions (AISI S100-16(R2020), S240-20, S400-20; ASCE 7-22), RC & Ie, SDC, system + R/Cd/Ω0 per direction, height-limit statement, site
+1. **Design basis sheet** — codes/editions (AISI S100-16(R2020), S240-20, S400-20; ASCE 7-22), RC (declared) & Ie, SDC, system + R/Cd/Ω0 per direction, enclosure, governing hazard, θ, height-limit statement, site
    values, gravity loads, drift limit, diaphragm idealization, fidelity tier, units.
 2. **Wall plan / model summary** — lines, segments per story, Type I/II, bracing assumption per
    line, anchorage scheme; (frame paths: geometry, joints, base fixity, connector M-θ).
@@ -126,9 +132,13 @@ reasonable periods, modal mass ≥ 90%, P-Δ included.
 ## 7. Definition of DONE (acceptance criteria)
 ALL hold: (1) preflight + gates pass or justified; (2) both hazards run, governing stated
 per direction, net-uplift path complete; (3) every seeded slot filled (or waived with
-justification) with cited AISI clauses — S100 + S240 + S400 together on wall briefs; (4) no D/C > 1.0; drift table clean; (5) cumulative stacks designed (never lighter below);
-(6) capacity-design chain complete for R>3 systems; (7) `consistency.check` clean; (8) report
-built. If any item fails, the package is **NOT DONE** — list the open items.
+justification) with cited AISI clauses — S100 + S240 on wall briefs, S400 for the seismic system
+(A1.2.3: R = 3 in SDC B/C excepted); (4) no D/C > 1.0 (NG waivers only for scoped existing /
+by-others items); every drift_table row passing; θ ≤ θmax; (5) cumulative stacks designed (never
+lighter below); (6) capacity-design chain complete, with numbers, for R>3 systems; (7)
+`consistency.check` PASSES on the final package; (8) report re-rendered after the last edit. The
+app's completion gate enforces (3)–(8). If any item fails, the package is **NOT DONE** — list the
+open items.
 
 ## 8. The design LOOP
 Pipeline for demands → RAG-grounded capacities → any NG: change the design and re-run → drift &

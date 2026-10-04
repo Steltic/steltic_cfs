@@ -14,12 +14,15 @@ collection returns nothing for a niche check, say so in one line and proceed fro
 never invent an example.
 
 ## Members (S100)
-- **Stud in compression (E2/E3/E4):** global Fn at KL/r → Pn = Ae·Fn; local-global interaction;
-  DISTORTIONAL checked separately; sheathing-braced vs unbraced bracing basis.
+- **Stud in compression (E2/E3/E4):** global P_ne = A_g·F_n (E2; F_cre from App. 2); local-global
+  P_nℓ = A_e·F_n ≤ P_ne (E3.1 EWM, A_e at F_n per App. 1); DISTORTIONAL P_nd from P_crd (E4, App. 2)
+  checked separately; sheathing-braced vs all-steel basis, plus the S240 B1.2.2.4 unsheathed check
+  (1.2D + (0.5L or 0.2S) + 0.2W without sheathing bracing).
 - **Stud/joist beam-column (H1):** axial + out-of-plane wind (or axial + bending at headers);
   use the same effective-property basis as the isolated checks.
-- **Joist / header flexure (F2/F3/F4):** Se at Fn, local interaction, distortional; built-up box
-  and back-to-back headers.
+- **Joist / header flexure (F2/F3/F4):** M_ne = S_fc·F_n ≤ M_y (F2.1, full section), local
+  M_nℓ with S_e at F_n (F3.1 EWM), distortional M_nd from M_crd (F4, App. 2); built-up box and
+  back-to-back headers (S240 B3.3).
 - **Web crippling at track / bearing (G5):** one-flange vs two-flange, end vs interior, fastened
   flanges; combined bending + web crippling at continuous-joist supports.
 - **Track, shear (G2)** and shear + bending interaction.
@@ -29,15 +32,17 @@ never invent an example.
   standing-seam (test-based) — know which regime the brief's roof is in.
 
 ## Walls & lateral (S400)
-- **WSP / steel-sheet shear wall (E1/E2):** table strength → φvn; edge spacing steps; one vs
-  two-sided; 2w/h aspect-ratio reduction; wind vs seismic table columns.
+- **WSP / steel-sheet shear wall:** SEISMIC per S400 E1/E2 (table strength, φv 0.60 for WSP at
+  E1.3.2); WIND per S240 B5.2.2.3 tables with φv 0.65 (B5.2.3) — S400 has no wind columns; edge
+  spacing steps; one vs two-sided; 2w/h aspect-ratio reduction; design deflection E1.4.1.4 /
+  E2.4.1.4.
 - **Type II perforated wall (E1):** adjustment factor calc; end hold-downs + distributed track
   anchorage; uniform-height rule.
 - **Strap-braced wall (E3):** capacity-design chain from Ry·Fy·Ag — strap connection, chord stud,
   anchorage each sized to the expected strap strength.
 - **SBMF (E4):** expected beam strength at design drift; bolt-bearing mechanism.
-- **Hold-down / rod stack:** cumulative tension; device band vs computed rod (elongation into the
-  four-term drift).
+- **Hold-down / rod stack:** cumulative tension (capacity-design demand on R>3 systems, not the
+  ρ-ELF seed); device band vs computed rod (elongation into the design deflection).
 - **Collector at a re-entrant corner:** Ω0-amplified demand, member + connection.
 
 ## Connections (S100 Ch. J)
@@ -46,6 +51,10 @@ never invent an example.
 - **Welds on thin sheet** (arc spot/seam, fillet effective throat on mils).
 - **Bolts in CFS** (bearing with tilting; track-to-foundation).
 - **Uplift clips / joist-to-wall** — the 0.9D+1.0W path components.
+
+## Fatigue (S100 Ch. M)
+- **Monorail / hoist support, vibrating equipment:** stress range at the detail vs the Ch. M
+  category and cycle count — a static run is never a fatigue check.
 
 ## Portal frames (S100)
 - **Portal frame member checks:** singly-symmetric channel LTB (F2), combined bending + torsion

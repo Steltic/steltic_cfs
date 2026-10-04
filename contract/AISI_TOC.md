@@ -13,14 +13,18 @@ Chapter lettering intentionally mirrors AISC 360, so the map is familiar — but
 CFS-specific (effective width, distortional buckling, web crippling, screws):
 - **A — General Provisions** (scope, materials: ASTM A1003/A653, Fy 33/50; E = 29,500 ksi)
 - **B — Design Requirements** (LRFD φRn ≥ Ru; member properties; serviceability)
-- **C — Design for Stability** (system stability, second-order; effective length)
+- **C — Design for Stability** (C1.1 direct analysis method, C1.2 effective length; second-order)
 - **D — Tension** (yielding Ag·Fy; rupture An·Fu — the strap check An·Fu ≥ Ag·Fy lives here)
 - **E — Compression** — **E2 yielding & global (flexural / torsional / flexural-torsional)
-  buckling** (Fn at KL/r; Pn = Ae·Fn — Ae at Fn, the EWM heart); **E3 local buckling interacting
-  with global** ; **E4 distortional buckling** (the CFS-only limit state — never skip it for
+  buckling**: **P_ne = A_g·F_n** (Eq. E2-1, GROSS area), F_n from λc = √(F_y/F_cre) with F_cre
+  from Appendix 2; **E3 local buckling interacting with yielding and global buckling**: E3.1 EWM
+  P_nℓ = A_e·F_n ≤ P_ne (A_e per App. 1 at F_n — the EWM heart) or E3.2 DSM; **E4 distortional
+  buckling** (P_nd from P_crd, App. 2 — the CFS-only limit state; never skip it for
   edge-stiffened flanges)
-- **F — Flexure** — **F2 yielding & global (LTB) strength** (Se at Fn); **F3 local-global
-  interaction**; **F4 distortional buckling**; inelastic reserve where permitted
+- **F — Flexure** — **F2 yielding & global (LTB)**: M_ne = S_fc·F_n ≤ M_y (Eq. F2.1-1, FULL
+  unreduced section modulus; F_n from F_cre, App. 2); **F3 local-global interaction** (F3.1 EWM
+  M_nℓ with S_e at F_n, or F3.2 DSM); **F4 distortional buckling** (M_crd, App. 2); inelastic
+  reserve where permitted
 - **G — Shear** — **G2 shear strength of webs** (kv, h/t regimes); web stiffeners
 - **G5 — Web crippling** (one-flange / two-flange, interior/end, fastened vs unfastened flanges —
   GOVERNS at track/bearing points; combined bending + web crippling interaction)
@@ -33,10 +37,16 @@ CFS-specific (effective width, distortional buckling, web crippling, screws):
   tilting), **screws** (shear: tilting/bearing/pull-out; tension: pull-out/pull-over; the
   workhorse of every CFS connection), power-actuated fasteners, rupture at connections
 - **K — Rational Engineering Analysis / testing** (Ch. K tests; rational analysis basis)
+- **M — Design for Fatigue** (stress range vs cycles for members and connections — monorails,
+  crane/hoist supports, vibrating equipment; never "claimed" from a static run)
 - **Appendix 1 — Effective Width Method (EWM)** — plate effective widths: stiffened (k=4),
   unstiffened (k=0.43), edge-stiffened with lip adequacy; stress gradients; THIS repo's
   `cfs_sections` computes App. 1 properties for you — cite the App. 1 basis when you use them
-- **Appendix 2 — Direct Strength Method** (OUT OF SCOPE in this repo — EWM only; do not cite DSM)
+- **Appendix 2 — Elastic Buckling Analysis of Members** — the analytical/numerical elastic buckling
+  values the main chapters call for: F_cre / M_cre (global), F_crℓ / P_crℓ / M_crℓ (local),
+  F_crd / P_crd / M_crd (distortional). E2, E4, F2 and F4 cannot be evaluated without it — CITE it.
+  (The Direct Strength Method itself lives in the main chapters, E3.2 / F3.2 / E4 / F4; this repo's
+  `cfs_sections` computes the App. 1 EWM properties, and either E3.1 EWM or E3.2 DSM is permitted.)
 
 ## AISI S240-20 — North American Standard for Cold-Formed Steel Structural Framing
 ## →  `engineering_standards_S240`  (framing rules — REQUIRED on every light-frame brief)
@@ -44,24 +54,33 @@ Topic map (anchor citations on retrieved numbering):
 - **General / materials / corrosion protection** (coating classes; the coastal-brief spec hook)
 - **Structural framing members** — stud/track/joist section designators & minimum properties;
   web punchout rules (size/spacing/reinforcement); bearing stiffeners
-- **Wall systems** — stud bracing (sheathing-braced vs mechanically braced — the DECLARED
-  assumption), track-to-stud connection, built-up members (back-to-back / box chord studs:
-  interconnection fastener spacing at high axial), headers (box/back-to-back/L-header)
+- **B1.2.2 Wall studs** — all-steel vs sheathing-braced design (the DECLARED assumption);
+  **B1.2.2.4 (US): sheathing-braced studs are ALSO checked WITHOUT the sheathing bracing for
+  1.2D + (0.5L or 0.2S) + 0.2W (Eq. B1.2.2-1)**; B1.3 built-up members
+- **B3 Wall framing** — stud design (B3.2: compression, bending, shear, axial + bending, web
+  crippling / stud-to-track B3.2.5), headers (B3.3 back-to-back / box / double-L), track-to-stud
+  connection, built-up chord studs (interconnection fastener spacing at high axial)
 - **Floor & roof systems** — joist bracing/blocking, web stiffening at reactions, cantilevers.
   (Practical span ceiling: single C-joists run out around 22 ft — the in-repo SFIA span data ends
   there; deeper floor plates need an intermediate bearing line or floor trusses, not a forced joist.)
-- **Lateral force-resisting systems** — pointer to S400 (do not stop at the pointer; go to S400)
+- **B5 Lateral force-resisting systems** — the WIND (and R = 3 / non-S400) design of shear walls:
+  **B5.2.2.3** nominal strength per unit length (Tables B5.2.2.3-1 steel sheet, -2 WSP, -3 gypsum,
+  -4 fiberboard; B5.2.2.2 Type II Ca), **B5.2.3 φv = 0.65 (LRFD)**, B5.2.4 collectors / uplift
+  anchorage, B5.2.5 design deflection; B5.3 strap-braced walls. Seismic design of S400 systems:
+  go to S400.
 - **Trusses** (ex-S214) — chord/web member design, gusset & screw joints, quality
 - **Nonstructural members** — pointer to S220 (NOT ingested; peripheral)
 - **Installation / quality** (tolerances, splices — cite for constructability notes)
 
 ## AISI S400-20 — North American Standard for Seismic Design of Cold-Formed Steel
-## Structural Systems  →  `engineering_standards_S400`  (walls/straps/SBMF — ALSO the
-## wind-capacity source: its tabulated wall strengths carry WIND and SEISMIC columns)
-- **A/B — General & design requirements** (expected strength factors Ry/Ω-analogues, capacity
-  design principles, when seismic detailing applies vs R=3 "not specifically detailed")
-- **C — Analysis** (drift: the four-term wall deflection expression — bending + shear + fastener
-  slip + anchorage/rod elongation; this repo's `wall_line.s400_deflection` implements it)
+## Structural Systems  →  `engineering_standards_S400`  (SEISMIC walls/straps/SBMF/diaphragms —
+## it has NO wind provisions: wind shear walls are S240 B5.2.2.3 with φv 0.65 at B5.2.3)
+- **A/B — General & design requirements** (A1.2.3: R = 3 in SDC B/C → S100/S240 only;
+  expected-strength factors Table A3.2-1; capacity design B3)
+- **C — Analysis** (C1 seismic load effects). The DESIGN DEFLECTION is per system: **E1.4.1.4**
+  (WSP), **E1.4.2.3** (Type II WSP), **E2.4.1.4** (steel sheet), **E3.4.4** (strap) — bending +
+  shear + fastener slip + anchorage/rod elongation. (This repo's `wall_line.s400_deflection` is a
+  generic four-term SCREEN, not the S400 equation — compute the S400 expression for the design.)
 - **E1 — CFS light-frame shear walls, wood structural panels (WSP)** — nominal strength tables
   (sheathing thickness × fastener size × edge spacing × one/two-sided), aspect-ratio (2w/h)
   reduction for h/w > 2, **Type II (perforated) provisions**: adjustment factor, end hold-downs +
@@ -72,8 +91,12 @@ Topic map (anchor citations on retrieved numbering):
   from Ry·Fy·Ag of the strap** into connections, chord studs, anchorage
 - **E4 — CFS special bolted moment frames (SBMF)** — expected beam strength at design drift,
   bolt-bearing energy dissipation, beam/column limits
-- **E5 — gypsum / other-material walls** (R=2 rows; wind-governed sites still use these tables)
-- (Numbering caution: some editions letter these differently — anchor on the retrieved header.)
+- **E5 — WSP one side + gypsum the other side — CANADA ONLY** (no US/Mexico provisions)
+- **E6 — gypsum board / fiberboard sheathed walls (US & Mexico)** — R = 2 systems; Table E6.3-1
+- **E7 — conventional-construction strap-braced walls (Canada)**
+- **F — Diaphragms** — F1 general (stiffness F1.3.1, overstrength F1.3.2, shear strength F1.4),
+  **F2 CFS diaphragms sheathed with wood structural panels**, **F3 bare steel deck diaphragms** (seismic detailing; the deck strength itself is S310 — not ingested)
+- (Numbering caution: anchor on the retrieved header.)
 
 
 > NOT ingested: **AISI S310** (steel-deck diaphragms — if a bare-deck diaphragm brief needs it, SAY

@@ -11,12 +11,16 @@ You DETERMINE the joints / base fixity explicitly and STATE them in the report, 
 to ask the user to approve the model. (build_and_preview(name, cfg) remains available as an OPTIONAL
 self-review that builds just the 3 figures -- it is not a required hold.)
 
-The framework computes the model, the ASCE 7 loads, the P-Delta analysis, and the per-member
-DEMANDS + the report scaffold. It computes NO AISC 360 capacity: YOU query the RAG, derive every
-capacity/D-C yourself, and write them into calc_package.json. All outputs go to the building's
-solution folder: steel_builder/<name>/ (design/, figs/, report.html).
+The framework computes the model, the ASCE 7 loads, the analysis, and the per-line / per-member
+DEMANDS + the report. It computes NO capacity: YOU query the RAG, derive every capacity/D-C
+yourself, and write them into the package -- design/calc_package_cfs.json on the CFS paths (wall
+lines_x/lines_y, portal span_ft; FEET/psf schemas), design/calc_package.json on the hot-rolled grid
+path. All outputs go to the building's solution folder: <jobs>/<name>/ (design/, report.html).
+Re-render after filling with report.build_report(name) (CFS jobs dispatch to the CFS report);
+re-running design_and_report re-seeds the package and backs a FILLED one up to *.filled.bak
+(merge_fills(name) carries the fills back).
 
-Unusual geometry / non-rigid joints: the parametric builder makes a rectangular grid of rigid
+(Hot-rolled grid path only:) unusual geometry / non-rigid joints: the parametric builder makes a rectangular grid of rigid
 elasticBeamColumn members. To model anything else (custom nodes, sloped roofs, per-member moment
 releases, etc.), set cfg["custom_build"] = a function custom_build(cfg, transf) that builds the
 OpenSees model and returns the standard info dict {cm, present, z, NF, ele:[(tag,kind,sec,n1,n2)]}
@@ -96,14 +100,297 @@ def build_and_preview(name, cfg=None):
                      "call design_and_report." % base)}
 
 
-def design_and_report(name, cfg=None, do_report=True):
+# ---------------------------------------------------------------- CFS path (CFS-13/14/29/32)
+
+PKG_CFS = "calc_package_cfs.json"      # THE authoritative CFS package (consistency.package_path)
+PKG_HR = "calc_package.json"           # hot-rolled grid path (and legacy name on old CFS jobs)
+
+_SLOT_LISTS = ("wall_lines", "holddowns", "studs", "collectors", "members", "connections",
+               "anchorage", "schedules")
+_AGENT_SLOT_FIELDS = ("limit_state", "cited", "capacity", "DC", "checks", "waived", "rows",
+                      "sheathing", "fastener_schedule", "selection")
+
+
+def _package_is_filled(pkg):
+    """True when the package carries agent work: any slot with a limit state / citation /
+    capacity / D/C / checks / waiver / schedule rows / selection (component-mode auto-fills
+    excluded)."""
+    if not isinstance(pkg, dict):
+        return False
+    for key in _SLOT_LISTS:
+        for e in pkg.get(key) or []:
+            if not isinstance(e, dict):
+                continue
+            if e.get("cited") == "component-mode scope rule":
+                continue
+            if any(e.get(f) not in (None, "", [], {}) for f in _AGENT_SLOT_FIELDS):
+                return True
+    return False
+
+
+def backup_filled_packages(design_dir, cfs_job=True):
+    """CFS-14: never silently overwrite the agent's work. Before the pipeline re-seeds the
+    package, a FILLED calc_package_cfs.json is copied to calc_package_cfs.json.filled.bak (an
+    older, different .filled.bak is kept with a timestamp suffix). On a CFS job a LEGACY
+    design/calc_package.json is moved aside the same way (filled -> .filled.bak, unfilled ->
+    .stale.bak) so exactly ONE package file remains. Returns the warning strings (also
+    printed)."""
+    import json as _json, shutil as _sh, time as _time
+    msgs = []
+    names = (PKG_CFS, PKG_HR) if cfs_job else (PKG_HR,)
+    for fname in names:
+        p = os.path.join(design_dir, fname)
+        if not os.path.exists(p):
+            continue
+        try:
+            old = _json.load(open(p, encoding="utf-8"))
+        except Exception:
+            old = None
+        filled = _package_is_filled(old)
+        legacy = cfs_job and fname == PKG_HR
+        if not filled and not legacy:
+            continue                                   # an unfilled seed: overwrite is harmless
+        bak = p + (".filled.bak" if filled else ".stale.bak")
+        if os.path.exists(bak):
+            try:
+                same = open(bak, "rb").read() == open(p, "rb").read()
+            except Exception:
+                same = False
+            if not same:
+                _sh.move(bak, bak + "." + _time.strftime("%Y%m%d-%H%M%S",
+                                                         _time.localtime(os.path.getmtime(bak))))
+        if legacy:
+            _sh.move(p, bak)
+            msgs.append("WARNING: legacy design/%s on a CFS job moved to %s -- the ONE "
+                        "authoritative CFS package is design/%s%s"
+                        % (fname, os.path.basename(bak), PKG_CFS,
+                           ("; it held agent fills: merge them with pipeline.merge_fills(name, "
+                            "backup='%s')" % os.path.basename(bak)) if filled else ""))
+        else:
+            _sh.copy2(p, bak)
+            msgs.append("WARNING: design/%s had agent capacities/fills -> backed up to %s before "
+                        "re-seeding with fresh demands. Re-derive (or restore with "
+                        "pipeline.merge_fills(name)) -- to only re-render the report use "
+                        "report.build_report(name), which preserves your fills."
+                        % (fname, os.path.basename(bak)))
+    for m in msgs:
+        print("[design] " + m)
+    return msgs
+
+
+def _slot_key(e):
+    if not isinstance(e, dict):
+        return None
+    if e.get("id") is not None:
+        return ("id", e["id"])
+    if e.get("check") is not None:
+        return ("check", e["check"])
+    if e.get("line") is not None or e.get("story") is not None:
+        return ("dls", e.get("direction"), e.get("line"), e.get("story"))
+    return None
+
+
+_DEMAND_RE = __import__("re").compile(r"(_kip|_plf|_kipin|_kip_by_story)$")
+
+
+def _is_demand_field(f):
+    """Seeded DEMAND fields (fresh values win on a re-run): forces / unit shears, never the
+    agent-owned design values (DC, capacity, T_design_kip ...) or properties (k_kip_in)."""
+    f = str(f)
+    return bool(_DEMAND_RE.search(f)) and not f.startswith("k_") and \
+        f not in ("capacity", "T_design_kip", "design_T_kip", "T_demand_kip", "demand_kip")
+
+
+def merge_fills(name, backup=None, rel_change=0.005):
+    """Carry the agent's fills from a backed-up package into the fresh seed (opt-in; CFS-14).
+    Slots are matched by id (drift rows by check / direction-line-story). For a matched slot the
+    agent's non-numeric fields (selections, limit states, citations, device class, text) and every
+    field the seed leaves empty are carried; SEEDED numeric demands keep their fresh values. Where
+    a seeded demand moved by more than rel_change, the slot's D/C is not trusted: it is moved to
+    DC_before_rerun, DC is cleared and recheck_after_rerun names the change (the gates then fail
+    until the agent re-derives it). Agent-added slots and top-level blocks are appended; fresh
+    seed slots the backup did not have stay (unfilled -> the gate lists them: fill or waive).
+    Returns a summary dict."""
+    import json as _json
+    root = _root(name)
+    ddir = os.path.join(root, "design")
+    p = os.path.join(ddir, PKG_CFS)
+    bak = os.path.join(ddir, backup or (PKG_CFS + ".filled.bak"))
+    if not os.path.exists(p) or not os.path.exists(bak):
+        raise SystemExit("merge_fills: need design/%s and %s" % (PKG_CFS, os.path.basename(bak)))
+    new, old = _json.load(open(p, encoding="utf-8")), _json.load(open(bak, encoding="utf-8"))
+    summ = dict(carried=0, appended=[], rechecks=[], new_unfilled=[], blocks=[])
+    for key in _SLOT_LISTS + ("drift_table",):
+        oldlist = [e for e in (old.get(key) or []) if isinstance(e, dict)]
+        if new.get(key) is None:
+            if oldlist:
+                new[key] = oldlist; summ["blocks"].append(key)
+            continue
+        oldmap = {_slot_key(e): e for e in oldlist if _slot_key(e) is not None}
+        seen = set()
+        for e in new[key]:
+            k = _slot_key(e)
+            o = oldmap.get(k)
+            if not o:
+                if key != "drift_table" and isinstance(e, dict):
+                    summ["new_unfilled"].append(e.get("id"))
+                continue
+            seen.add(k)
+            changed = []
+            for f, v in list(e.items()):
+                ov = o.get(f)
+                if _is_demand_field(f) and isinstance(v, (int, float)) and \
+                        not isinstance(v, bool) and isinstance(ov, (int, float)) and \
+                        not isinstance(ov, bool) and key != "drift_table":
+                    if abs(v - ov) > rel_change * max(abs(v), abs(ov), 1e-9):
+                        changed.append("%s %s -> %s" % (f, ov, v))
+            for f, v in o.items():
+                fresh = e.get(f)
+                seeded_num = isinstance(fresh, (int, float)) and not isinstance(fresh, bool) \
+                    and _is_demand_field(f)
+                if fresh in (None, "", [], {}) or not seeded_num:
+                    if v not in (None, "", [], {}) or fresh in (None, "", [], {}):
+                        e[f] = v
+            summ["carried"] += 1
+            if changed and e.get("DC") is not None:
+                e["DC_before_rerun"] = e.pop("DC")
+                e["DC"] = None
+                e["recheck_after_rerun"] = "seeded demand changed on re-run: " + "; ".join(changed)
+                summ["rechecks"].append(e.get("id"))
+        for e in oldlist:                                   # agent-added slots / rows
+            k = _slot_key(e)
+            if k is None or k not in seen:
+                if k is not None and any(_slot_key(x) == k for x in new[key]):
+                    continue
+                new[key].append(e)
+                summ["appended"].append(e.get("id") or e.get("check") or str(k))
+    for k, v in old.items():
+        if k not in new:
+            new[k] = v; summ["blocks"].append(k)
+    if isinstance(old.get("capacity_design"), dict) and isinstance(new.get("capacity_design"), dict):
+        for k, v in old["capacity_design"].items():
+            if k not in new["capacity_design"]:
+                new["capacity_design"][k] = v
+    _json.dump(new, open(p, "w", encoding="utf-8"), indent=1)
+    print("[merge_fills] %d slot(s) carried, %d agent slot(s) appended, %d need re-derivation "
+          "(demand changed): %s; fresh seed slots NOT in the backup (fill or waive): %s; blocks: %s"
+          % (summ["carried"], len(summ["appended"]), len(summ["rechecks"]), summ["rechecks"][:12],
+             summ["new_unfilled"][:12], summ["blocks"]))
+    return summ
+
+
+def _cfs_engine_res(cfg):
+    """The demand-side result the CFS report renders (same dispatch as cfs_pipeline)."""
+    if cfg.get("structure_kind") == "component":
+        import cfs_frame as CF
+        res = CF.run(dict(cfg, base="fixed", structure_kind="portal"))
+        res["preflight_warnings"] = [w for w in res.get("preflight_warnings", [])
+                                     if "P-DELTA" not in w]
+        return res
+    if "span_ft" in cfg:
+        import cfs_frame as CF
+        return CF.run(cfg)
+    import cfs_engine as CE
+    return CE.run(cfg)
+
+
+def cfs_framework_blocks(cfg, res, pkg):
+    """Add the framework's independent checks to a WALL-path package (in place): the
+    independent tributary recomputation (flags into model_vs_tributary_flags on flexible
+    diaphragms -- CFS-29a), the Rayleigh period per direction and the ASCE 7-22 12.2.3.2
+    two-stage block for podium / cfg['two_stage'] jobs (CFS-32)."""
+    if "lines_x" not in cfg or "directions" not in res:
+        return pkg
+    import cfs_gates as G
+    try:
+        it = G.independent_tributary(cfg, res)
+        pkg["independent_tributary"] = dict(method=it["method"], n_flags=len(it["flags"]),
+                                            by_direction=it["by_direction"])
+        if it["flags"]:
+            pkg.setdefault("model_vs_tributary_flags", []).extend(it["flags"])
+    except Exception as ex:                       # never silent: the failure is a flag
+        pkg.setdefault("model_vs_tributary_flags", []).append(
+            "independent tributary check FAILED to run: %s" % ex)
+    per = {}
+    try:
+        per = G.rayleigh_period(cfg, res)
+        pkg["period_rayleigh"] = per
+    except Exception as ex:
+        pkg["period_rayleigh"] = {"error": "Rayleigh period failed: %s" % ex}
+    if str(cfg.get("structure_kind", "")).lower() == "podium" or cfg.get("two_stage"):
+        try:
+            import cfs_pipeline as CP
+            pkg["two_stage_framework"] = G.two_stage(cfg, res, CP._rho_seismic(cfg), per)
+        except Exception as ex:
+            pkg["two_stage_framework"] = {"error": "two-stage evaluation failed: %s" % ex,
+                                          "by_direction": {}}
+    return pkg
+
+
+def _cfs_design_and_report(name, cfg, do_report=True, keep_fills=False):
+    import json as _json
+    import cfs_pipeline as CP
+    root = _root(name)
+    ddir = os.path.join(root, "design")
+    os.makedirs(ddir, exist_ok=True)
+    pre = {}
+    try:                                           # CFS preflight (storage / platform / units ...)
+        import preflight as _PF
+        pre["preflight"] = _PF.check(cfg)
+        print(_PF.render(pre["preflight"]))
+    except Exception as _pfe:
+        pre["preflight"] = [("WARN", "preflight failed: %s" % _pfe)]
+    backups = backup_filled_packages(ddir, cfs_job=True)       # CFS-14
+    out = CP.design_and_report(name, cfg, outdir=root, do_report=False)
+    out.update(pre)
+    out["package_backup"] = backups
+    res = _cfs_engine_res(cfg)
+    pkg = _json.load(open(out["package"], encoding="utf-8"))
+    pkg = cfs_framework_blocks(cfg, res, pkg)
+    _json.dump(pkg, open(out["package"], "w", encoding="utf-8"), indent=1)
+    if keep_fills and backups:
+        try:
+            out["merge_fills"] = merge_fills(name)
+            pkg = _json.load(open(out["package"], encoding="utf-8"))
+        except SystemExit as ex:
+            out["merge_fills"] = str(ex)
+    if "lines_x" in cfg:
+        out["gate_flags"] = {"model_vs_tributary": pkg.get("model_vs_tributary_flags") or []}
+        if pkg.get("two_stage_framework"):
+            out["two_stage"] = {d: v.get("status") for d, v in
+                                (pkg["two_stage_framework"].get("by_direction") or {}).items()}
+        if pkg.get("period_rayleigh"):
+            out["period_rayleigh"] = {d: v.get("T_rayleigh_s") for d, v in
+                                      pkg["period_rayleigh"].items() if isinstance(v, dict)}
+    if do_report:
+        try:
+            import report as RPT
+            out["report_html"] = RPT.build_report_cfs(name, cfg, res, pkg, root)
+        except Exception as ex:
+            out["report_html"] = "report failed: %s" % ex
+    out["NEXT_STEP"] = (
+        "MANDATORY: fill EVERY slot of design/%s IN PLACE (capacity, cited clause, D/C) from the "
+        "RAG -- wall lines need sheathing + fastener_schedule; hold-downs are TENSION devices; "
+        "fix or justify every model_vs_tributary / drift / preflight flag (a failing drift row "
+        "must be redesigned, not annotated); then run consistency.check(name) until it PASSES "
+        "and re-render with report.build_report(name) (it reads the FILLED package; do NOT "
+        "re-run design_and_report just to re-render -- that re-seeds the package; it backs a "
+        "filled one up to .filled.bak)." % PKG_CFS)
+    print("\n" + "=" * 72 + "\n>> NEXT STEP (do not skip): " + out["NEXT_STEP"] + "\n" + "=" * 72)
+    return out
+
+
+def design_and_report(name, cfg=None, do_report=True, keep_fills=False):
     """Run the full design (no user-review pause): register cfg, run sanity -> DEMAND envelope ->
     figures -> HTML report, all in process, writing to the solution folder steel_builder/<name>.
-    Computes NO capacity; the agent derives those from the RAG and fills calc_package.json.
-    CFS cfgs (wall lines_x/lines_y or portal span_ft) dispatch to the CFS path."""
+    Computes NO capacity; the agent derives those from the RAG and fills the calc package.
+    CFS cfgs (wall lines_x/lines_y or portal span_ft) dispatch to the CFS path, which writes
+    design/calc_package_cfs.json (the ONE authoritative CFS package), runs the CFS preflight,
+    backs up a FILLED package to .filled.bak before re-seeding (keep_fills=True merges the fills
+    back with pipeline.merge_fills), and adds the framework's independent checks (independent
+    tributary, Rayleigh period, ASCE 7-22 12.2.3.2 two-stage block)."""
     if _is_cfs_cfg(cfg):
-        import cfs_pipeline as CP
-        return CP.design_and_report(name, cfg, outdir=_root(name), do_report=do_report)
+        return _cfs_design_and_report(name, cfg, do_report=do_report, keep_fills=keep_fills)
     if E is None:
         raise SystemExit("engine3d/openseespy unavailable and cfg is not a CFS cfg -- "
                          "the hot-rolled grid path needs the openseespy environment")
