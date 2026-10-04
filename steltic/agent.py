@@ -371,7 +371,9 @@ def _hr_gate_sanity(jd, pkg):
         cfg_sha = None
         probs.append("cfg.py is missing from the job folder -- write the building cfg to cfg.py and run "
                      "the pipeline from it")
-    if res.get("cfg_sha256") and cfg_sha and res["cfg_sha256"] != cfg_sha:
+    # a result without the cfg hash (pipeline run before cfg.py existed) cannot be tied to the delivered
+    # cfg.py either -- treat it as stale, never as current (ported from steltic HR-14 verify fix)
+    if cfg_sha and res.get("cfg_sha256") != cfg_sha:
         probs.append("the sanity results are STALE: cfg.py changed after the last pipeline.design_and_report "
                      "run -- re-run it so drift/theta/model checks reflect the delivered model")
     waivers = pkg.get("gate_waivers") if isinstance(pkg.get("gate_waivers"), dict) else {}

@@ -470,7 +470,7 @@ def _staticize_custom(cfg, transf="PDelta", nseg=10, stiff=1.0, drop=(), fix_mas
     model = {"cm": info.get("cm", {}), "present": present, "z": zl, "NF": NF,
              "cols": cols, "beams": beams, "braces": braces, "bases": bases, "base_nodes": sorted(base_nodes),
              "masters": mdict, "coord": coord, "dropped": dropped, "warnings": warnings,
-             "sig": R.calls, "custom": True, "orphans": orphans}
+             "sig": R.calls, "custom": True, "orphans": orphans, "slaves": slave_set}
     _finish_model(cfg, model)
     return model
 
@@ -649,7 +649,7 @@ def build_static(cfg, transf="PDelta", nseg=10, stiff=1.0, drop=(), fix_masters=
     model = {"cm": cm, "present": present, "z": z, "NF": NF, "cols": cols, "beams": beams,
              "braces": braces, "bases": bases, "base_nodes": sorted(base_nodes), "masters": masters,
              "coord": coord, "dropped": dropped, "warnings": warnings, "sig": R.calls, "custom": False,
-             "orphans": orphans}
+             "orphans": orphans, "slaves": slave_set}
     _finish_model(cfg, model)
     return model
 
@@ -1520,6 +1520,61 @@ def _blen(model, br):
     return math.dist(a, b)
 
 
+def _brace_crosses(model, br):
+    """True when another brace element of the model crosses `br` at an interior point (an X-brace whose two
+    diagonals are modelled as crossing members without a node at the intersection)."""
+    c = model.get("coord") or {}
+    p1, p2 = c.get(br.get("n1")), c.get(br.get("n2"))
+    if p1 is None or p2 is None:
+        return False
+    d1 = [p2[q] - p1[q] for q in range(3)]
+    for o in model.get("braces") or ():
+        if o is br or {o.get("n1"), o.get("n2")} & {br.get("n1"), br.get("n2")}:
+            continue
+        q1, q2 = c.get(o.get("n1")), c.get(o.get("n2"))
+        if q1 is None or q2 is None:
+            continue
+        d2 = [q2[q] - q1[q] for q in range(3)]; r = [p1[q] - q1[q] for q in range(3)]
+        a = sum(x * x for x in d1); e = sum(x * x for x in d2); b = sum(x * y for x, y in zip(d1, d2))
+        cc = sum(x * y for x, y in zip(d1, r)); f = sum(x * y for x, y in zip(d2, r))
+        den = a * e - b * b
+        if den <= 1e-9 * a * e:
+            continue                                          # parallel
+        s_ = (b * f - cc * e) / den; t_ = (a * f - b * cc) / den
+        if not (0.05 < s_ < 0.95 and 0.05 < t_ < 0.95):
+            continue
+        gap = math.dist([p1[q] + s_ * d1[q] for q in range(3)], [q1[q] + t_ * d2[q] for q in range(3)])
+        if gap <= _TOL:
+            return True
+    return False
+
+
+def _brace_length(cfg, model, br):
+    """(length used for the brace buckling stress, basis, default_used) -- AISC 341-22 F2.3: 'the brace length
+    used for the determination of Fne shall not exceed the distance from brace end to brace end'.
+    cfg['brace_length'] (in; number or {section label: in}) or cfg['brace_length_factor'] (x the work-point
+    length; number or {label: f}) win; else a brace crossed by another (X-bracing connected at the
+    intersection) uses half its work-point length; else the work-point length, which EXCEEDS the end-to-end
+    length, so the expected compressive strength is underestimated -- flagged (default_used=True)."""
+    Lwp = _blen(model, br); lab = br.get("sec")
+    o = cfg.get("brace_length")
+    if isinstance(o, dict):
+        o = o.get(lab)
+    if o:
+        return float(o), "cfg['brace_length'] %.0f in" % float(o), False
+    f = cfg.get("brace_length_factor")
+    if isinstance(f, dict):
+        f = f.get(lab)
+    if f:
+        return float(f) * Lwp, "cfg['brace_length_factor'] %.2f x work-point length %.0f in" % (float(f), Lwp), False
+    if _brace_crosses(model, br):
+        return 0.5 * Lwp, ("X-brace: half the work-point length %.0f in (diagonals connected at the crossing); "
+                           "give cfg['brace_length'] for the end-to-end length" % Lwp), False
+    return Lwp, ("work-point length %.0f in -- longer than the end-to-end length F2.3 allows, so C is "
+                 "UNDERESTIMATED (unconservative for case (a)); give cfg['brace_length'] (end-to-end, in) or "
+                 "cfg['brace_length_factor']" % Lwp), True
+
+
 def brace_capacity(cfg, model, br):
     """Expected / adjusted strengths of one brace: dict(sys, T, C, Cpb, note) (kip) or dict(sys, err)."""
     sysn = brace_system(cfg, br)
@@ -1533,11 +1588,12 @@ def brace_capacity(cfg, model, br):
         Fy, Ry, mat = _brace_material(cfg, lab)
         T = Ry * Fy * A
         if sysn == "SCBF":
-            Fne = _fn_E3(Ry * Fy, A, r, L)
+            Lc, lbasis, ldef = _brace_length(cfg, model, br)
+            Fne = _fn_E3(Ry * Fy, A, r, Lc)
             C = min(Ry * Fy * A, Fne * A / 0.877)         # F2.3: lesser of RyFyAg and (1/0.877)FneAg
-            return dict(sys=sysn, T=T, C=C, Cpb=0.3 * C, A=A, L=L, r=r, Fy=Fy, Ry=Ry,
-                        note="SCBF F2.3: T=RyFyAg, C=min(RyFyAg, FneAg/0.877) (Fne with RyFy, L=%.0f in), "
-                             "post-buckling 0.3C; %s" % (L, mat))
+            return dict(sys=sysn, T=T, C=C, Cpb=0.3 * C, A=A, L=Lc, Lwp=L, r=r, Fy=Fy, Ry=Ry, L_default=ldef,
+                        note="SCBF F2.3: T=RyFyAg, C=min(RyFyAg, FneAg/0.877) (Fne with RyFy, L=%.0f in: %s), "
+                             "post-buckling 0.3C; %s" % (Lc, lbasis, mat))
         Pn = _fn_E3(Fy, A, r, L) * A
         return dict(sys=sysn, T=T, C=0.3 * Pn, Cpb=0.3 * Pn, A=A, L=L, r=r, Fy=Fy, Ry=Ry,
                     note="OCBF F1.4a(a): tension min(Om0 effect, RyFyAg), compression 0.3Pn; %s" % mat)
@@ -1683,6 +1739,56 @@ def ecl_plan(cfg, model, desig):
                 ne.append("EBF link %s: %s" % (bm["etag"], note)); continue
             d = "X" if abs(bm["xyzB"][0] - bm["xyzA"][0]) >= abs(bm["xyzB"][1] - bm["xyzA"][1]) else "Y"
             links.append(dict(bm=bm, dir=d, V=Vc, note=note)); drop.add(bm["etag"])
+    # AISC 341-22 F2.3 / F4.3 ('columns, beams, struts') and F3.3 ('beams outside links'): the Ecl model
+    # restrains the rigid diaphragm, so the horizontal components of the expected brace / adjusted link
+    # forces enter the diaphragm at the work points, and a beam whose end nodes are slaved to it carries
+    # ~0 axial in that analysis. Its Ecl axial (strut / drag force) is therefore NOT EVALUATED -- say so
+    # instead of reporting the ~0 value silently (the 12.10.2.1 collector statics use Omega0 x E, not Ecl).
+    sl = model.get("slaves") or set()
+    cd = model["coord"]
+
+    def _pdir(n1, n2):                                      # unit plan direction n1 -> n2 (None if vertical)
+        a, b = cd.get(n1), cd.get(n2)
+        if a is None or b is None:
+            return None
+        dx, dy = b[0] - a[0], b[1] - a[1]; L = math.hypot(dx, dy)
+        return (dx / L, dy / L) if L > _TOL else None
+    wp = {}                                                 # work-point node -> plan directions of its yielding elements
+    for it in braces:
+        u = _pdir(it["br"]["n1"], it["br"]["n2"])
+        for n in (it["br"]["n1"], it["br"]["n2"]):
+            if u: wp.setdefault(n, []).append(u)
+    for it in links:
+        u = _pdir(it["bm"]["A"], it["bm"]["B"])
+        for n in (it["bm"]["A"], it["bm"]["B"]):
+            if u: wp.setdefault(n, []).append(u)
+    if wp and sl:
+        lk = {it["bm"]["etag"] for it in links}
+        struts = []
+        for bm in model["beams"]:
+            if bm["etag"] in lk or bm["A"] not in sl or bm["B"] not in sl:
+                continue
+            d = _pdir(bm["A"], bm["B"])
+            if d and any(abs(d[0] * u[1] - d[1] * u[0]) < 0.05          # beam in the plane of the brace / link
+                         for n in (bm["A"], bm["B"]) for u in wp.get(n, ())):
+                struts.append(bm["etag"])
+        struts = sorted(set(struts))
+        if struts:
+            ne.append("Ecl AXIAL of %d braced-bay beam(s) / strut(s)%s (e.g. element %s) NOT EVALUATED (AISC 341-22 "
+                      "F2.3 / F3.3 / F4.3): their end nodes are slaved to the rigid diaphragm, which the capacity-"
+                      "limited analysis restrains, so the horizontal components of the expected brace%s forces enter "
+                      "the diaphragm at the work points and these beams show ~0 Ecl axial. Design the struts%s and the "
+                      "collectors delivering to the braced bays by hand for those horizontal components along the "
+                      "actual diaphragm load path (their moments / shears and the unbalanced loads ARE evaluated)"
+                      % (len(struts), " / beams outside links" if links else "",
+                         ", ".join(str(t) for t in struts[:4]), " / link" if links else "",
+                         " / beams outside links" if links else ""))
+    nwp = sum(1 for it in braces if it["cap"].get("L_default"))
+    if nwp:
+        notes.append("SCBF expected compression of %d brace(s) uses the WORK-POINT length (no cfg['brace_length'] / "
+                     "cfg['brace_length_factor'], no crossing brace): AISC 341-22 F2.3 limits the length to the "
+                     "brace end-to-end distance, so C (and the case (a) column / strut demands) is UNDERESTIMATED "
+                     "-- give the end-to-end lengths" % nwp)
     if spsw:
         notes.append("SPSW F5.3(b) PARTIAL: web tension field at RyFy applied as the panel resultant on the "
                      "tension diagonal(s) (0.5*Ry*Fy*tw*L*sin2a horizontal) and HBE 1.1*Ry*Mp hinge SHEARS "
