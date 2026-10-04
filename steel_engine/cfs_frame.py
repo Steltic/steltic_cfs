@@ -617,7 +617,8 @@ def build_portal(cfg, secs=None):
         fr.support(colL[0], True, True, fixed)
         fr.support(colR[0], True, True, fixed)
         meta = dict(secs=secs, base_nodes=(colL[0], colR[0]), eave_nodes=(colL[-1], colR[-1]),
-                    apex_node=rafL[-1], apex_nodes=[rafL[-1]], span_in=span, He_in=He,
+                    apex_node=rafL[-1], span_in=span, He_in=He,
+                    apex_nodes=[rafL[-1]] if Ha - He > 1e-6 else [],   # flat beam: no ridge
                     HeR_in=He, Ha_in=Ha, roof_x=(-oh, span + oh), overhang_in=oh,
                     tips=(tipL, tipR), raf_slope=math.atan2(Ha - He, span / 2.0))
     # nodes for concentrated loads / crane supports
