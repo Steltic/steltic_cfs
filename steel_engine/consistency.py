@@ -1148,14 +1148,18 @@ def _cfs_slot_issues(cfg, pkg):
             out.append("[hold-down %s] appears sized for SHEAR -- hold-downs resist the cumulative "
                        "OVERTURNING TENSION, never the shear (instant red flag)" % h.get("id"))
     # Type II (perforated) mechanics -- only where Type II is actually DECLARED (not negated)
-    if _mentions(blob, "type ii") or _mentions(blob, "perforated"):
+    # (AGENT text + the package's top-level notes, not the seeds: the wallloads capacity-design
+    #  instruction itself mentions Type II; a cfg['type_ii'] declaration seeds holddowns.type_ii)
+    tblob = (ablob + " " + str(pkg.get("notes") or "") + " " + str(pkg.get("note") or "")).lower()
+    if _mentions(tblob, "type ii") or _mentions(tblob, "perforated") or \
+            any(isinstance(h, dict) and h.get("type_ii") for h in pkg.get("holddowns") or []):
         if "adjustment" not in blob and "ca" not in [_norm_key(k) for k, _v in _walk_agent(pkg)]:
             out.append("Type II (perforated) walls referenced but NO adjustment-factor calculation "
                        "in the package -- show the S400 Type II factor on the full-length capacity")
         if not ("distributed" in ablob and ("track" in ablob or "anchorage" in ablob)):
             out.append("Type II walls need END hold-downs PLUS distributed track anchorage between "
                        "-- not evident in the package")
-        if any(_mentions(blob, k) for k in ("every pier", "each pier", "per pier")):
+        if any(_mentions(tblob, k) for k in ("every pier", "each pier", "per pier")):
             out.append("Type II wall with hold-downs at EVERY PIER -- that silently reverts the "
                        "wall to Type I; anchor the wall ENDS only, distributed track anchorage between")
     # net-uplift path on wind-relevant briefs -- the seed's COMBOS_NOTE / combo labels / slot

@@ -246,3 +246,10 @@ def test_recheck_after_rerun_is_not_silent():
                connections=[dict(id="c", DC=0.5, cited="S100 J4", limit_state="J4")])
     iss = CC.check("x", pkg=pkg, verbose=False)
     assert any("OLD demand" in i and "frame-col" in i for i in iss), iss
+
+
+def test_type_ii_screen_ignores_the_seeds_own_instruction_text():
+    cfg = mezz()
+    pkg = CP.build_package("m", cfg, CE.run(cfg))
+    assert "Type II" in json.dumps(pkg.get("capacity_design"))           # wallloads seed text
+    assert not [i for i in CC._cfs_slot_issues(cfg, pkg) if "Type II" in i]
