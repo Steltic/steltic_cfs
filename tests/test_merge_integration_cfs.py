@@ -220,3 +220,29 @@ def test_engine_sync_api_used_by_cfs_report():
     import engine3d as E
     for fn in ("theta_rows", "stability_theta", "seismic_drift", "rbs_drift_factor", "sdc_of"):
         assert hasattr(E, fn), fn
+
+
+def test_portal_theta_max_uses_eq_12_8_19_floor_and_beta():
+    import cfs_frame as CF
+    cfg = CF._demo_cfg()
+    cfg["seis"] = dict(SDS=0.25, SD1=0.10, S1=0.05, R=3.0, Cd=6.0, Om0=3.0, Ie=1.0, W_frame_kip=4.0)
+    se = [r for r in CP.build_portal_package("t", cfg, CF.run(cfg))["drift_table"]
+          if r.get("check") == "stability_theta"][0]
+    # 0.5/(1.0*6.0) = 0.083 < 0.10 -> theta_max = 0.10 (7-22 floor); basis cites Eq. 12.8-18/-19
+    assert abs(se["limit"] - 0.10) < 1e-9 and "12.8-19" in se["basis"]
+    cfg["seis"] = dict(cfg["seis"], Cd=3.0, Om0=1.0)       # beta >= 1.25/Om0 = 1.25
+    se = [r for r in CP.build_portal_package("t", cfg, CF.run(cfg))["drift_table"]
+          if r.get("check") == "stability_theta"][0]
+    assert abs(se["limit"] - 0.5 / (1.25 * 3.0)) < 1e-4
+
+
+def test_recheck_after_rerun_is_not_silent():
+    # merge_fills clears the top-level D/C when a seeded demand moved, but the carried per-check
+    # D/Cs were computed at the OLD demand -- consistency must say so (no silent pass)
+    pkg = dict(members=[dict(id="frame-col", M_kipin=1036.0, DC=None, DC_before_rerun=0.9,
+                             recheck_after_rerun="seeded demand changed on re-run: M_kipin 936.7 -> 1036.0",
+                             limit_state="H1.2", cited="S100 H1.2",
+                             checks=[dict(limit_state="F2", DC=0.9, cited="S100 F2")])],
+               connections=[dict(id="c", DC=0.5, cited="S100 J4", limit_state="J4")])
+    iss = CC.check("x", pkg=pkg, verbose=False)
+    assert any("OLD demand" in i and "frame-col" in i for i in iss), iss

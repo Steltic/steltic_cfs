@@ -1225,7 +1225,7 @@ def _drift_table_issues(pkg):
 def _theta_issues(pkg):
     """P-Delta stability coefficient (ASCE 7-22 12.8.7): any agent/framework block that reports a
     numeric theta FAILS when theta > its stated theta_max (or > 0.25, the absolute ceiling of
-    Eq. 12.8-17) -- HR-14/CFS-29 port: a theta failure can never ship green."""
+    Eq. 12.8-19) -- HR-14/CFS-29 port: a theta failure can never ship green."""
     out = []
     if not isinstance(pkg, dict):
         return out
@@ -1333,6 +1333,12 @@ def check(name, root=None, pkg=None, verbose=True):
         for m in lst:
             if not isinstance(m, dict):
                 continue
+            if m.get("recheck_after_rerun"):
+                # pipeline.merge_fills carried this slot's fills into a re-seeded package whose
+                # demand moved: the carried checks were computed at the OLD demand (CFS-14)
+                issues.append("[%s %s] %s -- the carried checks are at the OLD demand: re-derive them "
+                              "at the new demand, then delete 'recheck_after_rerun'"
+                              % (kind, m.get("id"), str(m["recheck_after_rerun"])[:200]))
             if m.get("waived"):
                 issues += _waiver_issues(kind, m)                    # CFS-29d
             else:

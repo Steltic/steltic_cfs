@@ -1438,7 +1438,7 @@ def build_portal_package(name, cfg, res):
             pkg["drift_table"].append(dict(
                 check="stability_theta", value=se["theta"], limit=se["theta_max"],
                 ok=se["theta"] <= se["theta_max"], basis=se["theta_basis"],
-                criterion="ASCE 7-22 12.8.7 Eq. 12.8-16 / 12.8-17"))
+                criterion="ASCE 7-22 12.8.7 Eq. 12.8-18 / 12.8-19"))
     if res.get("sbmf"):
         sb = res["sbmf"]
         pkg["sbmf"] = sb

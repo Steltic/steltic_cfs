@@ -436,6 +436,9 @@ def _completion_gate(ws):
             for x in lst:
                 if not isinstance(x, dict):
                     continue
+                if x.get("recheck_after_rerun"):
+                    probs.append("%s '%s': %s -- re-derive its checks at the new demand"
+                                 % (label, x.get("id"), str(x["recheck_after_rerun"])[:160]))
                 if x.get("waived"):
                     wp = _waiver_problem(label, x)
                     if wp:

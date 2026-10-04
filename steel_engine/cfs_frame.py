@@ -2314,7 +2314,7 @@ def _self_weight_total(fr, members, meta):
 def _seismic_block(cfg, secs_eff, cases, tmpl, meta0, fr0, sh, pw):
     """Seismic drift (12.8.6: Cd delta_xe / Ie, rho = 1), allowable drift (Table 12.12-1,
     / rho for moment frames in SDC D-F, 12.12.1.1), stability coefficient theta (12.8.7,
-    Eq. 12.8-16/17), Omega_0 and rho basis."""
+    Eq. 12.8-18/19), Omega_0 and rho basis."""
     s = cfg["seis"]
     sysname = cfg.get("system") or s.get("system")
     Ie = float(s.get("Ie", 1.0))
@@ -2388,14 +2388,16 @@ def _seismic_block(cfg, secs_eff, cases, tmpl, meta0, fr0, sh, pw):
     # above 1.0 (2.3.6 combo 6: D + L + 0.15S), Vx = V
     Px = _vertical_total(fr0, cases, [c for c in ("D", "L") if c in cases]) + \
         (0.15 * _vertical_total(fr0, cases, ["S_bal"]) if "S_bal" in cases else 0.0)
-    beta = float(s.get("beta", 1.0))
+    # Eq. 12.8-19: beta >= 1.25/Omega_0; theta_max need not be taken < 0.10 (7-22)
+    _om0v = out.get("Om0")
+    beta = max(float(s.get("beta", 1.0)), 1.25 / float(_om0v) if _om0v else 0.0)
     theta = Px * Delta * Ie / (sh["V_kip"] * hsx * Cd) if sh["V_kip"] else 0.0
-    tmax = min(0.5 / (beta * Cd), 0.25)
+    tmax = max(min(0.5 / (beta * Cd), 0.25), 0.10)
     out.update(theta=round(theta, 4), theta_max=round(tmax, 4), Px_kip=round(Px, 2),
-               theta_basis="ASCE 7-22 Eq. 12.8-16 theta = Px Delta Ie / (Vx hsx Cd), Px = "
-                           "D + L + 0.15S (2.3.6 combo 6, no factor > 1.0), Eq. 12.8-17 "
-                           "theta_max = "
-                           "0.5/(beta Cd) <= 0.25 with beta = %.2f%s"
+               theta_basis="ASCE 7-22 Eq. 12.8-18 theta = Px Delta Ie / (Vx hsx Cd), Px = "
+                           "D + L + 0.15S (>= the 12.8.6.1 expected gravity 1.0D + 0.5L; no "
+                           "factor > 1.0), Eq. 12.8-19 theta_max = "
+                           "0.5/(beta Cd) <= 0.25, >= 0.10, with beta = %.2f%s"
                            % (beta, "" if s.get("beta") else " (conservative default)"))
     if theta > tmax:
         pw.append("THETA %.3f > theta_max %.3f (ASCE 7-22 12.8.7): the frame is potentially "
