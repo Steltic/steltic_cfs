@@ -1515,12 +1515,17 @@ def _cfs_schedules_section(pkg):
     dt = pkg.get("drift_table") or []
     if dt:
         rows = [[d.get("direction", ""), d.get("line", ""), d.get("story", ""),
-                 d.get("drift_amplified", ""), d.get("limit", ""),
-                 "OK" if d.get("ok") else "<b>NG</b>"] for d in dt]
-        h.append("<h3>Drift table (S400 four-term, amplified)</h3>"
-                 + _table(["Dir", "Line", "Story", "C<sub>d</sub>&delta;/I<sub>e</sub>h", "Limit", "Status"], rows))
+                 d.get("drift_single_story", ""), d.get("drift_amplified", ""), d.get("limit", ""),
+                 "OK" if d.get("ok") else "<b>NG</b>", d.get("theta", ""), d.get("theta_max", "")]
+                for d in dt]
+        h.append("<h3>Drift table (S400 E1.4.1.4-1 / E2.4.1.4-1 + rotation carried from the "
+                 "stories below, amplified; ASCE 7-22 12.8.6 / 12.8.7)</h3>"
+                 + _table(["Dir", "Line", "Story", "Single-story C<sub>d</sub>&delta;/I<sub>e</sub>h",
+                           "C<sub>d</sub>&Delta;/I<sub>e</sub>h (cumulative)", "Limit", "Status",
+                           "&theta;", "&theta;<sub>max</sub>"], rows))
     for key, label in (("model_vs_tributary_flags", "Model-vs-tributary gate"),
-                       ("drift_flags", "Drift flags")):
+                       ("drift_flags", "Drift flags"),
+                       ("stability_flags", "P-delta stability (12.8.7)")):
         flags = pkg.get(key) or []
         if flags:
             res = pkg.get(key + "_resolution")
@@ -2849,13 +2854,25 @@ def build_report_cfs(name, cfg, res, pkg, root):
                 for k in sorted(lr):
                     r = lr[k]
                     rows.append([lname, k, "%.1f" % r["V"], "%.0f" % r["v_unit_plf"],
+                                 "%.4f" % r.get("drift_amplified_single_story", 0.0),
                                  "%.4f" % r.get("drift_amplified", 0.0),
                                  dd["drift_limit"],
                                  "OK" if r.get("drift_amplified", 0) <= dd["drift_limit"]
-                                 else "<b>OVER</b>"])
+                                 else "<b>OVER</b>",
+                                 "%.3f / %.3f" % (r.get("theta", 0.0), r.get("theta_max", 0.0))])
             parts.append(f"<h3>{dirn} lines</h3>" +
-                         _tbl(["line", "story", "V (kip)", "v (plf)", "Cd*dr/Ie",
-                               "limit", "drift"], rows))
+                         _tbl(["line", "story", "V (kip)", "v (plf)",
+                               "Cd*dr/Ie single-story", "Cd*dr/Ie (incl. rotation from below)",
+                               "limit", "drift", "theta / theta_max (12.8.7)"], rows))
+            if dd.get("drift_basis"):
+                parts.append("<p class='note'>Drift basis: %s.</p>" % dd["drift_basis"])
+            for f in dd.get("stability_flags", []):
+                parts.append(f"<p class='note'><b>STABILITY (12.8.7):</b> {f}</p>")
+            for t in dd.get("transfers", []):
+                parts.append("<p class='note'><b>TRANSFER:</b> line %s absent at story %s: "
+                             "%.1f kip to %s (%s) &mdash; %s</p>"
+                             % (t["line"], t["story"], t["V_kip"], t["to"], t.get("note"),
+                                t["basis"]))
             for f in dd.get("gate_flags", []):
                 parts.append(f"<p class='note'><b>GATE:</b> {f} &mdash; resolve in the "
                              "package (model_vs_tributary resolution) or redesign.</p>")

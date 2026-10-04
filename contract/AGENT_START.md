@@ -446,8 +446,9 @@ run present the new schedules and WAIT for the user before updating the report.
   `preflight_fidelity` — the CFS system table and screens.
 - `cfs_engine.run(cfg)` — the wall-path solve (ELF, tributary, spring stacks, drift, gate).
 - `wall_line.WallLine(name, pos_ft, {story: [(L_ft, h_ft), ...]})` — wall-line objects;
-  `wall_line.s400_deflection(...)` — the four-term drift; `wall_line.compare_with_model(...)` —
-  the validator.
+  `wall_line.s400_deflection(v_plf, h_ft, b_ft, props, T_kip=..)` — AISI S400-20 Eq. E1.4.1.4-1
+  (WSP) / E2.4.1.4-1 (steel sheet) / E3.4.4 strap mechanics, slip term ∝ (v/β)²;
+  `wall_line.compare_with_model(...)` — the validator.
 - `cfs_sections.props("600S162-54")` — gross properties; `cfs_sections` effective-width routines —
   Ae/Se/Ixe at stress (S100 App. 1 EWM), validated against the SFIA tables.
 - `cfs_pipeline.build_package` — the package seeder (the pipeline calls it for you).
@@ -462,7 +463,8 @@ cfg = dict(
   risk_cat="II", structure_kind="wall", analysis_fidelity=0, diaphragm="flexible",
   lines_x=[wall_line.WallLine("A", 0.0, {k: [(24.0, 9.5), (24.0, 9.5)] for k in (1,2,3,4)}), ...],
   lines_y=[...],                       # lines resisting Y force, positioned in x (ft)
-  wall_props=dict(chord_area_in2=2.4, Gp_kip_in=18.0, en_in=0.015, k_anchor_kip_in=250.0),
+  wall_props=dict(sheathing="osb", s_in=4.0, t_stud_in=0.0451, t_sheathing_in=0.4375, faces=1,
+                  Gt_lb_in=77500.0, chord_area_in2=2.4, rod_area_in2=0.6),  # S400 inputs
   collector_lines=["reentrant-NE"],    # every re-entrant / step / throat line
   stud_trib_ft=2.0,
   partition_psf=10.0,                  # 12.7.2 partition weight in W (floors only) --
@@ -470,10 +472,21 @@ cfg = dict(
   # irregular plans: area_sf=..., perimeter_ft=... (true values on a bounding-box model)
 )
 ```
-`wall_props` are the four-term drift inputs (chord area; apparent shear stiffness Gp; fastener
-slip en; anchorage stiffness) — state them as assumptions and revise from your selected
-sheathing/fastener schedule and anchorage design, then re-run. A per-line override
-`WallLine(..., wall_props=dict(...))` makes different schedules drift correctly line-by-line.
+`wall_props` are the S400 deflection inputs of the SELECTED schedule: `sheathing` ("osb" /
+"plywood" / "csp" / "steel_sheet" / "strap"), edge spacing `s_in`, `t_stud_in`, `t_sheathing_in`,
+`faces`, `Fy_ksi` (steel sheet), `Gt_lb_in` or `G_psi` (WSP), `strap_area_in2` (strap),
+`Ga_kip_in` (gypsum/other: mechanics), chord `chord_area_in2`, and the anchorage —
+`rod_area_in2` (+`takeup_in`, default 0.05 in./level) or `k_anchor_kip_in`. Per line:
+`WallLine(..., wall_props=...)`; per story: `wall_props=dict(by_story={k: {...}})`. Legacy
+`Gp_kip_in`/`en_in` dicts still run, but the slip term then uses a conservative ASSUMED schedule
+and the run warns. The engine's story drift is CUMULATIVE: S400 single-story deflection + the
+rotation carried up from the stories below (chord strain + rod/hold-down elongation), and the
+drift table also reports θ (ASCE 7-22 12.8.7; θ > θmax fails the gate via `stability_flags`).
+A line ABSENT at a story (breezeway, split level, roof step) has an EMPTY segment list there:
+its shear is transferred to the present neighbours (lever rule, `transfers`, Ω0 per 12.3.3.3);
+a line bearing on a stepped foundation declares `WallLine(..., base_story=k)`; a split-level
+diaphragm takes `diaphragm_extent_ft={("X", 1): (lo, hi)}`; per-level weights
+`level_weights_kip` / `area_sf_by_level` / `roof_area_sf_by_level`.
 STRAP-braced lines: the hold-down seed also carries `T_bay_seed_kip` — overturning concentrates
 at BAY ends, so design anchorage from the per-bay value plus the Ry·Fy·Ag amplification, never
 the line-level `T_cum` alone. Floor framing reality check: single C-joists top out around 22-ft
@@ -481,11 +494,11 @@ spans (the SFIA span data ends there) — deeper unit plans need an intermediate
 floor trusses; don't force a catalog joist past the table.
 
 ## Engine additions (2026-07-31, post-batch-5 fix pass)
-- **`wall_line.fit_positions`** is now robust: it keeps the legacy result
-  bit-for-bit when that result is already monotone, otherwise optimizes the
-  free DOF (maximin gap); if the target widths are provably un-orderable it
-  falls back to strip centers with a printed warning — in that case use
-  `WallLine(trib_scale=...)` at natural positions instead (Ex7 pattern).
+- **`wall_line.fit_positions`** returns STRICTLY increasing positions: it keeps the
+  legacy result when that is already ordered with non-zero gaps, otherwise optimizes
+  the free DOF (maximin gap); if the target widths cannot be ordered it RAISES —
+  then place the lines at natural positions with
+  `WallLine(trib_scale=s)` from `wall_line.trib_scales_for(true_areas, positions, dim)`.
 - **Snow factors are first-class** on the portal path: `snow_ce` / `snow_ct` /
   `snow_is` (default 1.0 each) multiply into `ps = 0.7·Ce·Ct·Is·pg`; an
   explicit `snow_ps` still overrides. COLD ROOFS: set `snow_ct=1.2` (Ex30 —
