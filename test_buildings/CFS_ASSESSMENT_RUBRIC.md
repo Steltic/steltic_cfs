@@ -4,7 +4,8 @@ Companion to `ASSESSMENT_RUBRIC.md` (hot-rolled). Score 0–4 per dimension with
 Part 1 covers wall-framed buildings (Ex1–15); Part 2 (below) covers portal frames and component
 design (Ex16–19, Ex25–30, authored 2026-07 — this file is now the authoritative version).
 SCOPE CHANGE 2026-07-30: storage racks (former Ex20–24) are EXCLUDED from the repo — those briefs
-are removed and RMI MH16.1 is no longer part of the code set. Ex numbering keeps its gaps.
+are removed (the deletion-stub files were deleted 2026-10; do NOT assign Ex20–Ex24 in any run
+matrix) and RMI MH16.1 is no longer part of the code set. Ex numbering keeps its gaps.
 
 **Scale:** 0 = absent/wrong · 1 = attempted, major errors · 2 = mostly right, reviewer must fix gaps · 3 = correct, minor polish · 4 = correct, complete, engineer-ready
 

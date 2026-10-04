@@ -106,13 +106,20 @@ def height_check(system, SDC, hn_ft):
 
 # ---------------- analysis fidelity tiers (scope decision #8) ----------------
 
+# What each tier ACTUALLY runs (CFS-37): the portal path (cfs_frame) is a planar EA/EI
+# direct-stiffness solver; there is no warping DOF / thin-walled element at any tier.
 TIERS = {
-    0: dict(name="Standard", elements="elasticBeamColumn + Ae/I_eff iteration",
-            for_="wall-framed buildings (walls are S400-calibrated springs)"),
-    1: dict(name="Thin-walled members", elements="dispBeamColumnAsym/mixedBeamColumnAsym + Ae/I_eff",
-            for_="portal frames, canopies, single-channel members"),
-    2: dict(name="High fidelity", elements="Du&Hajjar elements + EWM effective fiber laws, incremental",
-            for_="torsion-critical slender portals, verification passes"),
+    0: dict(name="Standard",
+            elements="wall path: secant shear-spring stacks; portal path: planar frame, GROSS EA/EI",
+            for_="wall-framed buildings (walls are four-term-deflection secant springs)"),
+    1: dict(name="Effective-stiffness frame",
+            elements="planar EA/EI frame + decoupled Ae/I_eff iteration (S100 App. 1), 0.8E, "
+                     "notional loads, P-Delta on strength combos; no warping/torsion DOF",
+            for_="portal frames, canopies (single-channel torsion = analytic companion table)"),
+    2: dict(name="High fidelity (not implemented -- runs Tier 1)",
+            elements="same analysis as Tier 1; torsion-critical members need a separate "
+                     "thin-walled check by the engineer",
+            for_="torsion-critical slender portals (state the separate torsion check)"),
 }
 
 _TIER_MIN = {  # minimum sensible tier by declared structure kind
@@ -139,8 +146,10 @@ def preflight_fidelity(structure_kind, tier):
                    "Raise cfg['analysis_fidelity'] or justify explicitly in the report."
                    % (tier, structure_kind, floor_, TIERS[floor_]["for_"]))
     if structure_kind == "portal_singlechannel" and tier < 2:
-        out.append("single-channel portals: shear-center torsion at every load point -- Tier 2 "
-                   "recommended; justify Tier %d explicitly (see Ex27)." % tier)
+        out.append("single-channel portals: shear-center torsion at every load point -- no "
+                   "tier models warping/torsion (Tier 2 currently runs Tier %d's planar "
+                   "analysis); perform and document the torsion/bimoment check from the "
+                   "torsion_companion seed (see Ex27)." % max(tier, 1))
     return out
 
 
