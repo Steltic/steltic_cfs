@@ -201,6 +201,13 @@ def _is_demand_field(f):
         f not in ("capacity", "T_design_kip", "design_T_kip", "T_demand_kip", "demand_kip")
 
 
+# numeric fields the AGENT owns (the seed leaves them empty or the agent overrides them): every
+# other seeded number -- demands, drift / theta screens, seeds -- keeps its FRESH value on a merge
+_AGENT_NUM_FIELDS = frozenset(("DC", "capacity", "T_design_kip", "design_T_kip", "T_demand_kip",
+                               "demand_kip", "drift_design", "drift_amplified_design",
+                               "DC_before_rerun"))
+
+
 def merge_fills(name, backup=None, rel_change=0.005):
     """Carry the agent's fills from a backed-up package into the fresh seed (opt-in; CFS-14).
     Slots are matched by id (drift rows by check / direction-line-story). For a matched slot the
@@ -244,13 +251,33 @@ def merge_fills(name, backup=None, rel_change=0.005):
                         not isinstance(ov, bool) and key != "drift_table":
                     if abs(v - ov) > rel_change * max(abs(v), abs(ov), 1e-9):
                         changed.append("%s %s -> %s" % (f, ov, v))
+            if key == "drift_table":
+                # the drift SCREEN itself is seeded (cumulative drift, theta -- CFS-01/05): a row
+                # whose seeded drift moved keeps the FRESH verdict, and an agent design value
+                # computed on the old basis is flagged for re-derivation
+                for f in ("drift_amplified", "theta", "ratio", "value_in", "value"):
+                    v, ov = e.get(f), o.get(f)
+                    if isinstance(v, (int, float)) and isinstance(ov, (int, float)) and \
+                            not isinstance(v, bool) and not isinstance(ov, bool) and \
+                            abs(v - ov) > rel_change * max(abs(v), abs(ov), 1e-9):
+                        changed.append("%s %s -> %s" % (f, ov, v))
             for f, v in o.items():
                 fresh = e.get(f)
-                seeded_num = isinstance(fresh, (int, float)) and not isinstance(fresh, bool) \
-                    and _is_demand_field(f)
-                if fresh in (None, "", [], {}) or not seeded_num:
-                    if v not in (None, "", [], {}) or fresh in (None, "", [], {}):
-                        e[f] = v
+                if fresh in (None, "", [], {}):
+                    e[f] = v                                # agent fill of an empty seed field
+                    continue
+                if isinstance(fresh, bool) or (isinstance(fresh, (int, float))
+                                               and f not in _AGENT_NUM_FIELDS):
+                    if not (key == "drift_table" and f == "ok" and not changed):
+                        continue                            # seeded number / verdict: fresh wins
+                if v not in (None, "", [], {}):
+                    e[f] = v                                # agent's own choice / text / design value
+            if key == "drift_table" and changed and any(
+                    o.get(f) is not None for f in ("drift_design", "drift_amplified_design", "DC")):
+                e["recheck_after_rerun"] = ("seeded drift changed on re-run: " + "; ".join(changed)
+                                            + " -- re-derive drift_design on the new basis")
+                summ["rechecks"].append("drift %s/%s/%s" % (e.get("direction"), e.get("line"),
+                                                            e.get("story") or e.get("check")))
             summ["carried"] += 1
             if changed and e.get("DC") is not None:
                 e["DC_before_rerun"] = e.pop("DC")

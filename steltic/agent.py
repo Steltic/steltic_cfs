@@ -269,6 +269,8 @@ def _drift_row_problem(r):
     if not isinstance(r, dict) or r.get("waived"):
         return None
     rid = r.get("check") or "%s line %s story %s" % (r.get("direction"), r.get("line"), r.get("story"))
+    if r.get("recheck_after_rerun"):
+        return "drift row %s: %s" % (rid, str(r["recheck_after_rerun"])[:200])
     def num(k):
         v = r.get(k)
         return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else None

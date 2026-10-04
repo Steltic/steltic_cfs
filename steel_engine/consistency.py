@@ -1200,6 +1200,8 @@ def _drift_table_issues(pkg):
             continue
         rid = r.get("check") or "%s line %s story %s" % (r.get("direction"), r.get("line"),
                                                           r.get("story"))
+        if r.get("recheck_after_rerun"):
+            out.append("[drift %s] %s" % (rid, str(r["recheck_after_rerun"])[:220]))
         if r.get("waived"):
             out += _waiver_issues("drift", dict(r, id=rid))
             continue

@@ -253,3 +253,33 @@ def test_type_ii_screen_ignores_the_seeds_own_instruction_text():
     pkg = CP.build_package("m", cfg, CE.run(cfg))
     assert "Type II" in json.dumps(pkg.get("capacity_design"))           # wallloads seed text
     assert not [i for i in CC._cfs_slot_issues(cfg, pkg) if "Type II" in i]
+
+
+def test_merge_fills_keeps_fresh_seeded_drift_and_flags_stale_design(tmp_path, monkeypatch):
+    import pipeline as PL
+    monkeypatch.setenv("STEEL_BUILDER_JOBS", str(tmp_path))
+    d = tmp_path / "job" / "design"
+    d.mkdir(parents=True)
+    fresh = dict(drift_table=[dict(direction="Y", line="1", story=5, drift_amplified=0.0298, theta=0.05,
+                                   limit=0.02, ok=False),
+                              dict(direction="Y", line="1", story=6, drift_amplified=0.0100, limit=0.02,
+                                   ok=True)],
+                 holddowns=[dict(id="hd-1", T_cum_kip=12.0, k_kip_in=80.0, device_class="rod",
+                                 DC=None, cited=None)])
+    old = dict(drift_table=[dict(direction="Y", line="1", story=5, drift_amplified=0.0048, limit=0.02,
+                                 ok=True, drift_design=0.006),
+                            dict(direction="Y", line="1", story=6, drift_amplified=0.0100, limit=0.02,
+                                 ok=True, drift_design=0.009)],
+               holddowns=[dict(id="hd-1", T_cum_kip=12.0, k_kip_in=50.0, device_class="rod",
+                               DC=0.8, cited="S400 E1", selection="1-in. rod")])
+    (d / "calc_package_cfs.json").write_text(json.dumps(fresh))
+    (d / "calc_package_cfs.json.filled.bak").write_text(json.dumps(old))
+    PL.merge_fills("job")
+    m = json.loads((d / "calc_package_cfs.json").read_text())
+    r5, r6 = m["drift_table"]
+    assert r5["drift_amplified"] == 0.0298 and r5["ok"] is False and r5["theta"] == 0.05
+    assert "re-derive drift_design" in r5["recheck_after_rerun"]
+    assert r6["ok"] is True and r6["drift_design"] == 0.009 and "recheck_after_rerun" not in r6
+    assert any("re-derive drift_design" in i for i in CC._drift_table_issues(m))
+    h = m["holddowns"][0]
+    assert h["k_kip_in"] == 80.0 and h["DC"] == 0.8 and h["selection"] == "1-in. rod"
