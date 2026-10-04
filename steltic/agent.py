@@ -301,7 +301,8 @@ def _theta_problems(pkg):
                 lim = next((o.get(k) for k in ("theta_max", "theta_limit", "limit")
                             if isinstance(o.get(k), (int, float)) and not isinstance(o.get(k), bool)), None)
                 lim = min(float(lim), 0.25) if lim else 0.25
-                if th > lim + 1e-9 or o.get("ok") is False:
+                _drift_row = "drift_amplified" in o or "drift_design" in o   # ok = drift verdict
+                if th > lim + 1e-9 or (o.get("ok") is False and not _drift_row):
                     out.append("P-Delta theta = %.3f > theta_max = %.3f at %s (ASCE 7-22 12.8.7) -- "
                                "stiffen the structure" % (th, lim, path or "package"))
             for k, v in o.items():

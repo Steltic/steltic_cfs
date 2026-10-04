@@ -283,3 +283,13 @@ def test_merge_fills_keeps_fresh_seeded_drift_and_flags_stale_design(tmp_path, m
     assert any("re-derive drift_design" in i for i in CC._drift_table_issues(m))
     h = m["holddowns"][0]
     assert h["k_kip_in"] == 80.0 and h["DC"] == 0.8 and h["selection"] == "1-in. rod"
+
+
+def test_failing_drift_row_is_not_reported_as_a_theta_failure():
+    from steltic import agent as A
+    pkg = dict(drift_table=[dict(direction="Y", line="1", story=5, drift_amplified=0.0298,
+                                 theta=0.054, theta_max=0.143, limit=0.02, ok=False)])
+    assert CC._theta_issues(pkg) == [] and A._theta_problems(pkg) == []
+    assert CC._drift_table_issues(pkg)                         # the drift itself still fails
+    pkg["drift_table"][0]["theta"] = 0.2
+    assert CC._theta_issues(pkg) and A._theta_problems(pkg)

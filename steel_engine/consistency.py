@@ -1249,7 +1249,9 @@ def _theta_issues(pkg):
                     if isinstance(v, (int, float)) and not isinstance(v, bool):
                         lim = float(v); break
                 lim = min(lim, 0.25) if lim else 0.25
-                if th > lim + 1e-9 or o.get("ok") is False:
+                # a wall drift row's ok/False is the DRIFT verdict, not theta's (merge integration)
+                _drift_row = "drift_amplified" in o or "drift_design" in o
+                if th > lim + 1e-9 or (o.get("ok") is False and not _drift_row):
                     out.append("[stability %s] theta = %.3f > theta_max = %.3f (ASCE 7-22 12.8.7) "
                                "-- the structure must be stiffened/redesigned" % (path, th, lim))
             for k, v in o.items():
