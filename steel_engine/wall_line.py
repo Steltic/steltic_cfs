@@ -54,7 +54,11 @@ ROD_TAKEUP_IN = 0.05      # per-level take-up device travel allowance (in), stat
 #   E2.4.1.4 (steel sheet):  beta = 29.12 (t_sh/0.018)  (Eq. E2.4.1.4-3a)
 #                            rho  = 0.075 (t_sh/0.018)  (Eq. E2.4.1.4-4a)
 #                            omega4 = sqrt(33/Fy), Fy in ksi;  G = 11,300 ksi (steel).
-#   both: omega1 = s/6, omega2 = 0.033/t_stud, omega3 = sqrt((h/b)/2).
+#   both: omega1 = s/6, omega2 = 0.033/t_stud, omega3 = sqrt((h/b)/2), with t_stud the stud
+#   DESIGNATION thickness (S400 A2.1: minimum base steel thickness in mils -> 33 mil = 0.033
+#   in., 43 = 0.043, 54 = 0.054, 68 = 0.068, 97 = 0.097), NOT the design thickness (0.0346,
+#   0.0451, 0.0566 ...) -- the design thickness makes omega2, and so the shear and slip terms,
+#   ~5% low (a note is added when t_stud_in equals a design thickness).
 # G for wood structural panels is not tabulated in S400; Commentary C-E1.4.1.4 approximates
 # G*t from the panel through-thickness shear rigidity: for 7/16-in. 24/16 OSB
 # C_G*G_v*t_v = 3.1 x 25,000 = 77,500 lb/in (G = 177,300 psi at t = 0.437 in.). That example
@@ -71,9 +75,14 @@ WSP_GT_DEFAULT_LB_IN = 77500.0          # C-E1.4.1.4 worked example (7/16 OSB 24
 # Conservative ASSUMED schedule used ONLY when a WSP / steel-sheet line gives no S400 schedule
 # (legacy wall_props): widest tabulated edge spacing, thinnest tabulated stud, OSB (lower beta
 # and rho than plywood), thinnest tabulated sheet, one sheathed face. Every use is reported.
-_ASSUMED_WSP = dict(sheathing="osb", s_in=6.0, t_stud_in=0.0346, t_sheathing_in=0.4375, faces=1)
-_ASSUMED_STEEL = dict(sheathing="steel_sheet", s_in=6.0, t_stud_in=0.0346, t_sheathing_in=0.018,
+_ASSUMED_WSP = dict(sheathing="osb", s_in=6.0, t_stud_in=0.033, t_sheathing_in=0.4375, faces=1)
+_ASSUMED_STEEL = dict(sheathing="steel_sheet", s_in=6.0, t_stud_in=0.033, t_sheathing_in=0.018,
                       Fy_ksi=33.0, faces=1)
+
+# CFS DESIGN thickness (in.) -> DESIGNATION thickness (mils/1000) for 33..118 mil: a t_stud_in
+# equal to a design thickness is flagged (S400 omega2 takes the designation thickness)
+_DESIGN_T_STUD = {0.0346: 0.033, 0.0451: 0.043, 0.0566: 0.054, 0.0713: 0.068, 0.1017: 0.097,
+                  0.1242: 0.118}
 
 _STEEL_SHEET_KEYS = ("steel_sheet", "steel", "steelsheet")
 _STRAP_KEYS = ("strap",)
@@ -583,7 +592,8 @@ def wall_story_response(v_plf, h_ft, b_ft, props, T_kip=0.0, m_top_kip=0.0, syst
     props (inch / ksi / psi units as named):
       chord_area_in2  Ac (required, gross chord area per end)
       sheathing       'osb' | 'plywood' | 'csp' | 'steel_sheet' | 'strap' | other ('mechanics')
-      s_in, t_stud_in, t_sheathing_in, faces (1|2), Fy_ksi (steel sheet), G_psi | Gt_lb_in (WSP)
+      s_in, t_stud_in (stud DESIGNATION thickness, mils/1000: 0.033 / 0.043 / 0.054 ...),
+      t_sheathing_in, faces (1|2), Fy_ksi (steel sheet), G_psi | Gt_lb_in (WSP)
       strap_area_in2  (strap) total area of the tension diagonal(s) of one bay
       Ga_kip_in       (mechanics: gypsum / other walls, E6.4.1.4) apparent shear rigidity,
                       shear = v h / Ga; legacy key Gp_kip_in is read as Ga.
@@ -623,6 +633,12 @@ def wall_story_response(v_plf, h_ft, b_ft, props, T_kip=0.0, m_top_kip=0.0, syst
         faces = max(int(p.get("faces", 1) or 1), 1)
         vs = v / faces
         s, tst = float(p["s_in"]), float(p["t_stud_in"])
+        dsg = next((d for t_, d in _DESIGN_T_STUD.items() if abs(tst - t_) < 5e-5), None)
+        if dsg is not None:
+            notes.append("t_stud_in = %.4f in. is a DESIGN thickness; S400 E1.4.1.4/E2.4.1.4 "
+                         "omega2 = 0.033/t_stud uses the stud DESIGNATION thickness (mils/1000: "
+                         "%.3f here) -- omega2, the shear and the slip terms are %.0f%% low"
+                         % (tst, dsg, 100.0 * (1.0 - dsg / tst)))
         w1, w2 = s / 6.0, 0.033 / tst
         w3 = math.sqrt((h / b) / 2.0)
         if fam == "wsp":
@@ -767,7 +783,7 @@ def _selftest():
     if dev0 == "rod":
         dr = rod_elongation(ot[1]["T_kip"], 1.05, 4 * 115.0, takeup_levels=4)
         print("  rod elongation over height: %.2f in" % dr)
-    props = dict(sheathing="osb", s_in=4.0, t_stud_in=0.0451, t_sheathing_in=0.4375,
+    props = dict(sheathing="osb", s_in=4.0, t_stud_in=0.043, t_sheathing_in=0.4375,
                  Gt_lb_in=77500.0, chord_area_in2=1.2, k_anchor_kip_in=50.0)
     d = s400_deflection(v2, 9.5, 15.0, props, T_kip=ot[2]["T_kip"])
     assert d["total"] > 0 and not d["assumed"]

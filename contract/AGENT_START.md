@@ -641,7 +641,7 @@ cfg = dict(
   risk_cat="II", structure_kind="wall", analysis_fidelity=0, diaphragm="flexible",
   lines_x=[wall_line.WallLine("A", 0.0, {k: [(24.0, 9.5), (24.0, 9.5)] for k in (1,2,3,4)}), ...],
   lines_y=[...],                       # lines resisting Y force, positioned in x (ft)
-  wall_props=dict(sheathing="osb", s_in=4.0, t_stud_in=0.0451, t_sheathing_in=0.4375, faces=1,
+  wall_props=dict(sheathing="osb", s_in=4.0, t_stud_in=0.043, t_sheathing_in=0.4375, faces=1,
                   Gt_lb_in=77500.0, chord_area_in2=2.4, rod_area_in2=0.6),  # S400 inputs
   collector_lines=["reentrant-NE"],    # every re-entrant / step / throat line
   stud_trib_ft=2.0,
@@ -661,7 +661,8 @@ cfg = dict(
 )
 ```
 `wall_props` are the S400 deflection inputs of the SELECTED schedule: `sheathing` ("osb" /
-"plywood" / "csp" / "steel_sheet" / "strap"), edge spacing `s_in`, `t_stud_in`, `t_sheathing_in`,
+"plywood" / "csp" / "steel_sheet" / "strap"), edge spacing `s_in`, `t_stud_in` (stud DESIGNATION
+thickness = mils/1000, e.g. 0.054 for 54 mil -- not the 0.0566 design thickness), `t_sheathing_in`,
 `faces`, `Fy_ksi` (steel sheet), `Gt_lb_in` or `G_psi` (WSP), `strap_area_in2` (strap),
 `Ga_kip_in` (gypsum/other: mechanics), chord `chord_area_in2`, and the anchorage —
 `rod_area_in2` (+`takeup_in`, default 0.05 in./level) or `k_anchor_kip_in`. Per line:

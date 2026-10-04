@@ -31,7 +31,7 @@ cfg = dict(
   diaphragm="flexible",                     # or "semi-rigid" (Stage 2c: coupling elements)
   # S400 deflection inputs (wall_line.wall_story_response); per line via WallLine(wall_props=)
   # and per story via wall_props=dict(by_story={k: {...}}):
-  wall_props=dict(sheathing="osb", s_in=4.0, t_stud_in=0.0451, t_sheathing_in=0.4375, faces=1,
+  wall_props=dict(sheathing="osb", s_in=4.0, t_stud_in=0.043, t_sheathing_in=0.4375, faces=1,
                   chord_area_in2=1.2, rod_area_in2=0.6),   # or k_anchor_kip_in=50.0 (device)
   #   steel sheet: sheathing="steel_sheet", t_sheathing_in, Fy_ksi; strap: strap_area_in2;
   #   gypsum/other: Ga_kip_in (agent-grounded). Legacy dict(Gp_kip_in, en_in) still runs but the
@@ -642,6 +642,7 @@ def run(cfg):
     Px_lev = {k: gravity_Px_level(cfg, k) for k in range(1, N + 1)}   # 12.8.7 Px per level
     ext_all = cfg.get("diaphragm_extent_ft") or {}
     assumed_lines = []
+    tstud_lines = []
     for dirn, lines, dim in (("X", cfg["lines_x"], cfg["plan_ft"][1]),
                              ("Y", cfg["lines_y"], cfg["plan_ft"][0])):
         sd = seis_dir[dirn]
@@ -733,6 +734,8 @@ def run(cfg):
                 if r["assumed"]:
                     assumed_lines.append("%s:%s s%d (%s)" % (dirn, name, k,
                                                              ", ".join(r["assumed"])))
+                if any("DESIGN thickness" in n for n in r.get("notes") or ()):
+                    tstud_lines.append("%s:%s s%d" % (dirn, name, k))
         gate = WL.compare_with_model(dist, model_shears)
         transfers = []
         for k, row in dist.items():
@@ -773,6 +776,12 @@ def run(cfg):
                     "/G]) on %d line-stories, e.g. %s -- declare the SELECTED schedule per line "
                     "(wall_props, by_story) and re-run" % (len(assumed_lines),
                                                           "; ".join(assumed_lines[:4])))
+    if tstud_lines:
+        warn.append("S400 deflection: t_stud_in is a stud DESIGN thickness (0.0346/0.0451/0.0566 "
+                    "...) on %d line-stories, e.g. %s -- omega2 = 0.033/t_stud takes the "
+                    "DESIGNATION thickness (mils/1000: 0.033/0.043/0.054 ...); the shear and slip "
+                    "terms are ~5%% low -- correct wall_props and re-run"
+                    % (len(tstud_lines), "; ".join(tstud_lines[:4])))
     if warn:
         res["preflight_warnings"] = warn
     return res
@@ -933,7 +942,7 @@ def _selftest():
                         WL.WallLine("X3", 62.0, segs)],
                lines_y=[WL.WallLine("Y1", 0.0, segsB), WL.WallLine("Y2", 80.0, segsB),
                         WL.WallLine("Y3", 160.0, segsB)],
-               wall_props=dict(sheathing="osb", s_in=4.0, t_stud_in=0.0451,
+               wall_props=dict(sheathing="osb", s_in=4.0, t_stud_in=0.043,
                                t_sheathing_in=0.4375, Gt_lb_in=77500.0, faces=1,
                                chord_area_in2=1.2, k_anchor_kip_in=50.0))
     e = elf(cfg)
