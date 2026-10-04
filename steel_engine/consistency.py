@@ -304,6 +304,17 @@ def _geometry_issues(cfg):
         p = cfg.get("plan_ft") or ()
         if any(_isnum(v) and float(v) > 1000 for v in p):
             out.append("plan_ft dimension over 1000 -- plan_ft is FEET, not inches.")
+        # per-story wall-line presence (CFS-09): every story needs a resisting line per
+        # direction; absent stories are EMPTY segment lists, never zero-length segments
+        try:
+            import wall_line as _WL
+            _n = int(cfg.get("stories") or len(Hft))
+            for _d, _key in (("X", "lines_x"), ("Y", "lines_y")):
+                _ls = cfg.get(_key) or []
+                if _ls and all(hasattr(_l, "segments") for _l in _ls):
+                    out += _WL.presence_issues(_ls, range(1, _n + 1), _d)
+        except Exception as ex:
+            out.append("wall-line presence lint failed: %s" % ex)
         return out
     H = [float(h) for h in (cfg.get("heights") or []) if _isnum(h)]   # frame path: INCHES
     _dex = set(int(k) for k in (cfg.get("drift_exempt_stories") or {}))
@@ -655,7 +666,8 @@ def _cfs_slot_issues(cfg, pkg):
                    "REQUIRED anchorage design chain")
     # unresolved pipeline gates
     for key, what in (("model_vs_tributary_flags", "model-vs-tributary divergence"),
-                      ("drift_flags", "drift limit exceedance")):
+                      ("drift_flags", "drift limit exceedance"),
+                      ("stability_flags", "P-delta stability (ASCE 7-22 12.8.7 theta > theta_max)")):
         flags = pkg.get(key) or []
         if flags and not pkg.get(key + "_resolution"):
             out.append("%d unresolved %s flag(s) -- fix the design and re-run, or record the "

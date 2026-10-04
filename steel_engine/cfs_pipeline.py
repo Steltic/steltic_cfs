@@ -301,6 +301,12 @@ def build_package(name, cfg, res):
                 pkg["drift_table"].append(dict(
                     direction=dirn, line=lname, story=k,
                     drift_amplified=round(r.get("drift_amplified", 0.0), 5),
+                    drift_single_story=round(r.get("drift_amplified_single_story", 0.0), 5),
+                    drift_rotation_from_below=round(
+                        r.get("drift_amplified_first_order", 0.0)
+                        - r.get("drift_amplified_single_story", 0.0), 5),
+                    theta=round(r.get("theta", 0.0), 4),
+                    theta_max=round(r.get("theta_max", 0.0), 4),
                     limit=dd["drift_limit"],
                     ok=r.get("drift_amplified", 0.0) <= dd["drift_limit"]))
             base = lr[min(lr)]
@@ -376,6 +382,19 @@ def build_package(name, cfg, res):
             pkg.setdefault("model_vs_tributary_flags", []).extend(dd["gate_flags"])
         if dd.get("drift_flags"):
             pkg.setdefault("drift_flags", []).extend(dd["drift_flags"])
+        # 12.8.7 P-delta stability (theta > theta_max FAILS the gate; 0.10 < theta <= theta_max
+        # is already folded into drift_amplified via 1/(1-theta)) and wall-line discontinuities
+        if dd.get("drift_basis"):
+            pkg["drift_basis"] = dd["drift_basis"]
+        if dd.get("stability_flags"):
+            pkg.setdefault("stability_flags", []).extend(dd["stability_flags"])
+        if dd.get("stability_warnings"):
+            pkg.setdefault("stability_warnings", []).extend(dd["stability_warnings"])
+        for t in dd.get("transfers") or []:
+            pkg.setdefault("discontinuity_transfers", []).append(dict(
+                t, direction=dirn, id="transfer-%s-%s-L%d" % (dirn, t["line"], t["story"]),
+                V_kip=round(t["V_kip"], 2), limit_state=None, cited=None, capacity=None,
+                DC=None))
     # stud schedule seed (typical bearing stud; agent adds section + checks incl. G5 at track)
     trib = cfg.get("stud_trib_ft", 2.0)
     pkg["studs"].append(dict(id="stud-typ-bearing", trib_ft=trib,
@@ -561,6 +580,8 @@ def design_and_report(name, cfg, outdir=None, do_report=True):
                              if dd["gate_flags"]}
         out["drift_flags"] = {d: dd["drift_flags"] for d, dd in res["directions"].items()
                               if dd["drift_flags"]}
+        out["stability_flags"] = {d: dd.get("stability_flags") for d, dd in
+                                  res["directions"].items() if dd.get("stability_flags")}
     if do_report:
         try:
             import report as RPT
