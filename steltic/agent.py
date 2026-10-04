@@ -337,6 +337,63 @@ def _resolve_package(jd):
                   % ("calc_package_cfs.json" if cfs_job else "calc_package.json")]
 
 
+# HR-14 port (hot-rolled route of this module -- a cfg with neither lines_x nor span_ft runs the
+# shared engine3d / design_pipeline): pipeline.design_and_report writes the sanity-suite verdict
+# to design/pipeline_results.json, stamped with the SHA-256 of cfg.py. A failing drift / theta /
+# model_declared / model_consistent / equilibrium check is a code limit and is never waivable; the
+# other checks (model_complete, beam_deflection, period, modal mass) may be waived only with a
+# justification of >= 20 chars in calc_package['gate_waivers'][<check>].
+_HR_GATE_WAIVER_MIN = 20
+_HR_NOT_WAIVABLE = ("model_declared", "model_consistent", "drift_X", "drift_Y", "stability",
+                    "stability_theta", "equil_X", "equil_Y", "baseshear_X", "baseshear_Y")
+
+
+def _hr_gate_sanity(jd, pkg):
+    """Problems from design/pipeline_results.json for a hot-rolled-route job ([] = clean)."""
+    import pathlib
+    probs = []
+    jd = pathlib.Path(jd)
+    rp = jd / "design" / "pipeline_results.json"
+    if not rp.exists():
+        return ["design/pipeline_results.json is missing -- run pipeline.design_and_report(name, cfg) so "
+                "the sanity suite (drift, theta, model_complete, beam_deflection, model_declared/consistent) "
+                "is recorded"]
+    try:
+        res = json.loads(rp.read_text(errors="replace"))
+    except Exception as e:
+        return ["design/pipeline_results.json is unreadable (%s) -- re-run pipeline.design_and_report" % e]
+    try:
+        cfg_sha = hashlib.sha256((jd / "cfg.py").read_bytes()).hexdigest()
+    except Exception:
+        cfg_sha = None
+        probs.append("cfg.py is missing from the job folder -- write the building cfg to cfg.py and run "
+                     "the pipeline from it")
+    if res.get("cfg_sha256") and cfg_sha and res["cfg_sha256"] != cfg_sha:
+        probs.append("the sanity results are STALE: cfg.py changed after the last pipeline.design_and_report "
+                     "run -- re-run it so drift/theta/model checks reflect the delivered model")
+    waivers = pkg.get("gate_waivers") if isinstance(pkg.get("gate_waivers"), dict) else {}
+    checks = res.get("checks") or {}
+    extra = res.get("extra") or {}
+    for k, ok in checks.items():
+        if ok:
+            continue
+        if k in _HR_NOT_WAIVABLE:
+            probs.append("sanity check %s FAILED -- fix the design and re-run pipeline.design_and_report "
+                         "(code limit, not waivable)" % k)
+        elif len(str(waivers.get(k) or "").strip()) < _HR_GATE_WAIVER_MIN:
+            probs.append("sanity check %s FAILED -- fix it and re-run pipeline.design_and_report, or (only "
+                         "if it genuinely does not apply) add calc_package['gate_waivers']['%s'] = "
+                         "'<justification>'" % (k, k))
+    th = extra.get("theta")
+    if not isinstance(th, dict) or "max" not in th:
+        probs.append("stability coefficient theta (ASCE 7-22 12.8.7) was NOT evaluated by the pipeline run "
+                     "-- re-run pipeline.design_and_report with the current engine")
+    elif float(th["max"]) > float(th.get("theta_max", 0.10)) + 1e-9 and checks.get("stability_theta", True):
+        probs.append("theta = %.3f > theta_max = %.3f (ASCE 7-22 12.8.7) -- the structure is potentially "
+                     "unstable and shall be redesigned" % (th["max"], th.get("theta_max", 0.10)))
+    return probs
+
+
 def _completion_gate(ws):
     """Checks on the job's ONE authoritative package (design/calc_package_cfs.json on CFS jobs)
     before a final answer is accepted. Returns a list of problems ([] = clean). Engine-free
@@ -411,6 +468,8 @@ def _completion_gate(ws):
                          "connections are a required deliverable")
         if not cfs and not con:
             probs.append("connections list is EMPTY -- connections are a required deliverable")
+        if not cfs:
+            probs += _hr_gate_sanity(jd, pkg)          # hot-rolled route: sanity suite (HR-14 port)
         # seeded collector slots must be filled (a prose note does not count)
         for c in list(colls) + list(con):
             if isinstance(c, dict) and "SEEDED" in (str(c.get("type", "")) + str(c.get("basis", ""))).upper() \
@@ -502,8 +561,10 @@ _PHASE_HINTS = (
      "before doing ANY member design; every downstream number changes."),
     ("collector", re.compile(r"SEEDED - REQUIRED", re.I),
      "The framework SEEDED a collector slot because the footprint is irregular: design it like any "
-     "connection (Omega0 combos per ASCE 7-22 12.10.2.1, +25% if Type 2) and fill "
-     "limit_state/cited/capacity/DC -- the completion gate checks it."),
+     "connection for the MAX of ASCE 7-22 12.10.2.1 (a) Om0 x your ELF collector force, (b) Om0 x Fpx, "
+     "(c) Fpx per Eq. 12.10-2 (x1.25 per 12.3.3.5 in SDC D-F -- the 25% is NOT stacked on Om0, "
+     "12.3.3.5 Exception) in SDC C-F (SDC A/B: the basis the package states per level -- CFS "
+     "collectors[*].by_direction) and fill limit_state/cited/capacity/DC -- the completion gate checks it."),
     ("driftfail", re.compile(r"\[FAIL\] drift|drift_flags", re.I),
      "DRIFT FAIL: stiffen the failing wall line (longer/added segments, two-sided or thicker "
      "sheathing, denser edge fasteners, stiffer anchorage -- rod in place of a soft hold-down; the "

@@ -748,7 +748,7 @@ def run(cfg):
                         note=rr.get("transfer_note"),
                         basis="discontinuous wall line: the level-%d diaphragm/collector and the "
                               "elements supporting the wall above are designed for Omega_0 "
-                              "(ASCE 7-22 12.3.3.3, Table 12.3-2 Type 4)" % k))
+                              "(ASCE 7-22 12.3.3.4, Table 12.3-2 Type 4)" % k))
         res["directions"][dirn] = dict(
             dist=dist, lines=dres, drift_flags=drift_flags, gate_flags=gate,
             # footnote a (no limit): 1.0 keeps consumers numeric

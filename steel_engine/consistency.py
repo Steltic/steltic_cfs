@@ -136,6 +136,48 @@ def _agent_has_number(obj):
 _NEG = re.compile(r"\b(no|not|non|without|none|never|n/a)\b[\w\s,/()-]{0,25}$")
 
 
+_NUM_RESULT = re.compile(r"(?:=|≤|≥|<=|>=|<|>|~)\s*-?\d+(?:\.\d+)?|\d+(?:\.\d+)?\s*(?:kips?|k-?ft|kip-?ft|"
+                         r"kip-?in|k-?in|in\.?|ksi|psf|plf|ft|%|rad|in\^?[234])(?![a-z])", re.I)
+_CLAUSE_KEYS = ("cite", "cited", "clause", "basis", "method", "rule", "note", "notes", "reference", "ref")
+
+
+def _has_numeric_result(obj, _key=""):
+    """True when obj carries a COMPUTED number: a JSON number (not a bool) under a non-citation key,
+    or a string with a value after '=' / a comparator or a number with an engineering unit. Clause
+    numbers ('S400 E3.4.1', 'Eq. 12.8-2') do not count (HR-33 port from steltic)."""
+    if isinstance(obj, bool) or obj is None:
+        return False
+    if isinstance(obj, (int, float)):
+        return str(_key).lower() not in _CLAUSE_KEYS
+    if isinstance(obj, str):
+        return bool(_NUM_RESULT.search(obj))
+    if isinstance(obj, dict):
+        return any(_has_numeric_result(v, k) for k, v in obj.items())
+    if isinstance(obj, list):
+        return any(_has_numeric_result(v, _key) for v in obj)
+    return False
+
+
+def _hazard_numbers(gh):
+    """(wind_ok, seismic_ok): the package's governing_hazard record carries a COMPUTED wind AND a
+    computed seismic value (numbers, in a key or a sentence) -- a bare 'wind governs' does not."""
+    wind = seis = False
+    def walk(o, key=""):
+        nonlocal wind, seis
+        if isinstance(o, dict):
+            for k, v in o.items():
+                walk(v, k)
+        elif isinstance(o, list):
+            for v in o:
+                walk(v, key)
+        elif _has_numeric_result(o, key):
+            txt = (str(key) + " " + (o if isinstance(o, str) else "")).lower()
+            wind = wind or bool(re.search(r"wind", txt))
+            seis = seis or bool(re.search(r"seism|(^|_)e(q|h)?(_|$)|\bcs\b|\belf\b", txt))
+    walk(gh)
+    return wind, seis
+
+
 def _mentions(blob, term):
     """True if `term` occurs in blob at least once NOT preceded (within ~25 chars on the same
     clause) by a negation (no / not / non / without / none / never / n/a) -- CFS-30: 'no Type II
@@ -616,23 +658,34 @@ def _design_basis_issues(cfg, name=None, pkg=None):
     elif _CS is not None and wall_path and sysname not in _CS.SYSTEMS:
         out.append("cfg['system']='%s' is not in the CFS system table (%s) -- use the exact key"
                    % (cfg.get("system"), "/".join(sorted(_CS.SYSTEMS))))
-    if R is not None and float(R)<=3.0 and sysname not in ("sbmf","gypsum_wall"):
-        # gypsum (R=2) is EXEMPT: it IS an S400 system (E5 supplies its capacities).
-        # The note is also SUPPRESSED once the package confirms the governing hazard
-        # (a 'governing_hazard' block or explicit 'wind governs'/'seismic governs'
-        # statement) -- the note asks for exactly that confirmation.
-        _blobR = json.dumps(pkg).lower() if isinstance(pkg, dict) else ""
-        if not (isinstance(pkg, dict) and ("governing_hazard" in pkg or
-                "wind governs" in _blobR or "seismic governs" in _blobR)):
-            out.append("R=%.2f -> 'not specifically detailed for seismic' -- AISI S400 detailing does "
-                       "NOT apply (no capacity-design chain); design to S100 (+S240 framing) only, and "
-                       "CONFIRM whether wind or seismic governs each direction (record a "
-                       "'governing_hazard' statement in the package to clear this note)"%float(R))
+    _s400_waived = False
+    if R is not None and float(R) <= 3.0:
+        # S400 applies to every S400 system except the A1.2.3 waiver (R = 3 in SDC B/C) --
+        # gypsum/fiberboard (R = 2) IS an S400 E6 system with a capacity-design chain, so it never
+        # gets the 'not detailed' note (cfs_systems.capacity_design_required, cfs-wallloads CFS-06)
+        if _CS is not None and sysname in _CS.SYSTEMS:
+            _sdc_r = _CS.sdc(SDS, float(s.get("SD1", 0) or 0), float(s.get("S1", 0) or 0),
+                             str(cfg.get("risk_cat", "II")))
+            _s400_waived = not _CS.capacity_design_required(sysname, float(R), _sdc_r)[0]
+        else:
+            _s400_waived = sysname not in ("sbmf", "gypsum_wall")
+    if _s400_waived:
+        # cleared by a governing_hazard record with COMPUTED wind and seismic values (numbers);
+        # a bare 'wind governs' phrase no longer clears it (HR-33 port from steltic)
+        _gh = pkg.get("governing_hazard") if isinstance(pkg, dict) else None
+        if not all(_hazard_numbers(_gh)):
+            out.append("R=%.2f -> S400 does not apply (not specifically detailed / S400 A1.2.3) -- no "
+                       "capacity-design chain; design to S100 (+S240 framing) only, and CONFIRM whether "
+                       "wind or seismic governs each direction: record calc_package['governing_hazard'] "
+                       "with the computed wind AND seismic base shears per direction (numbers, e.g. "
+                       "{'X': {'wind_kip': .., 'seismic_kip': ..}, 'Y': {...}}) to clear this note"
+                       % float(R))
     # drift limit vs risk category (Table 12.12-1, light-frame 0.025 row where it applies)
     if _CS is not None and wall_path and sysname in _WALL_SYSTEMS:
         n_st = int(cfg.get("stories") or len(cfg.get("heights_ft") or []) or 0)
         rc = str(cfg.get("risk_cat","II"))
-        want = _CS.drift_limit(sysname, n_st, rc)
+        want = _CS.drift_limit(sysname, n_st, rc,
+                               finishes_accommodate=cfg.get("drift_tolerant_finishes"))
         have = cfg.get("drift_limit")
         if have is not None and _isnum(have) and float(have) > want + 1e-6:
             out.append("cfg['drift_limit']=%.3f exceeds the Table 12.12-1 value %.3f for %s, %d "
@@ -645,6 +698,20 @@ def _design_basis_issues(cfg, name=None, pkg=None):
             out.append("cfg['diaphragm']='rigid' on a light-frame wall building without justification "
                        "-- flexible is the 12.3.1.1 default; rigid-plate torsional redistribution "
                        "must be justified (e.g. concrete topping) or the model corrected")
+    if wall_path and _dia == "flexible":
+        _db = (pkg or {}).get("diaphragm_basis") if isinstance(pkg, dict) else None
+        _mat = str(cfg.get("diaphragm_material") or "").lower()
+        _top = cfg.get("diaphragm_topping_in")
+        _conc = "concrete" in _mat or (_isnum(_top) and float(_top) > 1.5)
+        _mdd = cfg.get("diaphragm_MDD_ADVE")
+        if isinstance(_db, dict) and _db.get("flexible_ok") is False:
+            out.append("cfg['diaphragm']='flexible' is NOT permitted by ASCE 7-22 12.3.1.1/12.3.1.3: %s "
+                       "-- model it semi-rigid (or rigid), or show MDD/ADVE > 2 (cfg['diaphragm_MDD_ADVE'])"
+                       % "; ".join(str(w) for w in (_db.get("warnings") or [])[:2]))
+        elif _conc and not (_isnum(_mdd) and float(_mdd) > 2.0):
+            out.append("cfg['diaphragm']='flexible' with concrete / topping > 1.5 in. (%s) -- 12.3.1.1 "
+                       "light-frame flexibility requires no concrete or nonstructural topping over 1.5 in.; "
+                       "model it semi-rigid, or show MDD/ADVE > 2 (12.3.1.3)" % (_mat or "%s in." % _top))
     _cfs_pkg = isinstance(pkg, dict) and (pkg.get("wall_lines") is not None
                                           or pkg.get("kind") == "cfs_portal")
     # (CFS packages are distributed by the tributary solver BY CONSTRUCTION -- the keyword test
@@ -676,8 +743,9 @@ def _design_basis_issues(cfg, name=None, pkg=None):
                      and (c.get("DC") is not None or c.get("checks") or c.get("waived")) for c in colls)
         if not has_coll:
             out.append("re-entrant/step/declared collector lines present but NO designed collector in "
-                       "calc_package -- collectors are a REQUIRED deliverable (Omega_0 per 12.10.2.1), "
-                       "not 'delegated to the drawings'")
+                       "calc_package -- collectors are a REQUIRED deliverable at the design level the "
+                       "package seeds per level (collectors[*].by_direction: ASCE 7-22 12.10.2.1 max(a, b, c) "
+                       "in SDC C-F; S400 B3.4 / 2.3.6 + Fpx in SDC A/B), not 'delegated to the drawings'")
     return out
 
 
@@ -758,6 +826,18 @@ def _system_checks_issues(cfg, pkg):
                 if kws == ["fastener"]:
                     ok = any(isinstance(w, dict) and w.get("fastener_schedule")
                              for w in (pkg.get("wall_lines") or []))
+                elif key == "strap_braced" and label.startswith("strap ductility") and \
+                        isinstance((cd or {}).get("strap_ductility"), dict) and \
+                        cd["strap_ductility"].get("ok") is not None:
+                    # S400 E3.4.1(a) Method 2 is COMPUTED by the framework from the declared strap
+                    # Ag/An/Fy/Fu (cfs_systems.strap_ductility_check) -- its verdict IS the evidence
+                    sd = cd["strap_ductility"]
+                    ok = sd.get("ok") is True
+                    if not ok:
+                        out.append("system '%s': STRAP DUCTILITY FAILS (S400 E3.4.1(a)): %s -- change "
+                                   "the strap grade / net section (Rt*Fu*An >= Ry*Fy*Ag) and re-run"
+                                   % (cfg.get("system"), str(sd.get("message") or "")[:200]))
+                        continue
                 else:
                     ok = any(_evidence(o, kws) for o in where if o)
                 if not ok:
@@ -767,7 +847,9 @@ def _system_checks_issues(cfg, pkg):
                                % (cfg.get("system"), label))
     return out
 
-_CD_GATE_SYSTEMS = ("strap_braced", "wsp_shearwall", "steelsheet_wall")   # R>3 wall systems
+_CD_GATE_SYSTEMS = ("strap_braced", "wsp_shearwall", "steelsheet_wall", "gypsum_wall")
+# S400 wall systems with a capacity-design chain (gypsum E6 included -- cfs-wallloads CFS-06/07);
+# whether B3.4 applies to THIS building is cfs_systems.capacity_design_required (A1.2.3 waiver)
 
 
 def _capacity_design_numeric_issues(cfg, pkg):
@@ -783,6 +865,16 @@ def _capacity_design_numeric_issues(cfg, pkg):
     sysname=str(((cfg or {}) if isinstance(cfg,dict) else {}).get("system")
                 or (pkg or {}).get("system") or "").lower()
     if sysname not in _CD_GATE_SYSTEMS or not isinstance(pkg, dict): return out
+    try:
+        import cfs_systems as _CS
+        _s = (cfg or {}).get("seis") or {}
+        _req, _ = _CS.capacity_design_required(
+            sysname, _s.get("R"), _CS.sdc(float(_s.get("SDS", 0) or 0), float(_s.get("SD1", 0) or 0),
+                                          float(_s.get("S1", 0) or 0), str((cfg or {}).get("risk_cat", "II"))))
+        if not _req:
+            return out                              # S400 A1.2.3: no capacity-design chain
+    except Exception:
+        pass
 
     def _design_demand(e):
         for k in ("T_design_kip","design_T_kip","T_demand_kip","demand_kip","Tu_kip",
@@ -802,6 +894,25 @@ def _capacity_design_numeric_issues(cfg, pkg):
             entries.append(("chord", m))
     for kind, e in entries:
         if e.get("waived"): continue
+        tcd=_num(e.get("T_cd_seed_kip"))
+        if tcd is not None and tcd > 0:
+            # the framework's capacity-design seed: min(Omega_E*Vn stack, Omega_0 stack), / Ca for
+            # Type II (cfs-wallloads CFS-06/18/20). The design tension may be lower only by the
+            # 0.9D dead relief available, or where the agent computed its OWN Omega_E*Vn (numbers)
+            d, src=_design_demand(e)
+            if d is None: continue
+            relief=_num(e.get("dead_relief_kip_available")) or 0.0
+            floor=max(tcd-relief, 0.0)
+            own=any(_has_numeric_result(v, k) for k, v in e.items()
+                    if re.search(r"omega_?e|(^|_)vn(_|$)|expected", str(k), re.I)
+                    and str(k) not in SEED_KEYS)
+            if d < 0.99*floor and not own:
+                out.append("[%s %s] FAIL: design tension %.1f kip (%s) is below the capacity-design seed "
+                           "T_cd = %.1f kip (min(Omega_E*Vn, Omega_0 stack), S400 B3.4)%s -- design to "
+                           "T_cd, or record your own computed Omega_E*Vn stack (numbers) on the slot"
+                           %(kind, e.get("id"), d, src, tcd,
+                             (" less 0.9D relief %.1f kip" % relief) if relief else ""))
+            continue
         seed=_num(e.get("T_bay_seed_kip"))
         if seed is None: seed=_num(e.get("T_cum_kip"))
         if seed is None or seed <= 0: continue
@@ -819,13 +930,64 @@ def _capacity_design_numeric_issues(cfg, pkg):
     return out
 
 
-def _height_limit_issues(cfg):
+def _height_limit_issues_hr(cfg, pkg=None):
+    """HOT-ROLLED route of this module (cfg without lines_x / span_ft): ASCE 7-22 Table 12.2-1 /
+    12.2.5.4-7 system + height limits, the 11.6 SDC (a declared lower SDC is overridden) and the
+    Table 12.2-1 / 12.8-2 factor checks -- the ERROR findings of preflight, the single source of
+    the rules (HR-15/HR-20/HR-40 port from steltic). 12.2.5.4 increase evidence:
+    capacity_design['height_limit'] = {'TIR_max': .., 'max_plane_share_X': .., ..} (numbers)."""
+    out=[]
+    try:
+        import preflight as _PF
+    except Exception as e:
+        return ["system/height-limit checks could not run (preflight import failed: %s)"%e]
+    ev=None
+    cd=pkg.get("capacity_design") if isinstance(pkg,dict) else None
+    hl=cd.get("height_limit") if isinstance(cd,dict) else None
+    if isinstance(hl,dict):
+        ev={}
+        for k,v in hl.items():
+            nk=re.sub(r"[^a-z0-9]","",str(k).lower())
+            if isinstance(v,bool) or not isinstance(v,(int,float)): continue
+            if nk in ("tirmax","tir"): ev["TIR_max"]=float(v)
+            if nk in ("maxplanesharex","planesharex"): ev["max_plane_share_X"]=float(v)
+            if nk in ("maxplanesharey","planesharey"): ev["max_plane_share_Y"]=float(v)
+            if nk in ("maxplanesharexpct","planesharexpct"): ev["max_plane_share_X"]=float(v)/100.0
+            if nk in ("maxplaneshareypct","planeshareypct"): ev["max_plane_share_Y"]=float(v)/100.0
+        ev=ev or None
+    for sev,msg in (_PF.sdc_findings(cfg) + _PF.system_limit_findings(cfg, ev) + _PF.factor_findings(cfg)):
+        if sev=="ERROR": out.append(msg)
+    return out
+
+
+def _rbs_declaration_issues(cfg, pkg):
+    """HOT-ROLLED route (HR-22 port): a calc package that designs RBS moment connections must have
+    the AISC 358-22 5.7 Step 1 drift factor in the ENGINE drift gate (cfg['rbs'] /
+    cfg['rbs_drift_factor']); otherwise gate, report and package show different drifts."""
+    try:
+        if not isinstance(cfg, dict) or is_cfs_cfg(cfg) or \
+                not re.search(r"\bRBS\b|reduced[- ]beam[- ]section", json.dumps(pkg or {}), re.I):
+            return []
+        import engine3d as _E
+        if any(_E.rbs_drift_factor(cfg, d)[0] > 1.0 for d in ("X", "Y")):
+            return []
+        return ["calc_package designs RBS (reduced beam section) connections but cfg declares no RBS -- the drift "
+                "gate omits the AISC 358-22 5.7 Step 1 factor (up to 1.1 x drift) that the report applies: declare "
+                "cfg['rbs'] = {'c_over_bf': c/bbf, 'dirs': 'X'|'Y'|'XY'} (or True / cfg['rbs_drift_factor']) and re-run "
+                "design_and_report"]
+    except Exception:
+        return []
+
+
+def _height_limit_issues(cfg, pkg=None):
     """Table 12.2-1 height limits via the CFS system table (65 ft walls/straps, 35 ft SBMF in
     every SDC B-F; gypsum NP in E/F). SDC from the CANONICAL cfs_systems.sdc (Tables
     11.6-1 AND 11.6-2, worse governs, incl. the S1>=0.75 E/F override) -- the old proxy
     ignored SD1 and mis-binned SD1-governed sites."""
     out=[]
     if not isinstance(cfg, dict): return out
+    if not is_cfs_cfg(cfg) and cfg.get("heights"):
+        return _height_limit_issues_hr(cfg, pkg)    # hot-rolled route: preflight's Table 12.2-1 rules
     s=cfg.get("seis") or {}
     Hft=[float(h) for h in (cfg.get("heights_ft") or []) if _isnum(h)]
     if not Hft:
@@ -858,7 +1020,7 @@ def _transfer_issues(cfg, name, pkg):
         txt=[]; _gather_text([pkg.get("capacity_design"), pkg.get("connections")],txt)
         blob=" ".join(t for t in txt if isinstance(t,str)).lower()
         if "transfer" not in blob and "backstay" not in blob:
-            out.append("footprint SETBACK detected -- design the TRANSFER/backstay diaphragm chords/collectors and supporting members for Omega_0 (12.3.3.3) and report the backstay force")
+            out.append("footprint SETBACK detected -- design the TRANSFER/backstay diaphragm chords/collectors and supporting members for Omega_0 (12.3.3.4) and report the backstay force")
     return out
 
 def _nonparallel_issues(cfg, pkg):
@@ -895,8 +1057,10 @@ def _consultancy_issues(cfg, pkg):
                    "vibration-sensitive occupancy) -- do the AISC Design Guide 11 screen (fn, a_peak "
                    "vs occupancy limit) and record it")
     # A8 seismic joint / pounding: multi-wing keywords and no joint decision
-    if any(k in arch for k in ("twin", "two tower", "wings", "wing ")) and \
-            not any(k in blob for k in ("seismic joint", "pounding", "joint width", "no seismic joint")):
+    # ('wing' as a WORD -- 'drawing', 'showing' no longer trigger it; HR-33 port)
+    if re.search(r"\b(twin|two[- ]towers?|wings?)\b", arch) and \
+            not any(k in blob for k in ("seismic joint", "seismic_joint", "pounding", "joint width",
+                                        "no seismic joint")):
         out.append("multi-wing/tower configuration and NO seismic-joint decision recorded -- either "
                    "size the joint (sum of Cd-amplified drifts, ASCE 7-22 12.12.3 + pounding check) "
                    "or record why the wings are intentionally connected (with the interaction designed)")
@@ -1179,7 +1343,8 @@ def check(name, root=None, pkg=None, verbose=True):
                       "FIRST and keep it; the saved OpenSees model must be reproducible and editable for later studies." % name)
     issues += _geometry_issues(_dcfg)                       # units/geometry sanity (story heights in ft, etc.)
     issues += _design_basis_issues(_dcfg, name, pkg)        # R1/R2/R8/R12/R14/R16
-    issues += _height_limit_issues(_dcfg)                   # R19 system height limit
+    issues += _height_limit_issues(_dcfg, pkg)              # R19 system height limit
+    issues += _rbs_declaration_issues(_dcfg, pkg)           # HR-22 port (hot-rolled route)
     issues += _transfer_issues(_dcfg, name, pkg)            # R7/R15 transfer/backstay
     issues += _nonparallel_issues(_dcfg, pkg)               # R10 skewed frame
     issues += _consultancy_issues(_dcfg, pkg)               # Tier A/B real-world guards
@@ -1273,6 +1438,11 @@ def _selftest():
                                   device_class="rod", limit_state="tension", cited="S400",
                                   basis="cumulative tension", DC=0.90, capacity=30.0)])
     gate = _capacity_design_numeric_issues(dict(cfg, system="wsp_shearwall"), cd_bad)
+    assert gate and "below the capacity-design seed" in gate[0], gate      # T_cd seed governs
+    cd_bad_elf = dict(system="wsp_shearwall",
+                      holddowns=[dict(id="hd-X-A", T_cum_kip=27.0, limit_state="tension",
+                                      cited="S400", DC=0.90, capacity=30.0)])
+    gate = _capacity_design_numeric_issues(dict(cfg, system="wsp_shearwall"), cd_bad_elf)
     assert gate and "capacity-design amplification not applied" in gate[0], gate
     # ... amplified demand passes, wind-governed demand passes, missing data stays silent
     cd_ok = dict(system="wsp_shearwall",
@@ -1285,12 +1455,16 @@ def _selftest():
     assert _capacity_design_numeric_issues(dict(cfg, system="wsp_shearwall"), cd_wind) == []
     cd_na = dict(system="wsp_shearwall", holddowns=[dict(id="hd-X-A", T_cum_kip=27.0)])
     assert _capacity_design_numeric_issues(dict(cfg, system="wsp_shearwall"), cd_na) == []
-    assert _capacity_design_numeric_issues(dict(cfg, system="gypsum_wall"), cd_bad) == [], \
-        "gate is scoped to R>3 wall systems only"
+    # gypsum (S400 E6) has a capacity-design chain too (CFS-06); the gate is scoped to systems
+    # where S400 B3.4 applies (A1.2.3: R = 3 in SDC B/C is waived; not_detailed is not S400)
+    assert _capacity_design_numeric_issues(dict(cfg, system="gypsum_wall"), cd_bad), \
+        "gypsum E6 walls are capacity-design gated"
+    assert _capacity_design_numeric_issues(dict(cfg, system="not_detailed"), cd_bad) == [], \
+        "gate is scoped to S400 wall systems only"
     # a clean package + cfg raises none of the CFS screens
     good = dict(
         wall_lines=[dict(id="wall-X-A-s1", sheathing="7/16 OSB", fastener_schedule="#8@4/12",
-                         limit_state="S400 E1", cited="S400 E1 (wind column)", DC=0.91,
+                         limit_state="S400 E1", cited="S400 E1.3 Table E1.3-1 (seismic and other in-plane loads)", DC=0.91,
                          capacity=1015, basis="tributary")],
         holddowns=[dict(id="hd-X-A", T_cum_kip=9.0, device_class="bolted", DC=0.55,
                         limit_state="tension", cited="S400", basis="cumulative tension")],

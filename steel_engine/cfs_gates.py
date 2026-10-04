@@ -150,7 +150,7 @@ def independent_tributary(cfg, res, tol=0.05, shift=0.05):
     (res['elf_by_dir'], 12.2.2)."""
     out = dict(method="independent simple-span tributary recomputation from line positions "
                       "(ASCE 7-22 12.3.1.3 flexible idealization; lever-rule transfer where a line "
-                      "stops, 12.3.3.3), ELF Fx (12.8.3); expected engine/independent = "
+                      "stops, 12.3.3.4), ELF Fx (12.8.3); expected engine/independent = "
                       "1.00-%.2f (5%% accidental shift)" % (1 + shift),
                by_direction={}, flags=[])
     for dirn, lines, dim in _dir_lines(cfg):

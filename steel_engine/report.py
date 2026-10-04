@@ -598,6 +598,36 @@ def _case_extremes(out, info):
     return maxN, maxM
 
 def _stability_section(cfg, Fx, drX, pkg):
+    """Chapter 7 theta table. Hot-rolled route: the ONE 12.8.7 implementation shared with the
+    stability_theta gate (engine3d.theta_rows: Px = D + 0.5(0.4L0 / 0.8L0) unfactored, the
+    12.8.6.5 drift location incl. RBS, each direction's ELF shears and Cd/Omega0, theta/(1+theta)
+    for the P-Delta analysis, theta_max >= 0.10) -- ported from steltic (hr-report/hr-gates); the
+    old local formula (factored (1.2+0.2SDS)D, X drift only, no 0.10 floor) is the fallback."""
+    if hasattr(E, "theta_rows"):
+        try:
+            rows = []; worst = (0.0, None, None)
+            for d in ("X", "Y"):
+                trs, tmax, beta = E.theta_rows(cfg, d)
+                for r in trs:
+                    ok = r["exempt"] or r["theta"] <= tmax + 1e-9
+                    rows.append([d, r["s"], "%.0f" % r["Px"], "%.0f" % r["Vx"], "%.0f" % r["h"],
+                                 "%.4f" % r["raw"], "%.4f" % r["theta"], "%.3f" % tmax,
+                                 "exempt" if r["exempt"] else ("OK" if ok else "<b>NG</b>")])
+                    if not r["exempt"] and r["theta"] / tmax > (worst[0] / worst[1] if worst[1] else 0):
+                        worst = (r["theta"], tmax, d)
+            th, tm, dd = worst
+            return ("<p>ASCE 7-22 &sect;12.8.7: &theta; = P<sub>x</sub>&Delta;I<sub>e</sub>/(V<sub>x</sub>h<sub>sx</sub>"
+                    "C<sub>d</sub>) (Eq. 12.8-18) with P<sub>x</sub> = D + 0.5L (L = 0.4L<sub>0</sub>, 0.8L<sub>0</sub> "
+                    "where L<sub>0</sub> &gt; 100 psf; no factor above 1.0), &Delta; at the &sect;12.8.6.5 location, "
+                    "each direction's ELF story shear and C<sub>d</sub>; the drifts come from a P-&Delta; analysis, "
+                    "so &theta; is divided by (1+&theta;). &theta;<sub>max</sub> = 0.5/(&beta;C<sub>d</sub>) &le; 0.25, "
+                    "not less than 0.10 (Eq. 12.8-19). The same rows drive the stability_theta gate.</p>"
+                    + _table(["Dir", "Story", "P<sub>x</sub> (kip)", "V<sub>x</sub> (kip)", "h<sub>sx</sub> (in)",
+                              "&theta; (Eq. 12.8-18)", "&theta;/(1+&theta;)", "&theta;<sub>max</sub>", "Status"], rows)
+                    + "<p>Governing: &theta; = %.3f vs &theta;<sub>max</sub> = %.3f (%s).</p>"
+                    % (th, tm or 0.10, dd or "-"))
+        except Exception as _tex:
+            pass
     NF = len(cfg["heights"]); s = cfg["seis"]; SDS = s["SDS"]; Cd = s.get("Cd", 5.5); Ie = s["Ie"]
     NX, NY, SX, SY = cfg["NX"], cfg["NY"], cfg["SX"], cfg["SY"]
     A = (NX*SX)*(NY*SY)/144.0
@@ -1423,6 +1453,14 @@ _S400_CHECKS = {
 }
 
 
+def _wind_cap_basis(sysname):
+    try:
+        import cfs_systems as _CSw
+        return _CSw.wind_capacity_basis(sysname)
+    except Exception:
+        return "AISI S240 B5.2.2.3 (phi_v 0.65, B5.2.3)"
+
+
 def _s400_capacity_chapter(cfg, pkg):
     """Chapter 9: the S400 (or S100-only) capacity-design and detailing chapter — replaces
     the hot-rolled AISC 341 SCWB/panel-zone chapter."""
@@ -1455,9 +1493,10 @@ def _s400_capacity_chapter(cfg, pkg):
     extra = ("<h4>Capacity-design results (from the calc package)</h4>" + _capdesign_html(cap)) if cap else ""
     note = ("<p class='cnote'>Specific hold-down/connector products (the class-envelope bands are representative of "
             "commercially available devices), concrete anchorage detailing (ACI 318 Ch. 17) and the C&amp;C "
-            "cladding-fastener checks are confirmed on the drawings and submittals (delegated). Wind-governed "
-            "shear walls take their capacities from AISI S240 B5.2.2.3 with &phi;<sub>v</sub> = 0.65 "
-            "(B5.2.3) &mdash; S400 is the SEISMIC standard; it has no wind columns.</p>")
+            "cladding-fastener checks are confirmed on the drawings and submittals (delegated). Wind "
+            "capacity basis for this system: " + _e(_wind_cap_basis(sysname)) +
+            " &mdash; S400 has no separate wind columns (Tables E1.3-1/E2.3-1 cover seismic and other "
+            "in-plane loads; gypsum/fiberboard Table E6.3-1 is seismic only).</p>")
     return intro + _table(["Required check", "Basis", "Status"], rows) + extra + note
 
 
@@ -1513,6 +1552,70 @@ def _cfs_drift_rows(dt, extended=False):
         else:
             rows.append([_e(item), _num_or(val, "%.4g"), lim_cell, dc_cell, status])
     return rows
+
+
+def _cfs_seed_blocks(pkg):
+    """Framework seeds added by the CFS wall-path fixes (cfs-wallloads / cfs-walldrift) that the
+    agent designs from: gravity framing (CFS-41), collector design levels per direction and SDC
+    (CFS-22), Type II Ca / uplift seeds (CFS-20), strap ductility (CFS-19), discontinuity transfers
+    (CFS-09) and P-delta warnings (CFS-05). Seeds only -- the designed values live in the slots."""
+    h = []
+    gf = pkg.get("gravity_framing") or []
+    if gf:
+        rows = [[_e(g.get("id", "")), _e(g.get("member", "")), _num_or(g.get("span_ft"), "%.1f"),
+                 _num_or(g.get("wu_klf"), "%.3f"), _num_or(g.get("Pu_kip"), "%.1f"),
+                 _num_or(g.get("Mu_kipft"), "%.2f"), _num_or(g.get("Vu_kip"), "%.2f"),
+                 _num_or(g.get("I_req_in4"), "%.2f"),
+                 _e(g.get("section") or g.get("selection") or "") or "<b>PENDING</b>",
+                 _fmt_dc(g.get("DC")) if g.get("DC") is not None else
+                 (_waived_cell(g) if g.get("waived") else "<b>PENDING</b>")] for g in gf if isinstance(g, dict)]
+        h.append("<h3>Gravity framing (platform / floor seeds &mdash; designed members are deliverables)</h3>"
+                 + "<p class='note'>%s</p>" % _e((gf[0] or {}).get("basis", ""))
+                 + _table(["ID", "Member", "Span (ft)", "w<sub>u</sub> (klf)", "P<sub>u</sub> (kip)",
+                           "M<sub>u</sub> (kip-ft)", "V<sub>u</sub> (kip)", "I<sub>req</sub> (in<sup>4</sup>)",
+                           "Section", "D/C"], rows))
+    crow = []
+    for c in pkg.get("collectors") or []:
+        for d, bd in ((c or {}).get("by_direction") or {}).items():
+            for lv, v in sorted((bd.get("levels") or {}).items(), key=lambda kv: int(kv[0])):
+                crow.append([_e(c.get("id", "")), _e(d), _e(bd.get("SDC", "")), _e(lv),
+                             _num_or(v.get("Fx_kip"), "%.1f"), _num_or(v.get("Fpx_kip"), "%.1f"),
+                             _num_or(v.get("design_level_kip"), "%.1f"), _e(v.get("basis", ""))])
+    if crow:
+        h.append("<h3>Collector design levels (seed, ASCE 7-22 12.10.1.1 / 12.10.2.1; S400 B3.4)</h3>"
+                 "<p class='note'>Whole-diaphragm level forces; the collector force is its tributary share "
+                 "plus transfers (the agent applies the run fraction).</p>"
+                 + _table(["Collector", "Dir", "SDC", "Level", "F<sub>x</sub>", "F<sub>px</sub>",
+                           "Design level (kip)", "Basis"], crow))
+    trow = []
+    for hd in pkg.get("holddowns") or []:
+        t = (hd or {}).get("type_ii")
+        if isinstance(t, dict):
+            for k in sorted((t.get("Ca_by_story") or {}), key=int):
+                trow.append([_e(hd.get("id", "")), _e(k), _num_or(t["Ca_by_story"][k], "%.3f"),
+                             _num_or((t.get("uplift_t_plf_by_story_strength") or {}).get(k), "%.0f"),
+                             _num_or((t.get("uplift_t_plf_by_story_capacity") or {}).get(k), "%.0f")])
+    if trow:
+        h.append("<h3>Type II shear walls (S400 E1.4.2.2): C<sub>a</sub> and uniform uplift t</h3>"
+                 + _table(["Hold-down", "Story", "C<sub>a</sub>", "t strength (plf)", "t capacity level (plf)"], trow))
+    sd = ((pkg.get("capacity_design") or {}).get("strap_ductility"))
+    if isinstance(sd, dict):
+        verdict = {True: "PASS", False: "<b>FAIL</b>"}.get(sd.get("ok"), "<b>NOT EVALUATED</b>")
+        h.append("<h3>Strap ductility (S400 E3.4.1(a))</h3><p>%s &mdash; %s</p>"
+                 % (verdict, _e(sd.get("message", ""))))
+    tr = pkg.get("discontinuity_transfers") or []
+    if tr:
+        rows = [[_e(t.get("id", "")), _e(t.get("story", "")), _e(t.get("line", "")),
+                 _num_or(t.get("V_kip"), "%.2f"), _e(t.get("to", "")),
+                 _fmt_dc(t.get("DC")) if t.get("DC") is not None else
+                 (_waived_cell(t) if t.get("waived") else "<b>PENDING</b>")] for t in tr if isinstance(t, dict)]
+        h.append("<h3>Discontinuous wall lines &mdash; transfers (ASCE 7-22 12.3.3.4, &Omega;<sub>0</sub>)</h3>"
+                 + _table(["ID", "Story", "Line", "V (kip)", "To", "D/C"], rows))
+    sw = pkg.get("stability_warnings") or []
+    if sw:
+        h.append("<h4>P-&Delta; amplification (12.8.7, 0.10 &lt; &theta; &le; &theta;<sub>max</sub>)</h4><ul>%s</ul>"
+                 % "".join("<li>%s</li>" % _e(w) for w in sw))
+    return "".join(h)
 
 
 def _cfs_schedules_section(pkg):
@@ -1630,6 +1733,7 @@ def _cfs_schedules_section(pkg):
                  ("" if c.get("waived") else "<b>PENDING</b>"),
                  _e(c.get("cited")) or "&mdash;"] for c in colls]
         h.append("<h3>Collector schedule</h3>" + _table(["ID", "Line", "Design / basis", "D/C", "Cited"], rows))
+    h.append(_cfs_seed_blocks(pkg))
     dt = pkg.get("drift_table") or []
     if dt:
         wall_rows = any("drift_amplified" in d for d in dt if isinstance(d, dict))
@@ -1700,7 +1804,21 @@ def _qa_scorecard(cfg, Fx, reX, eX, eY, drX, drY):
     if eX is not None and eY is not None:
         cx = sum(eX)*100; cy = sum(eY)*100
         rows.append(["Modal mass &ge; 90% (X / Y)", f"{cx:.0f}% / {cy:.0f}%", "PASS" if min(cx, cy) >= 90 else "REVIEW"])
-    if drX is not None and Fx is not None:
+    _done = False
+    if drX is not None and Fx is not None and hasattr(E, "seismic_drift") and hasattr(E, "stability_theta"):
+        try:   # hot-rolled route: the gate's drift (12.8.6.5 location, per-direction Cd, RBS) and theta
+            sdr = E.seismic_drift(cfg)
+            for d in ("X", "Y"):
+                dm = max(sdr[d]["design"]); lim = sdr[d]["limit"]
+                rows.append(["Seismic design drift %s &le; limit (%s)" % (d, _e(sdr[d].get("location", ""))),
+                             f"{dm*100:.2f}% &le; {lim*100:.2f}%", "PASS" if dm <= lim + 1e-9 else "FAIL"])
+            st = E.stability_theta(cfg)
+            rows.append(["Stability &theta; &le; &theta;<sub>max</sub>", f"{st['max']:.3f} &le; {st['theta_max']:.3f}",
+                         "PASS" if st["ok"] else "FAIL"])
+            _done = True
+        except Exception:
+            _done = False
+    if drX is not None and Fx is not None and not _done:
         NF = len(cfg["heights"]); SDS = s["SDS"]; Cd = s.get("Cd", 5.5); Ie = s["Ie"]; lim = cfg.get("drift_limit", 0.02)
         dmax = max(max(drX[k]*Cd/Ie, drY[k]*Cd/Ie) for k in range(NF))
         rows.append(["Seismic design drift &le; limit", f"{dmax*100:.2f}% &le; {lim*100:.1f}%", "PASS" if dmax <= lim else "FAIL"])
@@ -2450,10 +2568,28 @@ def build_report(name, root=None):
         parts.append("<h3>Seismic design drift</h3>")
         parts.append(f"<p>Elastic story drift &delta;<sub>e</sub> amplified to &delta; = C<sub>d</sub>&delta;<sub>e</sub>/I<sub>e</sub> "
                      f"(&sect;12.8.6, C<sub>d</sub>={Cd}, I<sub>e</sub>={Ie}); allowable {lim*100:.1f}% of story height.</p>")
-        drow = [[k, f"{drX[k-1]*100:.3f}", f"{drX[k-1]*Cd/Ie*100:.3f}", f"{drY[k-1]*100:.3f}",
-                 f"{drY[k-1]*Cd/Ie*100:.3f}", "OK" if max(drX[k-1], drY[k-1])*Cd/Ie <= lim else "NG"]
-                for k in range(1, NF+1)]
-        parts.append(_table(["Story", "&delta;e X %", "&delta; X %", "&delta;e Y %", "&delta; Y %", f"&le;{lim*100:.1f}%"], drow))
+        _sdr = None
+        try:
+            _sdr = E.seismic_drift(cfg) if hasattr(E, "seismic_drift") else None
+        except Exception:
+            _sdr = None
+        if _sdr:
+            # hot-rolled route: the drift the gate checks (12.8.6.5 location, each direction's Cd,
+            # 12.12.1.1 rho for moment frames, AISC 358 RBS) -- ported from steltic (HR-09/HR-22)
+            parts.append("<p class='note'>Design drift at the &sect;12.8.6.5 location per direction "
+                         "(X: %s, C<sub>d</sub> per direction; limit X %.2f%% / Y %.2f%%).</p>"
+                         % (_e(_sdr["X"].get("location", "")), _sdr["X"]["limit"] * 100, _sdr["Y"]["limit"] * 100))
+            drow = [[k, f"{_sdr['X']['elastic'][k-1]*100:.3f}", f"{_sdr['X']['design'][k-1]*100:.3f}",
+                     f"{_sdr['Y']['elastic'][k-1]*100:.3f}", f"{_sdr['Y']['design'][k-1]*100:.3f}",
+                     "OK" if (_sdr['X']['design'][k-1] <= _sdr['X']['limit'] + 1e-9 and
+                              _sdr['Y']['design'][k-1] <= _sdr['Y']['limit'] + 1e-9) else "NG"]
+                    for k in range(1, NF+1)]
+            parts.append(_table(["Story", "&delta;e X %", "&Delta; X %", "&delta;e Y %", "&Delta; Y %", "Status"], drow))
+        else:
+            drow = [[k, f"{drX[k-1]*100:.3f}", f"{drX[k-1]*Cd/Ie*100:.3f}", f"{drY[k-1]*100:.3f}",
+                     f"{drY[k-1]*Cd/Ie*100:.3f}", "OK" if max(drX[k-1], drY[k-1])*Cd/Ie <= lim else "NG"]
+                    for k in range(1, NF+1)]
+            parts.append(_table(["Story", "&delta;e X %", "&delta; X %", "&delta;e Y %", "&delta; Y %", f"&le;{lim*100:.1f}%"], drow))
     parts.append(_wind_drift_section(cfg))
     parts.append(_floor_serviceability(pkg))
     parts.append(_deflection_section(cfg))
@@ -3033,6 +3169,23 @@ def _cfs_basis_rows(cfg, res, pkg):
                      _e(elf.get("W_kip")), _e(elf.get("Cs")), _e(elf.get("Ta_s")))])
     elif portal and s.get("W_frame_kip") is not None:
         rows.append(["seismic weight per frame", "%s kip" % _e(s.get("W_frame_kip"))])
+    wbl = (elf or {}).get("weight_by_level_kip") or {}
+    if isinstance(wbl, dict) and wbl:
+        rows.append(["seismic weight by level (12.7.2)", "; ".join(
+            "L%s: %s" % (_e(k), ", ".join("%s %s" % (_e(t), _num_or(v, "%.1f")) for t, v in bd.items()
+                                         if t not in ("items_1_3_5_6_share", "exception_a_applied")))
+            + (" (storage/equipment share %.0f%%%s)" % (100 * bd.get("items_1_3_5_6_share", 0.0),
+                                                       ", 12.7.2 exc. (a) applied" if bd.get("exception_a_applied") else "")
+               if bd.get("items_1_3_5_6_share") else "")
+            for k, bd in sorted(wbl.items(), key=lambda kv: int(kv[0])) if isinstance(bd, dict)) + " kip"])
+    ebd = pkg.get("elf_by_direction") or {}
+    if isinstance(ebd, dict) and ebd:
+        rows.append(["ELF per direction (12.2.2)", "; ".join(
+            "%s: %s, V = %s kip, R/C<sub>d</sub>/&Omega;<sub>0</sub> = %s/%s/%s" % (
+                _e(d), _e(v.get("system", "")), _num_or(v.get("V_kip", v.get("V")), "%.1f"), _e(v.get("R")),
+                _e(v.get("Cd")), _e(v.get("Om0"))) for d, v in ebd.items() if isinstance(v, dict))])
+    if pkg.get("L_factor_basis"):
+        rows.append(["companion live-load factor (2.3.1 / 2.3.6)", _e(pkg.get("L_factor_basis"))])
     per = pkg.get("period_rayleigh") or {}
     if isinstance(per, dict) and any(isinstance(v, dict) for v in per.values()):
         rows.append(["period", "; ".join("%s: T<sub>Rayleigh</sub> = %s s (n1 = %s Hz), C<sub>u</sub>T<sub>a</sub> = %s s, "
@@ -3053,6 +3206,12 @@ def _cfs_basis_rows(cfg, res, pkg):
         if isinstance(d, dict) and isinstance(d.get("limit"), (int, float)):
             dl = d["limit"]; break
     rows.append(["drift limit (Table 12.12-1)", _e(cfg.get("drift_limit", dl if dl is not None else "agent"))])
+    dlb = pkg.get("drift_limit_basis")
+    if dlb:
+        rows.append(["drift-limit basis", "; ".join("%s: %s" % (_e(d), _e(b)) for d, b in dlb.items())
+                     if isinstance(dlb, dict) else _e(dlb)])
+    if pkg.get("drift_basis"):
+        rows.append(["story-drift basis (12.8.6)", _e(pkg.get("drift_basis"))])
     th = _find_theta(pkg)
     rows.append(["P-&Delta; stability coefficient &theta; (12.8.7)",
                  ("&theta;<sub>max,found</sub> = %.3f%s (%s)" % (th[0], (" vs &theta;<sub>max</sub> = %s" % th[1])
@@ -3074,6 +3233,16 @@ def _cfs_basis_rows(cfg, res, pkg):
         rows += [["stories / heights (ft)", "%s / %s" % (_e(cfg.get("stories")), _e(cfg.get("heights_ft")))],
                  ["plan (ft)", _e(cfg.get("plan_ft"))],
                  ["diaphragm", _e(cfg.get("diaphragm", "flexible"))]]
+        db = pkg.get("diaphragm_basis")
+        if isinstance(db, dict):
+            rows.append(["diaphragm idealization (12.3.1)", ("%s%s" % (
+                "" if db.get("flexible_ok", True) else "<b>FLEXIBLE NOT PERMITTED</b> &mdash; ",
+                _e(db.get("note", "")))) + "".join("<br>&bull; %s" % _e(w) for w in db.get("warnings") or [])])
+        cda = pkg.get("capacity_design_applicability")
+        if isinstance(cda, dict) and cda:
+            rows.append(["S400 capacity design (B3.4 / A1.2.3)", "; ".join(
+                "%s: %s &mdash; %s" % (_e(d), "REQUIRED" if v.get("required") else "not required",
+                                     _e(v.get("basis", ""))) for d, v in cda.items() if isinstance(v, dict))])
     ts = pkg.get("two_stage_framework")
     if isinstance(ts, dict):
         rows.append(["two-stage (12.2.3.2)", "; ".join("%s: %s" % (d, _e(v.get("status")))

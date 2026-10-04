@@ -63,8 +63,14 @@ def engine_values():
     st = pkg["studs"][0]["P_cum_kip_by_story"]
     for k, nm in ((4, "L4"), (3, "L3"), (2, "L2"), (1, "L1")):
         v["stud_P_kip_" + nm] = st[k]
-    v["worst_drift_ratio"] = max(x["drift_amplified"] for d in r["directions"].values()
-                                 for lr in d["lines"].values() for x in lr.values())
+    rows = [x for d in r["directions"].values() for lr in d["lines"].values() for x in lr.values()]
+    w = max(rows, key=lambda x: x["drift_amplified"])
+    v["worst_drift_ratio"] = w["drift_amplified"]
+    # CFS-01: cumulative story drift = S400 single-story deflection + rotation carried from below
+    v["worst_drift_single_story"] = w["drift_amplified_single_story"]
+    v["worst_drift_rotation_from_below"] = w["drift_amplified_first_order"] - \
+        w["drift_amplified_single_story"]
+    v["theta_max_found"] = max(x["theta"] for x in rows)            # CFS-05, 12.8.7
     return v
 
 

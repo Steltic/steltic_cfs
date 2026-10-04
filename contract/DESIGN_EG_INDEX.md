@@ -33,7 +33,8 @@ never invent an example.
 
 ## Walls & lateral (S400)
 - **WSP / steel-sheet shear wall:** SEISMIC per S400 E1/E2 (table strength, φv 0.60 for WSP at
-  E1.3.2); WIND per S240 B5.2.2.3 tables with φv 0.65 (B5.2.3) — S400 has no wind columns; edge
+  E1.3.2); the S400 tables are for seismic AND other in-plane loads (one vn set, φv 0.60), or WIND
+  per S240 B5.2.2.3 tables with φv 0.65 (B5.2.3); gypsum/fiberboard WIND is S240 only; edge
   spacing steps; one vs two-sided; 2w/h aspect-ratio reduction; design deflection E1.4.1.4 /
   E2.4.1.4.
 - **Type II perforated wall (E1):** adjustment factor calc; end hold-downs + distributed track

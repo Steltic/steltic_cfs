@@ -21,7 +21,7 @@ PER-STORY LINE PRESENCE (CFS-09): a line is PRESENT at a story when it has sheat
 there. distribute() resolves each story's shear onto the lines present at that story only: a
 line that stops (breezeway, split level, discontinued wall) hands its shear from above to the
 neighbouring present lines through the diaphragm at that level (flexible diaphragm = simple
-span -> lever rule), recorded as a TRANSFER (ASCE 7-22 12.3.3.3 / Table 12.3-2 Type 4: the
+span -> lever rule), recorded as a TRANSFER (ASCE 7-22 12.3.3.4 / Table 12.3-2 Type 4: the
 elements supporting a discontinuous wall are designed for Omega_0). A line whose lower stories
 are absent because it bears on a stepped foundation declares WallLine(base_story=k) and its
 shear goes to that foundation instead. No line ever divides by a zero wall length.
@@ -98,7 +98,7 @@ class WallLine(object):
       base_story  -- lowest story of a line that bears on a STEPPED FOUNDATION / stem wall
                      (split level). Stories below it are absent and its shear goes to that
                      foundation; without base_story an absent lower story is a DISCONTINUITY
-                     and the shear is transferred to the neighbouring lines (12.3.3.3).
+                     and the shear is transferred to the neighbouring lines (12.3.3.4).
     COLLINEAR lines (same position) are supported: they share the position's tributary
     width, split per story in proportion to sheathed length."""
     def __init__(self, name, pos_ft, segments, trib_scale=1.0, wall_props=None, base_story=None):
@@ -369,7 +369,7 @@ def distribute(story_forces, lines, dim_ft, shift=0.05, extent_by_story=None):
     tributary width (collinear lines split by sheathed length; trib_scale-reduced widths
     renormalize). Each line's story shear from story k+1 continues down where the line is
     present at story k; where it is absent the diaphragm at level k transfers it to the
-    present neighbours by the lever rule (transfer_in / transfer_out_kip; 12.3.3.3 Omega_0
+    present neighbours by the lever rule (transfer_in / transfer_out_kip; 12.3.3.4 Omega_0
     applies to the supporting elements); where the line declares base_story=k+1 the shear
     goes to its stepped foundation instead (founded_kip). v_unit_plf = V_story_shifted / L
     (0 where absent). extent_by_story={story: (lo_ft, hi_ft)} limits a level's diaphragm to
@@ -463,7 +463,7 @@ def overturning_stack(line, dist, story_heights_ft, dead_kip_per_story=None, dea
     the line is PRESENT only (an absent story has no chord; the stack restarts below a
     discontinuity, where the overturning moment at the base of the wall above
     -- 'discontinuous_base_M_kipft' on the lowest present story above it -- is delivered to
-    the supporting transfer elements, designed for Omega_0 per 12.3.3.3).
+    the supporting transfer elements, designed for Omega_0 per 12.3.3.4).
 
     PURE ELF by default: with shear_scale=1.0 (the default) the outputs carry NO rho and NO
     Omega_0 -- those multipliers are applied at the SEED-ASSEMBLY layer (cfs_pipeline), so

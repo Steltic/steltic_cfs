@@ -16,12 +16,16 @@ SDS = 1.00, SD1 = 0.50, S1 = 0.40 (SDC D — 65-ft height limit: 38.5 ft PASS), 
 Loads: D_floor = 35 psf, D_roof = 22 psf, cladding 12 psf, S = 25 psf, L = 40 psf. Diaphragms
 flexible. Wall lines X (resisting E-W force): A (y=0) and C (y=60 ft) with 2×24-ft segments per
 story, B (y=30 ft) with 4×24-ft; lines Y: 1 (x=0) and 3 (x=120 ft) with 3×16-ft, 2 (x=60 ft) with
-6×16-ft. Drift inputs `wall_props = dict(chord_area_in2=2.4, Gp_kip_in=18.0, en_in=0.015,
-k_anchor_kip_in=250.0)`. NOTE on `k_anchor_kip_in=250`: that is a CONTINUOUS-ROD-class anchorage
-stiffness; the discrete bolted-device band in `wall_line.HOLDDOWN_BANDS` is ~50 kip/in, 5× softer.
-This example's drift answer (0.0175) depends on the 250 — a bolted-device design must EITHER use
-k≈50 in `wall_props` (drift grows) or switch to rods; your own building's k_anchor must match your
-selected anchorage, per line where they differ (`WallLine(..., wall_props=...)`). Find: ELF base
+6×16-ft. Drift inputs = the SELECTED schedule's S400 E1.4.1.4 inputs: 7/16-in. OSB (G·t = 77,500
+lb/in), #8 screws at 4 in. edge spacing on 54-mil studs, TWO-sided at stories 1–2 and one-sided at
+3–4 (`wall_props` with `by_story`), chord A = 2.4 in.², anchorage `k_anchor_kip_in=250`. NOTE on
+`k_anchor_kip_in=250`: that is a CONTINUOUS-ROD-class anchorage stiffness; the discrete
+bolted-device band in `wall_line.HOLDDOWN_BANDS` is ~50 kip/in, 5× softer. The drift answer depends
+on the 250 (it enters the rotation carried up the stack) — a bolted-device design must EITHER use
+k≈50 (drift grows) or switch to rods (`rod_area_in2`); your own building's anchorage must match
+your selection, per line where they differ (`WallLine(..., wall_props=...)`). Legacy
+`Gp_kip_in`/`en_in` props still run but on a conservative ASSUMED schedule (this building would
+then show 0.0387 — FAIL — with a preflight warning). Find: ELF base
 shear; per-line unit shears; a sheathing/fastener schedule; the chord/hold-down stack; drift vs
 the 0.025 limit.
 
@@ -40,7 +44,9 @@ cfg = dict(
              WL.WallLine("C", 60.0, segs(2, 24.0))],
     lines_y=[WL.WallLine("1", 0.0, segs(3, 16.0)), WL.WallLine("2", 60.0, segs(6, 16.0)),
              WL.WallLine("3", 120.0, segs(3, 16.0))],
-    wall_props=dict(chord_area_in2=2.4, Gp_kip_in=18.0, en_in=0.015, k_anchor_kip_in=250.0))
+    wall_props=dict(sheathing="osb", s_in=4.0, t_stud_in=0.0538, t_sheathing_in=0.4375,
+                    Gt_lb_in=77500.0, chord_area_in2=2.4, k_anchor_kip_in=250.0,
+                    by_story={1: dict(faces=2), 2: dict(faces=2), 3: dict(faces=1), 4: dict(faces=1)}))
 ```
 
 ## Method — the sequence to mirror
@@ -66,10 +72,12 @@ cfg = dict(
 5. **Studs, track, web crippling:** gravity stud stack (cumulative, live reduction compounded),
    H1 interaction with out-of-plane wind, **G5 web crippling at track bearing**; stud schedule
    never lighter below.
-6. **Drift (S400 four-term):** bending + shear + fastener slip + anchorage elongation, amplified
-   ×Cd/Ie, vs 0.025 (Table 12.12-1 row 1: ≤ 4 stories with finishes that accommodate the drift,
-   RC II). The pipeline's drift table is a four-term SCREEN; the design value is the S400
-   E1.4.1.4 deflection of the selected schedule. Every failing row must be redesigned.
+6. **Drift (S400 E1.4.1.4-1, cumulative):** each story = the single-story deflection (bending +
+   shear + fastener slip ∝ (v/β)² + anchorage) + chord strain from the overturning above + h × the
+   rotation carried up from the stories below (ASCE 7-22 12.8.6.5), amplified ×Cd/Ie, vs 0.025
+   (Table 12.12-1 row 1: ≤ 4 stories with finishes that accommodate the drift, RC II); θ (12.8.7)
+   per story. The engine computes it from the declared `wall_props`; every failing row must be
+   redesigned.
 7. **Both hazards:** wind MWFRS run and compared per direction; net-uplift 0.9D+1.0W anchorage
    path checked roof→wall→floor→foundation even where seismic governs in-plane shear.
 8. **Self-check vs the answer key below**, and reconcile any discrepancy beyond a few percent
@@ -108,7 +116,10 @@ Pure ELF (no ρ) unless stated. SDC D (S_DS = 1.00) → the seeded strength dema
 | stud_P_kip_L3 | 0.35 |
 | stud_P_kip_L2 | 0.64 |
 | stud_P_kip_L1 | 0.92 |
-| worst_drift_ratio | 0.0191 |
+| worst_drift_ratio | 0.0126 |
+| worst_drift_single_story | 0.0071 |
+| worst_drift_rotation_from_below | 0.0055 |
+| theta_max_found | 0.016 |
 <!-- ANSWER_KEY_END -->
 
 How to read it: W = 3 floors × 35 psf × 7,200 sf + 22 psf × 7,200 sf + 12 psf cladding × 360 ft ×
@@ -123,10 +134,16 @@ line** pure ELF (A/C carry half B's shear over half B's length); the seed shows 
 the Ω0-level capacity-design seed (Ω0 = 3.0 − 0.5 for the flexible diaphragm, footnote b) 60.5 kip
 → **beyond the ~20-kip bolted band: continuous RODS** designed for min(Ω_E·V_n stack, Ω0-level).
 Typical bearing stud (16 in. o.c., 2-ft trib, 1.2D + 1.6L seed): cumulative P = 0.07 / 0.35 /
-0.64 / **0.92 kip** (roof→L1). Worst amplified drift-screen ratio **0.0191** (Y lines, story 1)
-≤ **0.025** — PASS on the screen; the design value is the S400 E1.4.1.4 deflection of the
-selected schedule. (Key regenerated 2026-10 from the engine: the previous key used the retired
-20%-snow-in-W rule — W = 1,096 kip, V = 168.6 kip — and was silent on ρ.)
+0.64 / **0.92 kip** (roof→L1). Worst amplified story drift **0.0126** (Y lines, story 3 — the
+one-sided schedule) = 0.0071 single-story S400 E1.4.1.4-1 deflection + **0.0055 rotation carried up
+from stories 1–2** (chord strain + anchorage elongation): almost half the story drift comes from
+below, which is why upper stories of a stack govern. ≤ **0.025** PASS; θ ≤ 0.016 ≪ 0.10 (12.8.7).
+Because every line meets the drift limit, the flexible-diaphragm footnote-b reduction Ω0 − 0.5
+applies (12.3.1.1 conditions hold), giving the 2.5 × 24.2 = 60.5-kip seed; a building failing drift
+keeps Ω0 = 3.0. (Key regenerated 2026-10 from the engine twice: first, the retired 20%-snow-in-W
+rule — W = 1,096 kip, V = 168.6 kip — and silence on ρ were removed; then the drift changed from
+the old four-term screen of legacy Gp/en props (0.0191, single-story only) to the cumulative S400
+E1.4.1.4-1 deflection of the declared schedule.)
 
 ## Discipline to carry into every design
 - Ground EVERY capacity in the RAG (S100 + S240 + S400 together); cite the exact

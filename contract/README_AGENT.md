@@ -59,7 +59,7 @@ for a CFS frame (that is the hot-rolled AISC grid engine).
 
 **Phase 2 — Run the pipeline (ONE call).** `pipeline.design_and_report(name, cfg)`: CFS preflight,
 weights, ELF, wind seeds, tributary distribution + 5% shift, per-line unit shears, cumulative
-chord/hold-down/stud stacks, a four-term drift SCREEN vs limit, the independent tributary check,
+chord/hold-down/stud stacks, the S400 cumulative story drift + θ (12.8.7) vs limit, the independent tributary check,
 the Rayleigh period, the ASCE 7-22 12.2.3.2 two-stage block (podium jobs: `cfg['two_stage']`), the
 seeded `design/calc_package_cfs.json` (a filled one is backed up to `.filled.bak` first), and the
 report. It computes **NO capacity**.

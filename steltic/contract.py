@@ -26,8 +26,8 @@ feasible variant and record it in the package as a 'brief_deviations' list (item
 reason, consequence) that the report prints.
   * Build via run_python:  import pipeline; pipeline.design_and_report(name, cfg)  -- it computes the loads, the \
 flexible-diaphragm tributary distribution, per-line unit shears, cumulative chord/hold-down/stud stacks, a \
-four-term wall-deflection drift SCREEN (replace it with the S400 E1.4.1.4 / E2.4.1.4 design deflection of your \
-schedule), the independent tributary + two-stage checks and the HTML report. It computes NO AISI capacity.
+cumulative S400 story drift of the declared wall_props (single-story E1.4.1.4 / E2.4.1.4 / E3.4.4 / E6.4.1.4 \
+deflection + rotation carried from the stories below, theta per 12.8.7 -- declare the SELECTED schedule), the independent tributary + two-stage checks and the HTML report. It computes NO AISI capacity.
   * YOU derive every capacity and D/C: query the RAG with search_engineering_standards UNDER THE RETRIEVAL POLICY \
 below (one document per call -- AISI_S100 / AISI_S240 / AISI_S400_20 / ASCE7; an exact id when you know the provision; \
 full text only to navigate), apply the cited clause to the demands, and fill every seeded slot in jobs/<name>/design/calc_package_cfs.json \

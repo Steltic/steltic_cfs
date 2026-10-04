@@ -212,7 +212,7 @@ SPECS = [
       ly=[("1", 0.0, 5, 18.0), ("2", 60.0, 7, 18.0), ("3", 120.0, 5, 18.0)],
       rod_lines=["*"], feature="7-story,deep stacks,rods,SDC C"),
  dict(id="W06", title="Gypsum-sheathed interior walls, 2-story office, WIND-governed site",
-      desc="90x50 ft two-story office, gypsum shear walls (R=2, S400 E5), inland 110 mph "
+      desc="90x50 ft two-story office, gypsum shear walls (R=2, S400 E6), inland 110 mph "
            "Exposure B, low seismicity (SDC B). The wind-governed workflow reference: seismic "
            "is computed (shown) but the DESIGN basis is wind -- wall capacities come from "
            "S400's WIND table columns and the 0.9D+1.0W anchorage case governs the hold-downs.",
@@ -220,10 +220,10 @@ SPECS = [
       site=dict(SDS=0.25, SD1=0.12, S1=0.08), SDC="B", props=P_SOFT, governing="wind",
       lx=[("A", 0.0, 3, 14.0), ("B", 25.0, 3, 14.0), ("C", 50.0, 3, 14.0)],
       ly=[("1", 0.0, 3, 12.0), ("2", 45.0, 3, 12.0), ("3", 90.0, 3, 12.0)],
-      feature="gypsum,R=2,wind governed,S400 wind columns",
+      feature="gypsum,R=2,wind governed,S240 B5.2.2.3.4 wind strength",
       extra="WIND WORKFLOW: run wind MWFRS alongside this seismic run; compare per line per "
             "direction; where wind unit shear exceeds the seismic value (typical at R=2), the "
-            "sheathing/fastener schedule is selected from S400's wind columns and hold-downs "
+            "sheathing/fastener schedule is selected from AISI S240 B5.2.2.3.4 (gypsum WIND strength, phi 0.65 -- S400 Table E6.3-1 is seismic only) and hold-downs "
             "check the 0.9D+1.0W net-uplift tension."),
  dict(id="W07", title="Strap-braced wall 3-story, SDC D (capacity-design chain)",
       desc="72x36 ft three-story strap-braced building (S400 E3, R=4). The capacity-design "

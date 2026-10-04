@@ -341,7 +341,7 @@ def test_missing_story_line_is_finite_and_transfers_by_lever_rule():
     assert dist[1]["Y3"]["transfer_in"]["P5"] == pytest.approx(Vt / 2)
     # story-1 shear: the whole story shear lands on the present lines
     assert sum(r["V_story"] for r in dist[1].values()) == pytest.approx(res["elf"]["V"])
-    assert dd["transfers"] and "12.3.3.3" in dd["transfers"][0]["basis"]
+    assert dd["transfers"] and "12.3.3.4" in dd["transfers"][0]["basis"]
     assert dd["gate_flags"] == []
     pkg = CP.build_package("m", cfg, res)
     json.dumps(pkg, allow_nan=False, default=str)        # no Infinity / NaN anywhere

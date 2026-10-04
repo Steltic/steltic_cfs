@@ -63,7 +63,8 @@ Topic map (anchor citations on retrieved numbering):
 - **Floor & roof systems** — joist bracing/blocking, web stiffening at reactions, cantilevers.
   (Practical span ceiling: single C-joists run out around 22 ft — the in-repo SFIA span data ends
   there; deeper floor plates need an intermediate bearing line or floor trusses, not a forced joist.)
-- **B5 Lateral force-resisting systems** — the WIND (and R = 3 / non-S400) design of shear walls:
+- **B5 Lateral force-resisting systems** — the WIND design of gypsum / fiberboard walls (mandatory),
+  the alternative wind basis for WSP / steel-sheet walls, and R = 3 / non-S400 shear walls:
   **B5.2.2.3** nominal strength per unit length (Tables B5.2.2.3-1 steel sheet, -2 WSP, -3 gypsum,
   -4 fiberboard; B5.2.2.2 Type II Ca), **B5.2.3 φv = 0.65 (LRFD)**, B5.2.4 collectors / uplift
   anchorage, B5.2.5 design deflection; B5.3 strap-braced walls. Seismic design of S400 systems:
@@ -74,7 +75,9 @@ Topic map (anchor citations on retrieved numbering):
 
 ## AISI S400-20 — North American Standard for Seismic Design of Cold-Formed Steel
 ## Structural Systems  →  `engineering_standards_S400`  (SEISMIC walls/straps/SBMF/diaphragms —
-## it has NO wind provisions: wind shear walls are S240 B5.2.2.3 with φv 0.65 at B5.2.3)
+## no separate wind columns: WSP / steel-sheet Tables E1.3-1 / E2.3-1 are 'for Seismic and Other
+## In-Plane Loads' (one vn set, φv 0.60 LRFD, E1.3.2 / E2.3.2) -- or S240 B5.2.2.3 with φv 0.65
+## (B5.2.3); gypsum / fiberboard Table E6.3-1 is SEISMIC only -> wind per S240 B5.2.2.3.4 / .5)
 - **A/B — General & design requirements** (A1.2.3: R = 3 in SDC B/C → S100/S240 only;
   expected-strength factors Table A3.2-1; capacity design B3)
 - **C — Analysis** (C1 seismic load effects). The DESIGN DEFLECTION is per system: **E1.4.1.4**

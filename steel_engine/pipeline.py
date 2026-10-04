@@ -380,6 +380,37 @@ def _cfs_design_and_report(name, cfg, do_report=True, keep_fills=False):
     return out
 
 
+RESULTS_FILE = "pipeline_results.json"
+
+
+def _write_results(root, name, r, preflight=None):
+    """Persist the sanity-suite verdict to <root>/design/pipeline_results.json (checks, theta,
+    dual-system split, model warnings, preflight findings) with the SHA-256 of the cfg.py it ran
+    on. The app-side completion gate reads this file -- it never imports the engine or runs cfg.py --
+    so a FAILED check (drift, model_complete, beam_deflection, model_declared/consistent, theta,
+    dual_25pct) cannot be delivered silently, and a result older than cfg.py is detected (HR-14; hot-rolled route of this module, ported from steltic)."""
+    import json, datetime, hashlib
+    try:
+        d = os.path.join(root, "design"); os.makedirs(d, exist_ok=True)
+        try:
+            with open(os.path.join(root, "cfg.py"), "rb") as f:
+                cfg_sha = hashlib.sha256(f.read()).hexdigest()
+        except Exception:
+            cfg_sha = None
+        rec = {"name": name, "time": datetime.datetime.now().isoformat(timespec="seconds"),
+               "cfg_sha256": cfg_sha, "model_valid": bool(r.get("allp")),
+               "checks": {k: bool(v) for k, v in (r.get("chk") or {}).items()},
+               "failed": [k for k, v in (r.get("chk") or {}).items() if not v],
+               "summary": {k: r.get(k) for k in ("T", "Ta", "Cs", "V", "W", "mdx", "mdy", "Cd", "gov")},
+               "extra": r.get("extra") or {},
+               "preflight": [list(x) for x in (preflight or [])]}
+        with open(os.path.join(d, RESULTS_FILE), "w", encoding="utf-8") as f:
+            json.dump(rec, f, indent=1, default=lambda o: sorted(o) if isinstance(o, (set, frozenset)) else str(o))
+    except Exception as ex:
+        print("[pipeline] WARNING: could not write design/%s (%s) -- the completion gate will refuse "
+              "the final answer until it exists" % (RESULTS_FILE, ex))
+
+
 def design_and_report(name, cfg=None, do_report=True, keep_fills=False):
     """Run the full design (no user-review pause): register cfg, run sanity -> DEMAND envelope ->
     figures -> HTML report, all in process, writing to the solution folder steel_builder/<name>.
@@ -416,6 +447,7 @@ def design_and_report(name, cfg=None, do_report=True, keep_fills=False):
     # 1) engineering sanity-check suite
     r = E.report(name)
     out["model_valid"] = bool(r.get("allp"))
+    _write_results(root, name, r, out.get("preflight"))
     import consistency as _CC                                   # early units/geometry heads-up (e.g. story heights in ft)
     out["geometry_warnings"] = _CC._geometry_issues(E.CFG.get(name))
 
@@ -465,8 +497,8 @@ def design_and_report(name, cfg=None, do_report=True, keep_fills=False):
                         "cfg['mode_figures'] (~12 s), cfg['deformed_shape_figure'], cfg['section_color_figure'] and "
                         "cfg['appendix_case_figures'] -- set the flag(s) and re-render report.build_report.) "
                         "(c) The report is ALREADY on the user\u2019s computer at jobs/<name>/report.html "
-                        "(== C:\\...\\jobs\\<name>\\report.html); just give them that path -- do NOT copy it "
-                        "anywhere or look for an \u2018outputs folder\u2019; the engine path IS their C: drive.")
+                        "(the jobs folder on their own disk); just give them that path -- do NOT copy it "
+                        "anywhere or look for an \u2018outputs folder\u2019; the engine path IS their computer's disk.")
     print("\n" + "=" * 72 + "\n>> NEXT STEP (do not skip): " + out["NEXT_STEP"] + "\n" + "=" * 72)
     return out
 

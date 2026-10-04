@@ -5,7 +5,7 @@ or a CFS portal frame. **You** are the engineer: you choose and confirm the late
 system, compose the wall/frame model, select studs/track/sheathing/fasteners (or frame sections),
 ground every code check in the RAG, and iterate the design. The heavy mechanics — the ASCE 7-22
 load combinations, ELF/wind, the flexible-diaphragm tributary distribution, the per-line demand
-envelopes, the S400 four-term drift, and the report (it computes NO capacities) — are done by the
+envelopes, the S400 story drift (cumulative, with θ), and the report (it computes NO capacities) — are done by the
 **framework pipeline**, which you MUST run. Do **not** hand-write `report.html`, a `model.py`, or
 your own analysis scripts; drive the framework instead.
 
@@ -95,7 +95,7 @@ The wall-framed `cfg` (the `cfs_engine` schema) takes geometry in **feet** (`hei
 **portal path is `cfs_frame`, also in FEET/psf** (`span_ft`, `eave_ft`, `apex_ft`, `spacing_ft`;
 schema below) — it converts to kip-inch internally. Do **NOT** build a CFS portal through
 `engine3d`/`custom_build` with lengths ×12: any cfg carrying `span_ft` goes to `cfs_frame`
-(where `custom_build` is ignored), and a cfg with neither `lines_x` nor `span_ft` goes to the
+(where `custom_build` is REFUSED), and a cfg with neither `lines_x` nor `span_ft` goes to the
 HOT-ROLLED grid engine (AISC sections — wrong for CFS). Section designators (600S162-54) carry
 their own mil thickness; `Fy` in ksi (33 or 50; E = 29,500 ksi per AISI — not 29,000). The
 preflight flags heights that "look like INCHES" and portal spans/eaves/spacing that look like
@@ -113,8 +113,11 @@ inches — fix the cfg BEFORE chasing numbers.
   tributary distribution itself, so the pipeline adds an INDEPENDENT recomputation: simple-span
   tributary widths from the line POSITIONS × the ELF story forces, compared with every line's
   engine shear (expected 1.00–1.05). Divergence (coincident/mis-fitted positions, a declared
-  `trib_scale`, a line with no wall at a story, a patched distribution) is written to
-  `model_vs_tributary_flags`. On a SEMI-RIGID diaphragm the coupled solve is compared with
+  `trib_scale`, a patched distribution, an engine that still loads a story where a line has no
+  wall) is written to `model_vs_tributary_flags`. A line that STOPS at a story (empty segment
+  list) is followed independently: its shear is transferred at that level by the lever rule (or
+  founded, `base_story`), exactly as the engine does, so a correctly declared discontinuity does
+  not flag. On a SEMI-RIGID diaphragm the coupled solve is compared with
   tributary directly. Each flag is either a model error (fix and re-run) or a stated idealization
   you JUSTIFY in `model_vs_tributary_flags_resolution`.
 - **Cumulative bookkeeping runs TOP-DOWN.** Stud axial, chord tension, and hold-down/rod forces
@@ -133,11 +136,13 @@ inches — fix the cfg BEFORE chasing numbers.
   a column with no bracing statement — or claimed sheathing-braced on an unsheathed line — fails
   review. State it in the package and the report.
 - **Both hazards, always.** Run wind AND seismic and state which governs per line/direction. Low-R
-  systems (gypsum R=2) and coastal sites are usually wind-governed. **S400 is the SEISMIC standard
-  — it has no wind columns.** Wind-designed shear walls take their nominal strength from **AISI S240
-  B5.2.2.3** (Tables B5.2.2.3-1 steel sheet, -2 WSP, -3 gypsum, -4 fiberboard; Type II Ca at
-  B5.2.2.2) with **φv = 0.65 (LRFD, S240 B5.2.3)**; seismic capacity per S400 (WSP φv = 0.60 at
-  E1.3.2). **Net uplift 0.9D+1.0W is a REQUIRED anchorage case**: the uplift path must be
+  systems (gypsum R=2) and coastal sites are usually wind-governed. **S400 has no separate wind
+  columns** (`cfs_systems.wind_capacity_basis(system)` states the basis the package uses): WSP /
+  steel-sheet Tables E1.3-1 / E2.3-1 are "for Seismic and Other In-Plane Loads" — one vn set with
+  **φv = 0.60 (LRFD, E1.3.2 / E2.3.2)**, or alternatively **AISI S240 B5.2.2.3** (Tables
+  B5.2.2.3-1 steel sheet, -2 WSP; Type II Ca at B5.2.2.2) with **φv = 0.65 (S240 B5.2.3)**;
+  gypsum / fiberboard Table E6.3-1 is SEISMIC only, so their WIND strength is **S240
+  B5.2.2.3.4 / .5** (Tables B5.2.2.3-3 / -4) with φv = 0.65. **Net uplift 0.9D+1.0W is a REQUIRED anchorage case**: the uplift path must be
   continuous roof→wall→floor→foundation.
 - **Sheathing-braced studs need the unsheathed check.** Where studs are designed sheathing-braced,
   S240 **B1.2.2.4** (US) requires them ALSO to be evaluated WITHOUT the sheathing bracing for
@@ -145,9 +150,26 @@ inches — fix the cfg BEFORE chasing numbers.
 - **Type II (perforated) walls:** adjustment factor computed and shown; hold-downs at the wall ENDS
   only, PLUS distributed track anchorage between — a hold-down at every pier silently reverts the
   wall to Type I (fail). A stepped wall line violates the uniform-height rule → split the line.
-- **Mixed / direction-specific systems:** different R per direction → each direction designed with
-  its OWN R/Cd/Ω0. Two systems sharing one axis → the LEAST R governs that axis (or a seismic
-  joint). Never average.
+- **Mixed / direction-specific systems (12.2.2 / 12.2.3.3) are native:** declare
+  `cfg['seis_by_dir']={'X': seis, 'Y': seis}`, `cfg['system_by_dir']={'X': key, 'Y': key}` (and
+  `rho_by_dir`) — ELF, Cd, drift, θ, combos (Ω0 per direction) and capacity design then run per
+  direction (`res['elf_by_dir']`, package `capacity_design.by_direction`). Two systems sharing
+  one axis (`line_systems={'X:A': key}`) → the LEAST R governs that axis; the 12.2.3.3 per-line
+  exception (RC I/II, ≤ 2 stories, light-frame/flexible) is opt-in with
+  `use_12_2_3_3_exception=True`. Never average; never monkeypatch the engine for this.
+- **Story drift is CUMULATIVE and θ is computed.** Each line's story drift = the S400 single-story
+  design deflection (E1.4.1.4-1 WSP, E2.4.1.4-1 steel sheet, E3.4.4 strap, E6.4.1.4 gypsum) + the
+  chord strain from the overturning above + h × the rotation carried up from the stories below
+  (chord axial + rod/hold-down elongation), × Cd/Ie (12.8.6, 12.8.6.5). The drift table shows the
+  single-story and rotation parts and θ = Px·Δ/(Vx·hsx·Cd) per story (12.8.7; Px = D + 0.5·0.4L0,
+  0.8L0 where L0 > 100 psf); 0.10 < θ ≤ θmax multiplies the drift by 1/(1−θ); θ > θmax
+  (= 0.5/(βCd) ≤ 0.25, ≥ 0.10) fails the gate. Upper stories of tall stacks usually govern.
+- **Seismic weight W includes 12.7.2 items** — storage (25 % of the storage live load:
+  `cfg['storage']=True` or `storage_levels=[...]`, `L_by_level`), partitions (≥ 10 psf at floors),
+  permanent equipment (`extra_mass_floors`), and roof snow where pf > 45 psf. A one-level storage
+  mezzanine / platform declares `structure_kind='mezzanine'` (or `'platform'`, or
+  `top_level_is_floor=True`): its deck is a FLOOR (D_floor + live + storage weight), never a
+  roof — do NOT fold storage into D_roof. The package shows `elf.weight_by_level_kip`.
 - **Podiums (CFS over concrete/steel) — ASCE 7-22 12.2.3.2, evaluated by the pipeline.** Model the
   CFS upper portion with its base at the podium top, set `structure_kind="podium"` and declare
   `cfg['two_stage'] = dict(R_lower=..., rho_lower=..., K_lower_kip_in=<podium V/δe at its top, per
@@ -170,16 +192,24 @@ inches — fix the cfg BEFORE chasing numbers.
   model the frame block via the portal path (a truss-carried roof takes `cfg['truss_roof']=True`
   so gravity goes to the columns, not the frame beam) and the wall block via the wall path or hand
   blocks; resolve shared-axis R per 12.2.3.3 (least R) or a designed seismic joint, and SAY which.
-- **Portal wind is TWO internal-pressure cases.** The seed emits `W` (+GCpi, max uplift) and `W2`
-  (−GCpi, max wall push) and the runner envelopes both — never mix signs across surfaces in one
-  case. `cfg['wind_pressures_psf']` overrides case one; add a `case_neg` sub-dict to keep the
-  second. Wall-path briefs that are partially enclosed/open-front set `cfg['wind']['Cnet']`.
-  If the runner reports **P-DELTA DIVERGED**, the frame is sway-unstable at the trial sections —
-  resize; that combo's envelope is meaningless.
+- **Portal wind is seeded from BOTH sides, every case.** Declare `wind['enclosure']`
+  (`enclosed` / `partially_enclosed` / `partially_open` / `open` → GCpi per Table 26.13-1; the
+  legacy `enclosed=False` is read as partially enclosed and WARNS). The seed builds Fig. 27.3-1
+  cases with both windward-roof Cp branches (`*_b2`), the along-ridge case (`Wpar`), leeward Cp(L/B)
+  and open-building free-roof CN cases (Figs. 27.3-4/5/7, clear/obstructed, A/B), mirrors every
+  case (`W_R`, `W2_R`…) and envelopes them with both internal-pressure signs; members/connections
+  envelope BOTH columns and rafters with signed, paired P/V/M. `cfg['wind_pressures_psf']` overrides
+  are mirrored too (`wind_mirror=False` when your cases are already directional). Wall-path briefs
+  that are partially enclosed/open-front give `wind['Cp_ww']` / `wind['Cp_lw']` (a legacy `Cnet`
+  maps to the leeward Cp at qh — do not add an old calibration on top). If the runner reports
+  **P-DELTA DIVERGED**, the frame is sway-unstable at the trial sections — resize; that combo's
+  envelope is meaningless.
 - **Analysis-fidelity tier is user-selected but SCREENED — know what each tier really does.**
   `cfg['analysis_fidelity']` = 0 (walls: secant shear-spring stacks; on a portal, GROSS-stiffness
   planar frame), 1 (portals/canopies: the planar EA/EI frame with the decoupled effective-section
-  EA(Ae)/EI(I_eff) iteration, 0.8 stiffness + notional loads + P-Δ on strength combos), 2 (currently
+  EA(Ae)/EI(I_eff) iteration and AISI S100-16 C1.1 direct analysis — 0.90·τb on EA/EI, notional
+  Ni = Yi/240 at every gravity node in every combo, P-Δ to convergence — NOT the AISC 0.8/0.002
+  values), 2 (currently
   the SAME analysis as Tier 1 — there is no warping/torsion DOF or thin-walled element in the
   code). Single-channel torsion is an analytic SEED table (`torsion_companion`), not an analysis:
   do the torsion/bimoment check yourself and say so. The preflight WARNS on a tier/structure
@@ -224,7 +254,8 @@ guard loads.
 
 **2. Run `pipeline.design_and_report(name, cfg)`.** It runs the CFS preflight, computes weights,
 ELF, wind seeds, the tributary distribution with the 5% shift, per-line unit shears, the
-cumulative chord/hold-down stacks, a four-term wall-deflection drift SCREEN vs the limit, the
+cumulative chord/hold-down stacks, the S400 story drift of the declared `wall_props` (single-story
+deflection + rotation carried from below, θ per story) vs the limit, the
 independent tributary check, the Rayleigh period per direction (`period_rayleigh`; T used for ELF
 ≤ Cu·Ta — adopt it with `cfg['T_analytical']`), the 12.2.3.2 two-stage block (podium jobs), and
 writes the seeded `design/calc_package_cfs.json` + report. Fix every preflight `[ERROR]` before any
@@ -267,9 +298,24 @@ OpenSees — read the schema in this file and `cfs_engine.py`'s docstring instea
   differs from the row you justify, state the basis in the package.
 - **Height limits:** 65 ft in SDC D/E/F for WSP/steel-sheet/strap; 35 ft for SBMF; gypsum NP in
   E/F. On the knife edge (hn near the limit), show the number.
-- **Wind-governed briefs:** wall capacities from **S240 B5.2.2.3** with φv = 0.65 (B5.2.3) — S400
-  has no wind provisions; C&C on cladding/fasteners; enclosure classification where the brief
-  raises it (open/partially enclosed).
+- **Wind-governed briefs:** wall wind capacities per `cfs_systems.wind_capacity_basis(system)` —
+  WSP / steel sheet: S400 Tables E1.3-1 / E2.3-1 (seismic AND other in-plane loads, φv 0.60) or S240
+  B5.2.2.3 (φv 0.65, B5.2.3); gypsum / fiberboard: S240 B5.2.2.3.4 / .5 only (Table E6.3-1 is
+  seismic). Wind per line is distributed by FACE WIDTH (Fig. 27.3-8 Case 1 enveloped with Case 2),
+  never by the seismic `trib_scale`. C&C on cladding/fasteners; enclosure classification where the
+  brief raises it (open/partially enclosed).
+- **Gypsum / fiberboard walls are AISI S400 E6** (R = 2; E5 is a Canada-only system): aspect
+  limits 2:1 gypsum, 1:1 fiberboard, ≥ 24 in. (E6.3.1.1); chords, hold-downs, collectors and
+  anchorage are capacity-protected (B3.4, Ω_E per E6.3.3) — the package seeds `T_cd_seed_kip`.
+  Only R = 3 in SDC B/C is waived from S400 (A1.2.3). Declare `selected_Vn_kip` (or the strap
+  `strap_Ag_in2` + `strap_Fy_ksi`) so T_cd = min(Ω_E·Vn stack, Ω0 stack); otherwise the Ω0 stack is
+  seeded and the package says so. Consistency FAILS a hold-down / chord design tension below T_cd
+  (less the available 0.9D relief) unless you record your own computed Ω_E·Vn.
+- **Storage / platform classification:** an occupied storage mezzanine or platform is a Ch. 12
+  BUILDING (15.1.1; 13.1.1 for self-supporting units); its joists, beams and posts are designed
+  deliverables (`gravity_framing` seeds: wu, Mu, Vu, Pu, L/360 & L/240, I_req). Storage racks are
+  out of scope (preflight ERROR). Floors with L0 > 100 psf, garages and assembly take 1.0L in the
+  2.3.6 seismic and 2.3.1 wind companions (the combo labels show the factor used).
 - **Existing/retrofit, fatigue (monorails), foundations, seismic joints:** SCOPE these explicitly
   as separate stages where the brief raises them — never silently pretend. Fatigue of CFS members
   and connections is **AISI S100 Chapter M** (Design for Fatigue) — computed from the stress range
@@ -282,7 +328,8 @@ OpenSees — read the schema in this file and `cfs_engine.py`'s docstring instea
 - seismic weights, ELF (12.8, CFS Ta), two-stage podium eligibility + amplification, wind;
 - tributary distribution per wall line with the 5% accidental shift; per-line unit shears by story;
 - cumulative chord/hold-down tension stacks; stud axial stack seeds;
-- the S400 four-term drift (bending + shear + fastener slip + anchorage/rod elongation) vs limit;
+- the S400 story drift (E1.4.1.4-1 / E2.4.1.4-1 / E3.4.4 / E6.4.1.4 + rotation carried from the
+  stories below + rod/hold-down elongation) vs the Table 12.12-1 limit, and θ per story (12.8.7);
 - the OpenSees solve (wall spring stacks; portal frames with P-Δ), the comparison gate,
   figures, report.
 
@@ -290,11 +337,14 @@ OpenSees — read the schema in this file and `cfs_engine.py`'s docstring instea
 1. **Confirm the load combinations** (ASCE 7-22 §2.3 LRFD; the pipeline assembles them). Know which
    governs where; the net-uplift case is yours to carry through the anchorage chain.
 2. **Select and cite the correct limit state for every check** — from the RAG, never memory.
-3. **Design the capacity-design chain** (S400): strap Ry·Fy·Ag into connections, chord studs and
-   anchorage; expected wall strength into collectors and the story below; SBMF expected beam
-   strength at design drift. ELF-force-only sizing of these elements is a FAIL.
+3. **Design the capacity-design chain** (S400 B3.4): expected strength Ω_E·Vn of the designated
+   mechanism (strap Ry·Fy·Ag; wall Ω_E·vn), not exceeding the Ω0-level effect, into connections,
+   chord studs, anchorage, collectors and the story below; SBMF: expected shear Ve (E4.3.3). The
+   package seeds `T_cd_seed_kip` per line/story. ELF-force-only sizing of these elements is a FAIL.
 4. **Make the schedules real**: named sheathing products/thicknesses, screw sizes + spacings, stud
-   designators by story group, device classes/rod diameters, strap sizes with An·Fu ≥ Ag·Fy shown.
+   designators by story group, device classes/rod diameters, strap sizes with the S400 E3.4.1(a)
+   ductility check (Method 2: Rt·Fu/(Ry·Fy) ≥ 1.2 AND Rt·Fu·An > Ry·Fy·Ag — computed by the framework
+   from `strap_Fy_ksi`/`strap_Fu_ksi`/`strap_Ag_in2`/`strap_An_in2`; Gr 33 fails the ratio).
 
 ## Work only the unique TYPES
 Design the governing member of each group and propagate: one wall-line slot per line per story
@@ -335,9 +385,11 @@ distinct derivations typically cover the building.
    EMPTY (not yet authored) — an empty result is normal, never retry it; the spec text is
    sufficient and authoritative on its own.
 4. **Drift and serviceability the code way:** amplified drift Cd·δ/Ie vs the Table 12.12-1 limit.
-   The seeded drift table is the engine's four-term SCREEN; compute the S400 design deflection of
-   your selected schedule (E1.4.1.4 WSP, E2.4.1.4 steel sheet, E1.4.2.3 Type II, E3.4.4 strap) and
-   write it into each row (`drift_design`, `ok`). **A failing drift row FAILS consistency** — a
+   The seeded drift table is the engine's S400 deflection of the `wall_props` you declared (legacy
+   Gp/en props run on a conservative ASSUMED schedule and warn) — declare the SELECTED schedule's
+   inputs and re-run, or compute the design deflection (E1.4.1.4 WSP, E2.4.1.4 steel sheet,
+   E1.4.2.3 Type II, E3.4.4 strap, E6.4.1.4 gypsum) incl. the rotation carried from the stories below
+   and write it into each row (`drift_design`, `ok`). **A failing drift row FAILS consistency** — a
    `drift_flags_resolution` note does not clear it; redesign, or waive a row only with a stated
    reason (e.g. a declared split-level offset). Report the P-Δ stability coefficient θ (12.8.7) —
    any θ > θmax fails the gate. Joist/header deflection L/360 / L/240.
@@ -534,31 +586,49 @@ run present the new schedules and WAIT for the user before updating the report.
 - Portal path: `cfs_frame.run(cfg)` — planar frame, FEET schema below (never `engine3d`).
 
 ### Portal-path cfg schema (`cfs_frame`; feet / psf / kip — brief-facing)
+Portals, canopies and SBMF frames run through **`cfs_frame` via `pipeline.design_and_report`**
+whenever the cfg has `span_ft`. The cfg is in **FEET / PSF / MPH / KIP — never ×12**:
+`cfs_frame.check_units` refuses a cfg whose span/eave/apex/spacing look like inches, and
+`custom_build` is refused on this path (a cfg without `span_ft` and without `lines_x` goes to the
+HOT-ROLLED engine3d instead — wrong for CFS).
 ```python
 cfg = dict(
   structure_kind="portal",        # "canopy", "portal_singlechannel", "component" (Tier-0 component job)
-  analysis_fidelity=1, direct_analysis=True,        # Tier 1: Ae/I_eff iteration, 0.8E, notional, P-Delta
+  analysis_fidelity=1, direct_analysis=True,        # S100 C1.1: 0.90*tau_b EA/EI, Ni = Yi/240, P-Delta
   span_ft=60.0, eave_ft=20.0, apex_ft=26.0,         # apex = ridge height above the base (FEET)
   spacing_ft=25.0,                                  # frame spacing = load tributary
   purlin_spacing_ft=5.0, girt_spacing_ft=6.0,       # brace/load stations
-  col_section="2x800S250-97", raf_section="2x800S250-97",   # "2x" = back-to-back built-up
+  col_section="4x800S250-97", raf_section="2x800S250-97",   # "2x|4x|6x|8x<des>" back-to-back n-ply,
+                                                    # "<des>/box" toe-to-toe, "HSS12X12X5/8", "800Z250-68"
   base="pinned",                                    # or "fixed"
-  D_roof=4.5, collateral=0.0, Lr=20.0,              # psf
-  snow_pg=25.0, snow_ce=1.0, snow_ct=1.0, snow_is=1.0,      # ps = 0.7 Ce Ct Is pg; snow_ps=... overrides
-  pattern_snow=True, unbalanced_factors=(0.3, 1.5),         # gable unbalanced seed (agent verifies 7.6)
-  wind=dict(V=115.0, exposure="C", enclosed=True),          # seeded MWFRS, two GCpi cases W / W2
-  # wind_pressures_psf=dict(wall_wind=.., wall_lee=.., roof_wind=.., roof_lee=..,
-  #                         case_neg=dict(...)),  # override (keep case_neg for the 2nd GCpi case)
+  D_roof=4.5, collateral=0.0, Lr=20.0,              # psf; self_weight=True (default) adds frame SW to D
+  snow_pg=25.0, snow_ce=1.0, snow_ct=1.0, snow_is=1.0,      # ps = 0.7 Ce Ct Is pg; snow_ps=... overrides;
+  pattern_snow=True, unbalanced_factors=(0.3, 1.5),         # 7.3.3 pm minimum is a separate S_min case
+  risk_cat="II",
+  wind=dict(V=115.0, exposure="C", enclosure="enclosed",    # enclosed / partially_enclosed /
+            length_ft=200.0, frame_dist_ft=50.0),           # partially_open / open (+open_sides, flow,
+                                                    # fascia_ft, col_drag_plf for open canopies)
+  # wind_pressures_psf=dict(wall_wind=.., wall_lee=.., roof_wind=.., roof_lee=.., case_neg=dict(...)),
+  #   mirrored for wind from the other side unless wind_mirror=False
   seis=dict(SDS=0.5, SD1=0.3, S1=0.2, R=3.0, Cd=3.0, Om0=3.0, Ie=1.0,
-            W_frame_kip=12.0),                      # E = SDS/(R/Ie) x W_frame at the eaves
-  system="not_detailed",                            # or "sbmf" (S400 E4)
-  # optional: monoslope=True, overhang_ft=..., spans=[dict(span_ft=.., apex_ft=..), ...],
-  #           truss_roof=True (roof gravity to the column tops), service_wind_factor=0.42
+            W_frame_kip=12.0, T_drift=None),        # ELF Cs with SD1/T cap + minima; +/-E with rho
+  rho=1.0,                                          # 12.3.4 (1.3 default in SDC D-F)
+  system="not_detailed",                            # or "sbmf" (S400 E4: sbmf=dict(...) screens)
+  # optional: monoslope=True (+overhang_ft), spans=[dict(span_ft=.., apex_ft=..), ...],
+  #   point_loads=[...], crane=dict(...) (4.9 impact/lateral/longitudinal), knee_braces=dict(...)
+  #   (explicit geometry), truss_roof=True (roof gravity to the column tops), pdelta=True,
+  #   service_wind_factor=0.42
 )
 ```
-The package (`kind="cfs_portal"`) seeds `members` (frame-col/frame-raf: governing combo P/V/M),
-`connections` (knee/apex), `anchorage` (V, NET UPLIFT, base M), `schedules`
-(purlin/girt/strap rows) and `drift_table` (eave sway / apex — YOU state the criterion and verdict).
+The package (`kind="cfs_portal"`) seeds `members` (both columns and rafters enveloped, signed
+moments "+ = inside flange in tension", paired P/V, `demand_pairs`), `connections` (both knees
+with signed max/min; the apex slot is the ridge-node moment — none on a monoslope or flat beam),
+`anchorage` (per base: V, NET UPLIFT, compression, base M, Ω0 seeds), `schedules`
+(purlin/girt/strap rows), `pkg['combos']` (every ASCE 7-22 2.3.1/2.3.6 combination run) and
+`drift_table` — eave sway / apex (YOU state the criterion and verdict) plus `seismic_drift`
+(Cd·δxe/Ie vs Table 12.12-1, ÷ρ in SDC D–F) and `stability_theta` (12.8.7) rows the gates read.
+Preflight prefixes to resolve: `WIND ENCLOSURE:`, `SEISMIC DRIFT NG`, `THETA … > theta_max`,
+`SEISMIC SYSTEM SCREEN:`, `SBMF SCREEN FAIL (…)`, `P-DELTA DIVERGED`, `P-DELTA OFF`.
 
 ### Wall-path cfg schema (feet / psf / kip — brief-facing)
 ```python
@@ -573,9 +643,19 @@ cfg = dict(
                   Gt_lb_in=77500.0, chord_area_in2=2.4, rod_area_in2=0.6),  # S400 inputs
   collector_lines=["reentrant-NE"],    # every re-entrant / step / throat line
   stud_trib_ft=2.0,
-  partition_psf=10.0,                  # 12.7.2 partition weight in W (floors only) --
+  partition_psf=10.0,                  # 12.7.2 partition weight in W (floors only, >= 10 psf) --
                                        # keeps D_floor = TRUE dead for member design
+  wind=dict(V=115.0, exposure="C"),    # z from grade (z_base_ft / podium), leeward at qh, G/Gf
+                                       # (n1_hz), parapet_ft; Cp_ww / Cp_lw for open fronts
+  drift_tolerant_finishes=True,        # Table 12.12-1 row 1 (<= 4 stories) -- DECLARE it
   # irregular plans: area_sf=..., perimeter_ft=... (true values on a bounding-box model)
+  # storage / platforms (12.7.2): storage=True | storage_levels=[...], L_by_level={k: psf},
+  #   extra_mass_floors={k: psf}, storage_5pct_exception=True (opt-in), structure_kind="mezzanine"
+  # per-direction systems (12.2.2): seis_by_dir / system_by_dir / rho_by_dir; line_systems
+  # capacity design: selected_Vn_kip, strap_Ag_in2 / strap_An_in2 / strap_Fy_ksi / strap_Fu_ksi
+  # Type II walls: type_ii={"X:A": dict(Ca=..) or dict(pct_full_height=.., max_opening_height_ratio=..)}
+  # diaphragm: diaphragm_material / diaphragm_topping_in (> 1.5 in. is not flexible) / diaphragm_MDD_ADVE
+  # theta: theta_beta (12.8-19 beta), Px_level_kip; podium: two_stage=dict(...)
 )
 ```
 `wall_props` are the S400 deflection inputs of the SELECTED schedule: `sheathing` ("osb" /
@@ -589,7 +669,7 @@ and the run warns. The engine's story drift is CUMULATIVE: S400 single-story def
 rotation carried up from the stories below (chord strain + rod/hold-down elongation), and the
 drift table also reports θ (ASCE 7-22 12.8.7; θ > θmax fails the gate via `stability_flags`).
 A line ABSENT at a story (breezeway, split level, roof step) has an EMPTY segment list there:
-its shear is transferred to the present neighbours (lever rule, `transfers`, Ω0 per 12.3.3.3);
+its shear is transferred to the present neighbours (lever rule, `transfers`, Ω0 per 12.3.3.4);
 a line bearing on a stepped foundation declares `WallLine(..., base_story=k)`; a split-level
 diaphragm takes `diaphragm_extent_ft={("X", 1): (lo, hi)}`; per-level weights
 `level_weights_kip` / `area_sf_by_level` / `roof_area_sf_by_level`.
