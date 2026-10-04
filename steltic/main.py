@@ -4,7 +4,8 @@ TWO POSTURES, one file (Cloud Run wrapper ported from the AISC steel_by_webpage 
 
 * **Local / self-host (DEMO=0)** -- the historical single-user app: no login, no Turnstile, no
   control plane. An implicit "local" session is created on first touch, so jobs stay under
-  sessions/local/jobs exactly as before. Bind to 127.0.0.1 (the CLI default).
+  sessions/local/jobs exactly as before. Bind to 127.0.0.1 (the CLI default). The `_local_only`
+  guard refuses cross-site and DNS-rebound requests (and checks the hub's per-launch token when sent).
 * **Cloud demo (DEMO=1)** -- the public posture: the /api/enter door (Cloudflare Turnstile +
   consent) starts a session; the user's LLM key lives per-session in server memory
   (auth.SESSION_CREDS), never on disk; every limit keys off the anonymous visitor seat; the
@@ -13,9 +14,9 @@ TWO POSTURES, one file (Cloud Run wrapper ported from the AISC steel_by_webpage 
 
 The steel engine + model-written code run ONLY in the sandbox executor (uid-drop when
 SANDBOX_UID is set)."""
-import base64, io, json, os, posixpath, secrets, time, zipfile
+import base64, hmac, io, json, os, posixpath, secrets, time, zipfile
 from fastapi import FastAPI, Request, Depends, HTTPException
-from fastapi.responses import StreamingResponse, FileResponse
+from fastapi.responses import StreamingResponse, FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.responses import Response
 from starlette.middleware.sessions import SessionMiddleware
@@ -30,6 +31,78 @@ if not config.SECRET_KEY and config.DEMO_MODE:
     print("[warn] SECRET_KEY not set -- using an insecure dev key. Set SECRET_KEY in production.")
 app.add_middleware(SessionMiddleware, secret_key=_secret, same_site="lax",
                    https_only=False, max_age=config.SESSION_HOURS * 3600)
+
+
+# ---------------- local-only guard (cross-site requests, DNS rebinding) -- DEMO=0 only ----------------
+# In the local posture this server has no door: current_user() mints the implicit "local" session for
+# ANY caller, so the SameSite=lax cookie protects nothing. A browser sends a "simple" cross-site POST
+# (text/plain body, no CORS preflight) to any 127.0.0.1 port and `await request.json()` ignores the
+# Content-Type -- so any page the user had open could POST /api/creds (re-point the LLM endpoint at its
+# own server) and then /api/run, whose model-written run_python executes on this PC. A hostname the
+# attacker resolves to 127.0.0.1 (DNS rebinding) would even let it READ the replies. Same rules as the
+# hub's own guard (steltic_hub/main.py):
+#   * every request must name a loopback Host (STELTIC_ALLOWED_HOSTS adds names, comma-separated, for
+#     a deliberate non-loopback bind);
+#   * a state-changing request (not GET/HEAD/OPTIONS) is refused when the browser says it came from
+#     another site: a non-loopback Origin (including "null") or Sec-Fetch-Site: cross-site;
+#   * when the hub started this server it passes a per-launch secret in STELTIC_HUB_TOKEN and sends it
+#     back as the X-Steltic-Hub-Token header on everything it sends (credential push, runs, stop, its
+#     /m/ proxy). A request carrying that header must carry the right value.
+# The module's own page (same origin), the hub's page through its proxy, curl / the CLI / another
+# module's server (no Origin header at all) keep working unchanged. DEMO=1 (the public Cloud Run
+# posture) is not loopback by definition and is guarded by its own door (Turnstile + signed session),
+# so the guard is off there.
+_LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1", "[::1]", "testserver"}   # testserver: Starlette's TestClient
+_SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
+_TOKEN_HEADER = "x-steltic-hub-token"
+
+
+def _allowed_hosts() -> set:
+    extra = {h.strip().lower() for h in (os.environ.get("STELTIC_ALLOWED_HOSTS") or "").split(",") if h.strip()}
+    return _LOOPBACK_HOSTS | extra
+
+
+def _host_name(value: str) -> str:
+    """`127.0.0.1:8410` -> `127.0.0.1`; `[::1]:8410` -> `[::1]`; `http://x:1/` -> `x`."""
+    v = (value or "").strip().lower()
+    if "://" in v:
+        v = v.split("://", 1)[1]
+    v = v.split("/", 1)[0]
+    if v.startswith("["):
+        return v.split("]", 1)[0] + "]"
+    return v.rsplit(":", 1)[0] if v.count(":") == 1 else v
+
+
+def _cross_site_reason(request) -> str | None:
+    """Why this request must not be acted on -- or None when it is plainly local (or DEMO=1)."""
+    if config.DEMO_MODE:
+        return None
+    allowed = _allowed_hosts()
+    host = _host_name(request.headers.get("host", ""))
+    if host and host not in allowed:
+        return f"this server only answers to loopback names, not {host!r}"
+    sent = request.headers.get(_TOKEN_HEADER)
+    if sent is not None:
+        want = os.environ.get("STELTIC_HUB_TOKEN") or ""
+        if not want or not hmac.compare_digest(sent.encode(), want.encode()):
+            return "wrong hub token"
+        return None
+    if request.method in _SAFE_METHODS:
+        return None
+    origin = request.headers.get("origin")
+    if origin is not None and _host_name(origin) not in allowed:
+        return f"cross-site request from {origin!r} refused"
+    if (request.headers.get("sec-fetch-site") or "").lower() == "cross-site":
+        return "cross-site request refused"
+    return None
+
+
+@app.middleware("http")
+async def _local_only(request, call_next):
+    why = _cross_site_reason(request)
+    if why:
+        return JSONResponse({"detail": why}, status_code=403)
+    return await call_next(request)
 
 
 # Frontend freshness: no-cache = store but REVALIDATE via ETag each load, so deploys arrive.
