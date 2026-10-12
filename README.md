@@ -1,8 +1,22 @@
-# Steltic
+# Steltic CFS
 
-A free, open-source AISI S100/S240/S400 cold-formed steel (CFS) design agent that runs locally. Paste a design brief and
-watch the agent build an OpenSees model + a stamped-style HTML report + an interactive 3D viewer —
-**bringing your own LLM** (your API base-url + key, held in memory only, never written to disk).
+[![License: MIT](https://img.shields.io/badge/License-MIT-orange.svg)](LICENSE)
+[![Release](https://img.shields.io/github/v/release/Steltic/steltic_cfs?color=orange)](https://github.com/Steltic/steltic_cfs/releases)
+[![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](pyproject.toml)
+
+![Steltic CFS](docs/img/social_cfs.png)
+
+Free, open-source AI agent that designs cold-formed steel buildings to **AISI S100-16 (R2020) w/S2, S3**,
+**S240-20** and **S400-20** with **ASCE 7-22** loads, on your own machine: wall-path buildings (WSP, steel-sheet,
+strap-braced and gypsum shear walls, podium and mixed systems, up to 8 storeys) and portal-frame buildings.
+Paste a design brief and get an OpenSees model, a calculation report and an interactive 3D viewer. Bring your
+own LLM API key (your API base URL and key are held in memory only, never written to disk).
+
+- **Easiest start:** [Steltic Hub](https://github.com/Steltic/steltic_hub) installs this and the other modules
+  in one window.
+- **See the output first:** 25 worked buildings with reports and 3D models at [stelticai.com](https://stelticai.com).
+- **Video:** [Steltic Hub installation](https://www.youtube.com/watch?v=LNHzOBkjicM).
+- **Indian Standards edition:** [steltic_CFS_india](https://github.com/Steltic/steltic_CFS_india).
 
 ```
 browser ──▶ FastAPI app (localhost) ──▶ your LLM (key in app memory, never stored)
@@ -17,31 +31,39 @@ browser ──▶ FastAPI app (localhost) ──▶ your LLM (key in app memory,
 > incorrect, and must be independently checked and sealed by a licensed professional engineer before
 > any use for design, construction, or permitting. See [DISCLAIMER.md](DISCLAIMER.md).
 
-## For videos and demonstrations see [stelticai.com](https://stelticai.com)
-
 ## Install & run
 
-With [uv](https://docs.astral.sh/uv/) (recommended — no Python setup needed):
+Most people should start with [Steltic Hub](https://github.com/Steltic/steltic_hub), which clones and installs
+this module for you. To run this module on its own, install it from GitHub. It needs **Python 3.10–3.12**
+(openseespy, the analysis engine, ships compiled binaries for those versions only); 3.12 is recommended.
 
-```bash
-uv tool install --python 3.12 steltic-cfs
-steltic-cfs                    # starts on http://127.0.0.1:8000 and opens your browser
-```
+**Windows (PowerShell)**
 
-The `--python 3.12` matters: openseespy (the analysis engine) ships compiled binaries for
-**Python 3.10–3.12 only**, and uv ignores the package's upper Python bound — without the flag it
-may install onto a newer interpreter where the engine can't load (Steltic will tell you and refuse
-to start). uv downloads 3.12 automatically if you don't have it. Or with pipx (which respects the
-bound): `pipx install --python 3.12 steltic-cfs`. The install includes the full engine
-(openseespy/numpy/scipy/matplotlib, ~400MB) so designs run out of the box without Docker. Or from
-a checkout:
-
-```bash
-git clone <this repo> && cd steltic_cfs
-python -m venv .venv && . .venv/bin/activate
+```powershell
+git clone https://github.com/Steltic/steltic_cfs
+cd steltic_cfs
+py -3.12 -m venv .venv
+.venv\Scripts\Activate.ps1
 pip install -e .
-./run_local.sh               # http://localhost:8000
+steltic-cfs                  # starts on http://127.0.0.1:8000 and opens your browser
 ```
+
+**macOS / Linux**
+
+```bash
+git clone https://github.com/Steltic/steltic_cfs
+cd steltic_cfs
+python3.12 -m venv .venv
+source .venv/bin/activate
+pip install -e .
+steltic-cfs                  # starts on http://127.0.0.1:8000 and opens your browser
+```
+
+The install brings the full engine (openseespy, numpy, scipy, matplotlib, about 400 MB), so designs run without
+Docker. To run with a `.env` file of settings, use `./run_local.sh` or `.\run_local.ps1` instead of `steltic-cfs`.
+
+**Update:** in the repo folder, `git pull`, then `pip install -e .` again (needed only when `pyproject.toml`
+changed, harmless otherwise).
 
 First run: open **Settings**, enter your provider's **API base URL** (any OpenAI-compatible
 endpoint — OpenRouter, vLLM, Together, Fireworks, OpenAI, Anthropic…), your **API key**, and a
@@ -51,15 +73,16 @@ the 25 built-in example briefs (numbered Ex1-Ex30; Ex20-24 rack briefs are desco
 Offline smoke test: set Model to `MOCK` — it drives the whole pipeline (sandbox, engine, OpenSees,
 report) with no LLM.
 
-**Windows note:** if launching fails with *"Application Control policy has blocked this file"* or
-*"os error 4551"*, Windows **Smart App Control** is blocking uv's downloaded (unsigned) Python.
-Fix: install the signed python.org build and point uv at it —
+**Windows note:** if starting fails with *"Application Control policy has blocked this file"* or
+*"os error 4551"*, Windows **Smart App Control** is blocking an unsigned Python. Use the signed python.org
+build and recreate the environment:
 
 ```powershell
-winget install Python.Python.3.12       # then open a new terminal
-uv tool uninstall steltic-cfs
-$env:UV_PYTHON_PREFERENCE = "only-system"
-uv tool install --python 3.12 steltic-cfs
+winget install Python.Python.3.12       # then open a new terminal in the repo folder
+Remove-Item -Recurse -Force .venv
+py -3.12 -m venv .venv
+.venv\Scripts\Activate.ps1
+pip install -e .
 ```
 
 ## Sandbox
@@ -78,7 +101,7 @@ with `DATA_DIR`.
 
 ## Engineering-standards, OpenSees & design-examples RAG (highly recommended)
 
-The hosted version of Steltic at [stelticai.com](https://stelticai.com) grounds the agent with RAG
+Steltic was validated with RAG
 vector databases of AISI S100-16(R2020)+S2/S3, S240-20 and S400-20, an examples database of
 validated OpenSees models, and two databases of the OpenSees documentation. The specifications and design examples ground the LLM in
 the current procedures; the OpenSees databases help it build the model — and when OpenSees throws
@@ -87,7 +110,7 @@ likely reduce without them.
 
 For copyright reasons the vector databases of the AISI standards are **not** open-sourced in
 this project. The OpenSees databases are freely downloadable from the
-[Steltic Releases page](https://github.com/Steltic/steltic/releases) (shared with the AISC agent) as portable `.jsonl.gz` dumps
+[Steltic v0.1.1 release](https://github.com/Steltic/steltic/releases/tag/v0.1.1) (shared with the AISC agent) as portable `.jsonl.gz` dumps
 (pre-embedded; see [rag_v2/README.md](rag_v2/README.md) for loading them into your own Qdrant):
 `cfs_design_examples` (original worked Q&A for the CFS scope; being authored),
 `opensees_buildings_3d` (40 validated 3D building models), `opensees_building_templates`, and the

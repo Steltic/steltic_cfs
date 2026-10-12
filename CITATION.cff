@@ -1,0 +1,11 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "Steltic CFS: AI cold-formed steel design to AISI S100, S240 and S400"
+authors:
+  - name: "Steltic"
+version: "1.0.3"
+date-released: "2026-10-12"
+license: MIT
+repository-code: "https://github.com/Steltic/steltic_cfs"
+url: "https://stelticai.com"
+keywords: [structural engineering, cold-formed steel, AISI S100, AISI S240, AISI S400, ASCE 7, OpenSees, AI agent]
