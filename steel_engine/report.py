@@ -3538,8 +3538,12 @@ def _cfs_building_rows(cfg, res, pkg):
         rows.append(["Frame spacing / building length", "%s / %s" % (
             _ft(cfg.get("spacing_ft")), _ft(cfg.get("length_ft")) if cfg.get("length_ft") else "not stated")])
         rows.append(["Base fixity", _pt(cfg.get("base", "pinned"))])
-        rows.append(["Frame members", "columns %s; rafters %s" % (_pt(cfg.get("col_section")),
-                                                                 _pt(cfg.get("raf_section")))])
+        if str(cfg.get("structure_kind", "")).lower() in ("purlin", "component"):
+            rows.append(["Frame members", "existing frames, not in the scope of this design (the analysis outline uses a "
+                                          "stiffness stand-in for them)"])
+        else:
+            rows.append(["Frame members", "columns %s; rafters %s" % (_pt(cfg.get("col_section")),
+                                                                     _pt(cfg.get("raf_section")))])
     else:
         H = [_fnum(h) for h in (cfg.get("heights_ft") or []) if _fnum(h) is not None]
         rows.append(["Stories / story heights", "%s / %s ft" % (_pt(cfg.get("stories")),
@@ -4336,9 +4340,9 @@ def _cfs_portal_design_section(pkg, cfg=None, res=None, name=None):
     h = ["<h2>4. Frame design</h2>"]
     if custom:
         h.append("<p><b>Design model:</b> %s. Member, connection and base demands below are the design "
-                 "model's values. The simplified engine frame (used for the 3D model view and load "
-                 "bookkeeping) is not used for design; its values are not reported here (n.r. = not "
-                 "reported by the design model).</p>"
+                 "model's values. The outline frame (used for the 3D model view and load bookkeeping) is "
+                 "not used for design; its values are not reported here (n.r. = not reported by the design "
+                 "model).</p>"
                  % (_pt(cdesc) or "custom frame model"))
     h.append(_cfs_sample_calcs(pkg))
     mems = [m for m in pkg.get("members") or [] if isinstance(m, dict)]
@@ -4460,7 +4464,7 @@ def _cfs_serviceability_table(pkg, custom=False, seedd=None):
         sd = (seedd or {}).get(d.get("check")) or {}
         v = d.get("value_in", d.get("value"))
         if custom and sd and _same(v, sd.get("value_in", sd.get("value"))):
-            r[1] = "%s <i>(simplified engine frame, not used for design)</i>" % r[1]
+            r[1] = "%s <i>(outline frame of the 3D view, not used for design)</i>" % r[1]
         r[0] = _pt(str(d.get("check")).replace("_", " "))
         rows.append(r)
     return ("<h3>Serviceability and seismic drift</h3>"
@@ -5178,7 +5182,7 @@ def _cfs_appendix_calcs(pkg, cfg=None, res=None, name=None):
                     sv = "not reported"
                 se = seed_by.get((key, it.get("id")))
                 if se and k in se and _fnum(v) is not None and _same(v, se.get(k)):
-                    sv += " <i>(simplified engine frame, not used for design)</i>"
+                    sv += " <i>(outline frame of the 3D view, not used for design)</i>"
                 rows.append(["line shear, &rho;E (kip)" if (key == "wall_lines" and k == "V_kip") else _hk(k), sv])
             card = "<h4>%s</h4>" % _pt(cid) + _table(["Field", "Value"], rows)
             checks = [c for c in it.get("checks") or [] if isinstance(c, dict)]
