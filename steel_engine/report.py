@@ -742,7 +742,7 @@ def _activity_section(name):
     recs, src = _load_activity(name)
     h = ["<h2>Design log</h2>",
          "<p>Analysis runs, self-consistency checks and code-provision look-ups recorded while this design was "
-         "prepared (the look-ups verify the governing provisions against the text of the standards).</p>"]
+         "prepared; a look-up that returned no match was repeated with other search terms.</p>"]
     if not recs:
         h.append("<p class='cnote'>No design log was recorded for this job.</p>")
         return "".join(h)
