@@ -328,6 +328,16 @@ def _frac(tok):
     return _num(tok)
 
 
+# labels that are connectors, not quantities ('incl. 36 kip-in.', 'with 2 in.'), and the words after
+# which the quantity is named by the NEXT word ('bearing on the 0.1017 in. rafter web')
+_OV_STOP = frozenset(("incl", "incl.", "including", "includes", "with", "and", "or", "to", "from", "at", "by",
+                      "vs", "vs.", "plus", "minus", "max", "min", "max.", "min.", "total", "about", "approx",
+                      "approx.", "each", "per", "on", "in", "of", "for", "is", "are", "as", "than", "over",
+                      "under", "between", "where", "then", "so"))
+_OV_TAIL = frozenset(("on", "of", "the", "at", "to", "for", "in", "with", "from", "by", "and", "a", "an"))
+_NEXT_WORD = re.compile(r"\.?\s*([A-Za-z][A-Za-z-]{2,})")
+
+
 def _one_value_issues(kind, cid, entry):
     texts = []
     _gather_text(entry, texts)
@@ -336,11 +346,21 @@ def _one_value_issues(kind, cid, entry):
         for m in _LABEL_NUM.finditer(t):
             label = re.sub(r"\s+", " ", m.group(1).strip().lower())
             label = re.sub(r"^(the|a|an|use|using|with|of|for|one|each)\s+", "", label)
-            if len(label) < 3:
+            if len(label) < 3 or label.strip(" .") in _OV_STOP:
                 continue
             unit = m.group(3).lower().replace(".", "").rstrip("s")
+            if unit == "ksi" and "/" in m.group(2):
+                continue                                # 'Fy/Fu = 58/90 ksi' is a pair, not a fraction
             val = _frac(m.group(2))
             if val is None:
+                continue
+            last = label.split(" ")[-1].strip(".")
+            if last in _OV_TAIL:                        # name the quantity by the word after the unit
+                nw = _NEXT_WORD.match(t, m.end())
+                if not nw:
+                    continue
+                label = label + " ... " + nw.group(1).lower()
+            elif last in _OV_STOP:                      # 'flexure incl. 12 kip-in.': not a named quantity
                 continue
             key = (label, unit)
             seen.setdefault(key, [])

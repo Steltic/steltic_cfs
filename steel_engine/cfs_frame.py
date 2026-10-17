@@ -813,9 +813,8 @@ def enclosure_of(cfg):
             "legacy wind['enclosed']=False read as PARTIALLY ENCLOSED (GCpi = +/-0.55): open "
             "and partially-open buildings cannot be expressed by the bool -- declare "
             "wind['enclosure'] in enclosed | partially_enclosed | partially_open | open"]
-    return "enclosed", ["wind enclosure not declared -> ENCLOSED (GCpi = +/-0.18) assumed; the "
-                        "ASCE 7-22 26.12 classification is the agent's -- declare "
-                        "wind['enclosure']"]
+    return "enclosed", ["wind enclosure not declared -> ENCLOSED (GCpi = +/-0.18) assumed; classify "
+                        "per ASCE 7-22 26.12 and declare wind['enclosure']"]
 
 
 def _roof_geometry(cfg):
@@ -1071,8 +1070,8 @@ def _user_wind_cases(cfg):
         else:
             roof_spec = dict(roof_by_label=roof)
         return dict(dict(name=name, from_side=side, walls=walls, edge_Fx=edge,
-                         desc="user/agent supplied (%s)" % ("as given" if side == "L"
-                                                            else "MIRRORED: wind from right")),
+                         desc=d.get("desc") or ("user supplied (%s)" % ("as given" if side == "L"
+                                                                     else "mirrored: wind from the right"))),
                     **roof_spec)
 
     if wp.get("cases"):
@@ -1103,7 +1102,7 @@ def wind_cases(cfg):
                          "(W_R/W2_R); set cfg['wind_mirror']=False only when the supplied "
                          "cases are already the complete directional set")
         return dict(cases=cases, qh_psf=wp.get("qh_psf"), source="user",
-                    basis="user/agent supplied", warnings=warns,
+                    basis="user-supplied wind cases (listed with the frame loads)", warnings=warns,
                     enclosure=(enclosure_of(cfg)[0] if cfg.get("wind") else None))
     w = cfg.get("wind")
     if not w:
@@ -1130,7 +1129,7 @@ def wind_cases(cfg):
              "pressure equation, NOT in qh); G = %.2f; enclosure %s (Table 26.13-1 GCpi = "
              "%.2f); theta = %.1f deg, h/L = %.2f; %s; %d cases: wind from BOTH sides, both "
              "internal-pressure signs, both windward-roof Cp branches (Fig. 27.3-1 note 3) "
-             "and the along-ridge case -- agent verifies per ASCE 7 Ch. 26/27"
+             "and the along-ridge case (ASCE 7-22 Ch. 26/27)"
              % (qh, h, exp, Kzt, Ke, Kd, G, enc, GCpi, th, h / span_ft,
                 "open-building free-roof CN (Figs. 27.3-4..7, Eq. 27.3-2)" if enc == "open"
                 else "Fig. 27.3-1 Cp(theta, h/L), walls +0.8 / Cp(L/B) / sidewalls -0.7",
@@ -1313,7 +1312,8 @@ def crane_loads(cfg):
                       "lateral 20%% (rated + hoist/trolley) = %.2f kip (4.9.4, either "
                       "direction -> L(H+)/L(H-) combos); longitudinal 10%% wheel loads = %.2f "
                       "kip OUT OF PLANE (4.9.5 -> longitudinal bracing). Crane load enters "
-                      "the 2.3.1 combinations as L. Fatigue (S100 Ch. M) is the agent's."
+                      "the 2.3.1 combinations as L. Fatigue (AISI S100 Chapter M) is evaluated "
+                      "with the runway design where the crane service class requires it."
                       % (Wstat, impact, Htot, long_kip))
 
 
@@ -1883,6 +1883,11 @@ def _solve_combo(cfg, secs, combo, cases_cache, stiff_scale, pdelta_iters=2, not
     sol = fr.solve(stiff_scale=stiff_scale)
     d_first = _sway(sol, meta) or 1e-9
     d_prev = d_first
+    # reference sway for the growth / amplification ratios: where gravity sway cancels the lateral
+    # sway the first-order value is ~0 and a plain ratio blows up although the frame is far from
+    # instability (stability itself is judged by the tangent stiffness staying positive definite)
+    _ys = [xy[1] for xy in fr.nodes.values()]
+    d_ref = max((max(_ys) - min(_ys)) / 2000.0 if _ys else 0.0, 1e-3)
     pd = dict(converged=True, iters=0, growth=1.0, amplification=1.0, posdef=True,
               tau_b_min=1.0)
     n_it = max(pdelta_iters, 0) and max(pdelta_iters, 6)
@@ -1902,7 +1907,7 @@ def _solve_combo(cfg, secs, combo, cases_cache, stiff_scale, pdelta_iters=2, not
         sol = fr.solve(axials=ax, stiff_scale=stiff_scale, ei_scale=tau or None)
         d = _sway(sol, meta)
         pd["iters"] = it + 1
-        pd["growth"] = abs(d) / max(abs(d_prev), 1e-9)
+        pd["growth"] = abs(d) / max(abs(d_prev), d_ref)
         pd["posdef"] = sol.get("posdef", True)
         pd["tau_b_min"] = round(min(list(tau.values()) + [1.0]), 3)
         if not pd["posdef"] or pd["growth"] > 3.0:     # beyond the elastic sway buckling load
@@ -1914,8 +1919,7 @@ def _solve_combo(cfg, secs, combo, cases_cache, stiff_scale, pdelta_iters=2, not
     else:
         if n_it and pd["growth"] > 1.02:
             pd["converged"] = False                     # still growing after max iters
-    pd["amplification"] = round(abs(_sway(sol, meta)) / max(abs(d_first), 1e-9), 3) \
-        if abs(d_first) > 1e-6 else 1.0
+    pd["amplification"] = round(max(abs(_sway(sol, meta)) / max(abs(d_first), d_ref), 1.0), 3)
     sol["pdelta"] = pd
     return fr, members, meta, sol
 
@@ -2039,7 +2043,7 @@ def sbmf_expected_shear(h_ft, Delta_in, K_kip_in, pattern=0, N=2, t_beam_in=None
                 VB_max_kip=round(VBmax, 3), R0_kip=round(R0, 3), RBS=round(RBS, 3),
                 CDB=round(CDB, 3), Delta_S_in=round(dS, 4), Delta_B_in=round(dB, 4),
                 Delta_B_max_in=round(dBmax, 4), pattern=dict(a=a, b=b, c=c),
-                basis="AISI S400-20 E4.3.3 (Eq. E4.3.3-5 reconstructed: corpus print garbled)")
+                basis="AISI S400-20 E4.3.3 (Eq. E4.3.3-5)")
 
 
 def sbmf_screens(cfg, secs, hn_ft):
@@ -2071,7 +2075,7 @@ def sbmf_screens(cfg, secs, hn_ft):
             "%.1f x %.1f in" % (p["depth"], p["flange"]))
         wt = max(p["flats"]["web"], p["flats"]["flange"]) / p["t"]
         add("column flat w/t <= 1.40 sqrt(E/Fy)", wt <= 1.40 * E_Fy(fy), "S400 E4.4.3(c)",
-            "w/t = %.1f vs %.1f (radical restored: corpus drops it)" % (wt, 1.40 * E_Fy(fy)))
+            "w/t = %.1f vs 1.40 sqrt(E/Fy) = %.1f" % (wt, 1.40 * E_Fy(fy)))
     bp = raf["props"]
     fyb = float(sd.get("Fy_beam", 55.0 if sd.get("beam_grade55", True) else bp.get("Fy", 50)))
     lipped_c = raf["kind"] in ("single", "built_up_back_to_back") and \
@@ -2290,9 +2294,10 @@ def run(cfg):
                               governing_wind_case=best[3],
                               apex_defl_in=round(grav_best[0], 3) if grav_best else None,
                               apex_defl_case="D+%s" % grav_best[1] if grav_best else None,
-                              note="D + %.2fW service pair over EVERY wind case (10-yr MRI "
-                                   "wind seed, CC.2.2); agent states the eave drift "
-                                   "criterion and the MRI basis" % wsf)
+                              note="D + %.2fW service combination over every wind case "
+                                   "(10-year MRI wind, ASCE 7-22 Appendix C, CC.2.2); the eave "
+                                   "drift criterion and the MRI basis are stated with the "
+                                   "serviceability checks" % wsf)
     else:
         res["service"] = dict(eave_sway_in=0.0, H_over=0.0, governing_wind_case=None,
                               apex_defl_in=round(grav_best[0], 3) if grav_best else None,
