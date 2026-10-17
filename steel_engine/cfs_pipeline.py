@@ -673,18 +673,22 @@ def selected_Vn(cfg, dirn, line, sysname):
                   "evaluated; the Omega0-level stack is the seed")
 
 
-def _capacity_stack(cfg, line, dist, om0, OmE=None, Vn=None, Ca=None):
+def _capacity_stack(cfg, line, dist, om0, OmE=None, Vn=None, Ca=None, Vcum=None):
     """Top-down chord/hold-down tension stack at capacity-design level:
     story shear V_k = min(Omega_0 x V_ELF,k (pure ELF, shifted), Omega_E x Vn_k) [S400 B3.4:
     expected strength, need not exceed the Omega_0-level effect],
     T_k = sum_{j>=k} V_j h_j / Ca_j  /  L_k -- each story's chord increment divided by that
     story's Type II Ca (S400 Eq. E1.4.2.2-2: C = Vh/(Ca*Sum Li)); Ca = 1 for Type I.
+    Vcum = {story: line story shear of the analysis used for design} (semi-rigid diaphragm, 12.3.1):
+    the Omega_0-level effect is taken from the larger of that shear and the tributary share -- the
+    capacity chain never sits below the forces the walls are designed for.
     Returns {story: dict(V_cap, T, governs)}."""
     out = {}
     Vrun = M = 0.0
     for k in sorted(dist, reverse=True):
         Vrun += dist[k][line.name]["V_shifted"]
-        V_om = om0 * Vrun
+        Vk = max(Vrun, abs(float(Vcum.get(k, 0.0) or 0.0))) if Vcum else Vrun
+        V_om = om0 * Vk
         V_cap, gov = V_om, "Omega0"
         if OmE is not None and Vn and Vn.get(k) is not None and OmE * Vn[k] < V_om:
             V_cap, gov = OmE * Vn[k], "Omega_E*Vn"
@@ -1073,8 +1077,9 @@ def build_package(name, cfg, res):
             ca0 = 1.0
             if Ca and _ln is not None:
                 # Type II: effective 1/Ca of the stack (per-story Ca_j, E1.4.2.2-2)
-                _s1 = _capacity_stack(cfg, _ln, dd["dist"], 1.0, None, None, Ca)[base_k]["T"]
-                _s0 = _capacity_stack(cfg, _ln, dd["dist"], 1.0, None, None, None)[base_k]["T"]
+                _vc = ({k: lr[k]["V"] for k in lr} if dd.get("diaphragm") == "semi-rigid" else None)
+                _s1 = _capacity_stack(cfg, _ln, dd["dist"], 1.0, None, None, Ca, _vc)[base_k]["T"]
+                _s0 = _capacity_stack(cfg, _ln, dd["dist"], 1.0, None, None, None, _vc)[base_k]["T"]
                 ca0 = (_s0 / _s1) if _s1 > 0 else Ca.get(base_k, 1.0)
             T_seis = base["T_kip"] * rho_d / ca0      # rho-included ELF strength seed
             T_wind = (wl["T_base_kip"] / ca0) if wl else None
@@ -1131,11 +1136,14 @@ def build_package(name, cfg, res):
                                         cfg.get("strap_Fy_ksi"))
                 Vn, Vn_b = selected_Vn(cfg, dirn, _ln, lsysname)
                 Ve_cap = {k: round(lr[k]["V"] * Om0e, 1) for k in lr}
-                st_om = _capacity_stack(cfg, _ln, dd["dist"], Om0e, None, None, Ca)
+                # semi-rigid floors: the Omega0 level follows the semi-rigid line shears the walls are
+                # designed for (enveloped with the tributary share), not the tributary share alone
+                Vcum = ({k: lr[k]["V"] for k in lr} if dd.get("diaphragm") == "semi-rigid" else None)
+                st_om = _capacity_stack(cfg, _ln, dd["dist"], Om0e, None, None, Ca, Vcum)
                 T_om = round(st_om[base_k]["T"], 1)
                 T_cd, st_cd, T_ev = T_om, None, None
                 if Vn and OmE is not None:
-                    st_cd = _capacity_stack(cfg, _ln, dd["dist"], Om0e, OmE, Vn, Ca)
+                    st_cd = _capacity_stack(cfg, _ln, dd["dist"], Om0e, OmE, Vn, Ca, Vcum)
                     T_ev = round(st_cd[base_k]["T"], 1)
                     T_cd = min(T_om, T_ev)
                 w_bay = _segs[0][0] if _segs else None
