@@ -1119,13 +1119,13 @@ def wind_cases(cfg):
     GCpi = float(w.get("GCpi", GCPI_BY_ENCLOSURE[enc]))
     if cfg.get("spans") and enc != "open":
         warns.append("multi-span (twin/multi-gable) roof: Fig. 27.3-1 has no multi-span gable "
-                     "case -- the seed treats the windward HALF of the total width as windward "
-                     "roof; supply wind_pressures_psf for a cited distribution")
+                     "case -- the preliminary pressures take the windward HALF of the total width as "
+                     "windward roof; supply wind_pressures_psf for a cited distribution")
     if enc == "open":
         cases = _open_cases(cfg, qk, G, th, h, span_ft, xr, warns)
     else:
         cases = _closed_cases(cfg, enc, GCpi, qk, G, th, h, span_ft, xr, oh_in, warns)
-    basis = ("SEED: ASCE 7-22 directional MWFRS. qh = 0.00256 Kz Kzt Ke V^2 = %.2f psf "
+    basis = ("ASCE 7-22 directional MWFRS. qh = 0.00256 Kz Kzt Ke V^2 = %.2f psf "
              "(Eq. 26.10-1 at h = %.1f ft, Exp %s, Kzt %.2f, Ke %.2f; Kd = %.2f applied in the "
              "pressure equation, NOT in qh); G = %.2f; enclosure %s (Table 26.13-1 GCpi = "
              "%.2f); theta = %.1f deg, h/L = %.2f; %s; %d cases: wind from BOTH sides, both "
@@ -2364,11 +2364,11 @@ def run(cfg):
                          B_seed_kipin2=round(m_t * Lb ** 2 / 8.0, 1), combo=e["combo"],
                          label=e["label"],
                          basis=("Z section: shear centre at the centroid -> no load-plane "
-                                "torsion; biaxial bending from Ixy is the agent's"
+                                "torsion; biaxial bending from Ixy is checked with the member design"
                                 if sct["kind"] == "Z" else
                                 "uniform torque m = V e0 / Lb between braces, e0 = web-to-"
                                 "shear-centre distance m = |x0| - xbar; T = mL/2, B ~ mL^2/8 "
-                                "SEED -- agent does the S100 bending+torsion reduction")))
+                                "(preliminary) -- the S100 bending + torsion interaction is checked with the member design")))
     if tors:
         res["torsion_companion"] = tors
     if pw:

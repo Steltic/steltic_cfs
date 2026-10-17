@@ -1542,18 +1542,17 @@ def design_and_report(name, cfg, outdir=None, do_report=True):
         res = CF.run(cfgc)
         p, pkg = write_portal_package(name, cfgc, res, ddir)
         pkg["component_mode"] = (
-            "TIER-0 COMPONENT JOB: the shell frame above is an EXISTING "
-            "structure surrogate (fixed-base skeleton for the report/viewer "
-            "only -- its numbers are NOT design output); deliverables are the "
-            "schedules + agent blocks; new-component reactions must be handed "
-            "off to the EOR of record.")
+            "Component design on an existing structure: the frame shown is a fixed-base outline of "
+            "the existing shell for the report figures only (its numbers are not design output); the "
+            "designed components are in the schedules, and their reactions are handed to the engineer "
+            "of record of the existing building.")
         for m in pkg.get("members", []):
-            m.update(section="EXISTING SHELL -- not in scope (component mode)",
+            m.update(section="existing shell -- outside the scope of this component design",
                      limit_state="n/a; component reactions handed off",
-                     cited="component-mode scope rule", capacity="n/a (existing)",
+                     cited="existing structure (scope of the component design)", capacity="n/a (existing)",
                      DC=0.0)
         for c in pkg.get("connections", []):
-            c.update(selection="EXISTING -- not in scope (component mode)",
+            c.update(selection="existing -- outside the scope of this component design",
                      limit_state="n/a", cited="component-mode scope rule",
                      capacity="n/a", DC=0.0)
         for a in pkg.get("anchorage", []):

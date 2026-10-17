@@ -1818,7 +1818,7 @@ def _cfs_drift_rows(dt, extended=False):
                                                              d.get("line", ""), d.get("story", ""))
         val = next((d.get(k) for k in ("drift_design", "drift_amplified_design",
                                          "drift_amplified", "ratio", "drift_ratio", "theta",
-                                         "value_in", "Delta_in") if d.get(k) is not None), None)
+                                         "value_in", "Delta_in", "value") if d.get(k) is not None), None)
         lim = d.get("limit") if d.get("limit") is not None else d.get("criterion")
         if isinstance(lim, str) and lim.lstrip().upper().startswith("AGENT"):
             lim = None                                  # framework placeholder, not a criterion
@@ -4150,8 +4150,8 @@ def _cfs_custom_model(cfg, pkg):
     (pkg['design_model'] = {'type': 'custom'|'hand', 'description': ...}, or custom_model /
     hand_model / analysis_basis.custom_model)."""
     if str((cfg or {}).get("structure_kind")) == "component" or (pkg or {}).get("component_mode"):
-        return True, ("existing frame: the engine frame is a surrogate of the existing shell; the new "
-                      "components are designed from the schedules below")
+        return True, ("existing frame: the frame shown is an outline of the existing shell for the figures "
+                      "only; the new components are designed from the schedules below")
     for k in ("design_model", "custom_model", "hand_model", "analysis_model"):
         v = (pkg or {}).get(k)
         if isinstance(v, dict):
@@ -4182,10 +4182,12 @@ def _cfs_portal_seeds(name, cfg, res):
 
 
 def _same(a, b, tol=0.02):
+    """True when two printed values agree within a RELATIVE tolerance (2 % default) -- an absolute 0.02
+    would call every small ratio (theta, drift) 'the same'."""
     a, b = _fnum(a), _fnum(b)
     if a is None or b is None:
         return False
-    return abs(a - b) <= max(tol, 1e-3 * max(abs(a), abs(b)))
+    return abs(a - b) <= max(1e-9, tol * max(abs(a), abs(b)))
 
 
 def _cfs_portal_loads(cfg, res, pkg):
