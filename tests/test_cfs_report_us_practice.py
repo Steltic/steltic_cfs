@@ -26,7 +26,7 @@ import report as RPT           # noqa: E402
 from test_cfs_code_basis_screens import ref_cfg    # noqa: E402
 
 AGENT = {"model": "Claude Opus 5.5", "provider": "Anthropic", "harness": "Steltic", "date": "2026-10-17"}
-CREDIT = "Design prepared with Steltic; design agent: Claude Opus 5.5 (Anthropic), 2026-10-17"
+CREDIT = "Designed by Claude Opus 5.5 (Anthropic) with Steltic, 2026-10-17"
 CITE = ("AISI S400-20 Table E1.3-1 (7/16 in. OSB, No. 8 screws); phi_v = 0.60 (E1.3.2) "
         "[RAG chunk E1.3.1.1.3 part 2/3] (retrieved verbatim)")
 
@@ -91,7 +91,9 @@ def test_design_credit_format():
     assert RPT._cfs_design_credit({"design_agent": AGENT}) == CREDIT
     assert RPT._cfs_design_credit({}) == ""
     assert RPT._cfs_design_credit({"design_agent": {"model": "Claude Opus 5.5", "provider": "Anthropic"}}) == \
-        "Design prepared with Steltic; design agent: Claude Opus 5.5 (Anthropic)"
+        "Designed by Claude Opus 5.5 (Anthropic) with Steltic"
+    assert RPT._cfs_design_credit({"design_agent": "Claude Opus 5.5"}) == "Designed by Claude Opus 5.5 with Steltic"
+    assert RPT._cfs_design_credit({"design_agent": {"provider": "Anthropic"}}) == ""      # no model recorded
 
 
 # ---------------- whole report: publication mode ----------------
@@ -110,8 +112,8 @@ def test_wall_report_body_has_no_harness_text(wall_report):
     txt = _text(html)
     assert not FORBIDDEN.search(txt), FORBIDDEN.search(txt).group(0)
     assert re.search(r"\bNone\b|\bAGENT\b|\bSEED\b", txt) is None
-    # 'agent' only in the design credit
-    assert txt.lower().count("agent") == txt.count("design agent: Claude Opus 5.5") > 0
+    # no 'agent' anywhere in the body; the design credit names the model
+    assert "agent" not in txt.lower()
     assert CREDIT in txt
     assert "AISI S100-16 (2020) w/S2-20 (as referenced by IBC 2024)" in txt
     # the design-process records went to the QA annex, linked from the QA chapter

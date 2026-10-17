@@ -3305,22 +3305,18 @@ def _cfs_publish(cfg, pkg):
 
 
 def _cfs_design_credit(pkg):
-    """'Design prepared with Steltic; design agent: <model> (<provider>), <date>' from
-    calc_package_cfs['design_agent']; '' when absent."""
-    da = (pkg or {}).get("design_agent")
-    if not da:
+    """'Designed by <model> (<provider>) with Steltic, <date>' from
+    calc_package_cfs['design_agent'] (same wording as the hot-rolled report); '' when no
+    model is recorded. A plain string is the model name."""
+    da = (pkg or {}).get("design_agent") if isinstance(pkg, dict) else None
+    if isinstance(da, str) and da.strip():
+        da = {"model": da.strip()}
+    if not isinstance(da, dict) or not da.get("model"):
         return ""
-    if isinstance(da, str):
-        return _html.escape("Design prepared with Steltic; design agent: %s" % da)
-    if not isinstance(da, dict):
-        return ""
-    s = "Design prepared with %s" % (da.get("harness") or "Steltic")
-    model, prov, date = da.get("model"), da.get("provider"), da.get("date")
-    if model:
-        s += "; design agent: %s" % model + (" (%s)" % prov if prov else "")
-    if date:
-        s += ", %s" % date
-    return _html.escape(s)
+    harness = da.get("harness") or "Steltic"
+    return _html.escape("Designed by %s%s with %s%s" % (
+        da["model"], (" (%s)" % da["provider"]) if da.get("provider") else "", harness,
+        (", %s" % da["date"]) if da.get("date") else ""))
 
 
 def _cfs_rc(cfg):
