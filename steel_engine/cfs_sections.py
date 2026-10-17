@@ -433,7 +433,7 @@ def gross_props(name_or_geom, r_in=None):
     return out
 
 
-def built_up(name, n=2, arrangement="back_to_back"):
+def built_up(name, n=2, arrangement="back_to_back", pairs="composite"):
     """Gross props of an n-ply built-up of identical channels (S/T/U designator).
     arrangement 'back_to_back': n/2 web-to-web pairs (n even), pairs side by side with
       flange tips touching (n > 2), stitched per S240/S100 I1.2 (agent's item).
@@ -442,7 +442,10 @@ def built_up(name, n=2, arrangement="back_to_back"):
     for the stated arrangement: back-to-back pair Iy uses the centroid distance from the
     JOINT plane (xbar + t/2), Cw from the sectorial integral about the pair's shear centre
     (joint plane) -- a prior version used xbar from the web midline (Iy -5%) and Cw = 2 Cw1.
-    Boxed: Cw ~ 0, J by Bredt for each closed cell."""
+    Boxed: Cw ~ 0, J by Bredt for each closed cell.
+    pairs (n > 2): 'composite' -- the pairs act together out of plane (Iy about the group centroid), which needs a
+    designed shear connection between the pairs (a stitched chord pack); 'independent' -- each pair on its own
+    (Iy = n/2 x Iy of one pair), the conservative value where no such connection is designed (portal members)."""
     if n < 1 or int(n) != n:
         raise ValueError("built_up: n must be a positive integer (got %r)" % (n,))
     n = int(n)
@@ -482,16 +485,22 @@ def built_up(name, n=2, arrangement="back_to_back"):
         w_pair = 2 * p["flange"]
     # pairs side by side (centres spaced w_pair), symmetric about the group centroid
     offs = [(k - (npair - 1) / 2.0) * w_pair for k in range(npair)]
-    Iy = sum(Iy_pair + 2 * A1 * o * o for o in offs)
+    Iy = (npair * Iy_pair if str(pairs).lower().startswith("indep") else
+          sum(Iy_pair + 2 * A1 * o * o for o in offs))
     Cw = Cw_pair * npair          # pairs act independently in warping (stated)
     A, Ix = n * A1, n * p["Ix"]
     return dict(A=A, Ix=Ix, Iy=Iy, rx=math.sqrt(Ix / A), ry=math.sqrt(Iy / A),
                 J=J_pair * npair, Cw=Cw, t=t, depth=p["depth"], flange=p["flange"],
                 lip=p["lip"], Fy=p["Fy"], base=name, n_ply=n, built_up=arrangement,
                 x0=0.0, m=0.0,
+                pairs=("single pair" if npair == 1 else ("independent" if str(pairs).lower().startswith("indep")
+                                                           else "composite")),
                 note=("in-plane A/Ix exact (n x single); out-of-plane Iy/J/Cw for %d %s "
-                      "pair(s) side by side -- agent verifies the stitching/interconnection "
-                      "that makes them act as assumed" % (npair, arrangement)))
+                      "pair(s) side by side%s" % (npair, arrangement,
+                      "" if npair == 1 else (" acting independently (no shear connection between pairs credited)"
+                                             if str(pairs).lower().startswith("indep") else
+                                             " acting together -- the shear connection between the pairs (stitching) "
+                                             "must be designed for it"))))
 
 
 def built_up_back_to_back(name):
