@@ -4840,7 +4840,7 @@ _QA_CATS = (
     ("Code basis", "screw &phi; = 0.50 / &Omega; = 3.00 and the screw's own shear strength (S100-16 w/S2-20 J4); "
                    "ASTM A449 rod strength by diameter; interaction &ge; its axial term (H1-1b aware); "
                    "ASCE 7-22 snow factors; no framework labels as design basis",
-     r"screw|A449|interaction|H1-1b|H1\.1|snow factor|snow drift|rain-on-snow|seed label|rod strength"),
+     r"screw|A449|interaction|H1-1b|H1\.1|snow factor|snow drift|rain-on-snow|seed label|placeholder label|rod strength"),
     ("Drift and stability", "every drift row within its Table 12.12-1 limit; &theta; &le; &theta;<sub>max</sub>",
      r"\[drift|theta|stability"),
     ("ELF self-check", "a quoted self-check uses the same W and V as Section 3", r"ELF self-check"),
@@ -4902,8 +4902,18 @@ def _cfs_qa_section(name, root, cfg, res, pkg, annex=None, num=7):
     if dt:
         ng = [d for d in dt if d.get("ok") is False]
         nov = [d for d in dt if d.get("ok") is None and not d.get("waived") and d.get("DC") is None]
-        vals = [(_fnum(d.get("drift_design", d.get("drift_amplified"))), _fnum(d.get("limit"))) for d in dt]
-        ratios = [v / l for v, l in vals if v is not None and l]
+        def _dr(d):
+            chk = str(d.get("check") or "")
+            if "theta" in chk or "apex" in chk:          # stability / roof deflection rows
+                return None
+            v = _fnum(d.get("drift_design", d.get("drift_amplified")))
+            if v is None and chk == "seismic_drift":     # portal: Cd*delta_xe/Ie / h_sx vs the limit
+                v = _fnum(d.get("ratio"))
+            lim = _fnum(d.get("limit"))
+            if v is not None and lim:
+                return v / lim
+            return _fnum(d.get("DC")) if chk == "eave_sway" else None
+        ratios = [r for r in (_dr(d) for d in dt) if r is not None]
         mv.append(["Drift record", "%d rows; worst drift / limit = %s; %d failing, %d without a verdict" % (
             len(dt), ("%.2f" % max(ratios)) if ratios else "&mdash;", len(ng), len(nov))])
     th = _find_theta(pkg)

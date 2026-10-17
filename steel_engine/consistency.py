@@ -1709,7 +1709,7 @@ def _seed_label_issues(pkg):
             printed = ["basis"]
         if printed:
             lab = str(c.get(printed[0]))
-            out.append("[collector %s] the framework seed label '%s' is left in place as the design "
+            out.append("[collector %s] the framework's placeholder label '%s' is left in place as the design "
                        "basis -- state the actual basis in design_basis (e.g. S400 expected strength "
                        "capped at the Omega0 level, or ASCE 7-22 12.10.2.1 Omega0)"
                        % (c.get("id"), lab[:70]))

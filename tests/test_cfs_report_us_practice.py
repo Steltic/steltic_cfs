@@ -241,7 +241,7 @@ def test_portal_r3_has_no_wall_boilerplate():
     assert "four-term" not in serv and "Serviceability" in serv
 
 
-def test_portal_basis_prints_the_12_7_2_frame_weight():
+def test_portal_basis_prints_the_12_7_2_frame_weight(tmp_path):
     pcfg = dict(CF._demo_cfg(), system="not_detailed", collateral=3.0, clad=2.5,
                 seis=dict(SDS=0.30, SD1=0.12, S1=0.08, R=3.0, Cd=3.0, Om0=3.0, Ie=1.0, W_frame_kip=None))
     res = CF.run(pcfg)
@@ -253,6 +253,10 @@ def test_portal_basis_prints_the_12_7_2_frame_weight():
     assert "V = C<sub>s</sub>W" in lab["ELF (&sect;12.8), per frame"]
     assert "4.5 psf &times; " in w and " &rarr; W = " in w
     assert "all other structures" in lab["drift-limit basis"] and "cfg[" not in lab["drift-limit basis"]
+    html = open(RPT.build_report_cfs("P", pcfg, res, pkg, str(tmp_path)), encoding="utf-8").read()
+    m = re.search(r"worst drift / limit = ([\d.]+)", html)           # the portal seismic drift row counts
+    sd = next(d for d in pkg["drift_table"] if d["check"] == "seismic_drift")
+    assert m and float(m.group(1)) == pytest.approx(sd["ratio"] / sd["limit"], abs=0.01)
     grav = {r[0]: r[1] for r in RPT._cfs_gravity_rows(pcfg, pkg)}
     assert grav["Wall cladding (in the seismic weight, &sect;12.7.2)"] == "2.5 psf"
 
