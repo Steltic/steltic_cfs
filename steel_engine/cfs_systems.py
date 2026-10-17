@@ -368,7 +368,7 @@ _TIER_MIN = {  # minimum sensible tier by declared structure kind
     # single elevated level on posts (storage mezzanine / work platform) on the wall path:
     # the only level is a FLOOR (live load, storage weight), not a roof
     "platform": 0, "mezzanine": 0,
-    "portal": 1, "canopy": 1, "purlin": 0,
+    "portal": 1, "canopy": 1, "purlin": 0, "component": 0,   # component design on an existing shell
     "portal_singlechannel": 1,   # Tier 2 recommended; 1 is the floor
 }
 
