@@ -437,7 +437,7 @@ def test_two_span_portal_weight_covers_both_spans():
     sw = res["seismic_weight"]
     assert sw["roof_plan_length_ft"] == pytest.approx(70.0, abs=0.01)
     assert sw["roof_slope_length_ft"] == pytest.approx(4 * math.hypot(17.5, 4.0), abs=0.01)
-    assert res["seismic"]["T_s"] == pytest.approx(0.028 * 30.0 ** 0.8, rel=1e-3)      # hn = apex
+    assert res["seismic"]["T_s"] == pytest.approx(0.028 * 28.0 ** 0.8, rel=1e-3)      # hn = average roof height (26 + 30)/2
 
 
 def test_two_span_portal_viewer_and_model_figure():
