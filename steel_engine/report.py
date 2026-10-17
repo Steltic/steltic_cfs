@@ -702,22 +702,60 @@ def _load_activity(name):
     merged.sort(key=lambda r: (r.get("ts") or "", r.get("step") or 0))
     return merged, src
 
+_LOG_NAME = {"search_engineering_standards": "code provision look-up", "run_python": "analysis / check run",
+             "new_activity_log": "design started"}
+_LOG_STD = {"engineering_standards_S100": "AISI S100-16 (2020)", "engineering_standards_S240": "AISI S240-20",
+            "engineering_standards_S400": "AISI S400-20", "engineering_standards_ASCE7": "ASCE 7-22",
+            "engineering_standards_A360": "AISC 360-22", "engineering_standards_A341": "AISC 341-22"}
+
+
+def _log_txt(tool, d, result=False):
+    """A design-log entry in engineering terms (no tool syntax, file names or paths)."""
+    d = str(d or "")
+    if result:
+        m = re.match(r"(\d+) hits?", d)
+        if tool == "search_engineering_standards":
+            return ("%s matching provision%s" % (m.group(1), "" if m.group(1) == "1" else "s")) if m else "no match"
+        m = re.search(r"(\d+) issues?", d)
+        if m:
+            return "%s issues" % m.group(1)
+        return "completed" if ("rc=0" in d or d in ("started", "")) else ("returned an error" if "rc=" in d else "")
+    if tool == "search_engineering_standards":
+        m = re.match(r"\[([^\]]+)\]\s*(?:exact_section|exact_equation|exact_table|eq|table|fts|keyword)?\s*(.*)$", d)
+        if m:
+            return "%s %s" % (_LOG_STD.get(m.group(1), m.group(1).replace("engineering_standards_", "")),
+                              m.group(2).replace("\u00ab", "\u201c").replace("\u00bb", "\u201d"))
+        return d
+    if tool == "run_python":
+        for pat, txt in ((r"design_and_report|run_job.*design|pipeline", "analysis model, demand envelope and report"),
+                         (r"consistency|check", "self-consistency check of the calculation package"),
+                         (r"build_report|report", "report rendering"), (r"fill", "member and connection design")):
+            if re.search(pat, d):
+                return txt
+        return "analysis run"
+    if tool == "new_activity_log":
+        return "design started"
+    return re.sub(r"(?:/[\w.-]+)+/([\w.-]+)", r"\1", d)
+
+
 def _activity_section(name):
     recs, src = _load_activity(name)
-    h = ["<h2>Appendix C — Activity log</h2>",
-         "<p>Every tool call made during the design, recorded by the MCP server, summarised below.</p>"]
+    h = ["<h2>Design log</h2>",
+         "<p>Analysis runs, self-consistency checks and code-provision look-ups recorded while this design was "
+         "prepared (the look-ups verify the governing provisions against the text of the standards).</p>"]
     if not recs:
-        h.append("<p class='note'>[no activity_log.jsonl found — call new_activity_log() at the start of "
-                 "the design so the server records the tool calls]</p>")
+        h.append("<p class='cnote'>No design log was recorded for this job.</p>")
         return "".join(h)
     counts = {}
-    for r in recs: counts[r.get("tool", "?")] = counts.get(r.get("tool", "?"), 0) + 1
-    _sd = os.path.relpath(src, HERE) if src else "scratch log"
-    h.append(f"<p>Source: <code>{_sd}</code> — {len(recs)} tool calls.</p>")
-    h.append(_table(["Tool", "Calls"], [[k, counts[k]] for k in sorted(counts)]))
-    rows = [[i + 1, (r.get("ts", "").split("T")[-1]), r.get("tool", ""),
-             r.get("detail", ""), r.get("result", "")] for i, r in enumerate(recs)]
-    h.append("<h3>Chronological tool calls</h3>" + _table(["#", "time", "tool", "detail", "result"], rows))
+    for r in recs:
+        k = _LOG_NAME.get(r.get("tool", "?"), str(r.get("tool", "?")).replace("_", " "))
+        counts[k] = counts.get(k, 0) + 1
+    h.append(_table(["Activity", "Count"], [[k, counts[k]] for k in sorted(counts)]))
+    rows = [[i + 1, (r.get("ts", "").split("T")[-1]),
+             _LOG_NAME.get(r.get("tool", ""), str(r.get("tool", "")).replace("_", " ")),
+             _html.escape(_log_txt(r.get("tool", ""), r.get("detail", ""))),
+             _html.escape(_log_txt(r.get("tool", ""), r.get("result", ""), result=True))] for i, r in enumerate(recs)]
+    h.append("<h3>Chronological record</h3>" + _table(["#", "time", "activity", "detail", "result"], rows))
     return "".join(h)
 
 def _load_pkg(name, root=None):
@@ -2638,39 +2676,45 @@ def _grounding_check(cfg, name, pkg):
                      ev, ("&mdash;" if not required else ("grounded" if ok else "<b>MISSING</b>"))])
     row("AISI S100 &mdash; member/connection limit states (EWM)", True,
         n("engineering_standards_S100") > 0 or cite_s100,
-        f"{n('engineering_standards_S100')} queries" + (" + cited in calc_package" if cite_s100 else ""))
+        f"{n('engineering_standards_S100')} provision look-ups" + (" + cited in the calculation package" if cite_s100 else ""))
     row("AISI S240 &mdash; framing rules (studs/track/built-up/bracing/trusses)", is_wall,
         n("engineering_standards_S240") > 0 or cite_s240,
-        f"{n('engineering_standards_S240')} queries" + (" + cited in calc_package" if cite_s240 else ""),
+        f"{n('engineering_standards_S240')} provision look-ups" + (" + cited in the calculation package" if cite_s240 else ""),
         na="n/a (no light-frame walls)")
     row("AISI S400 &mdash; seismic wall/strap/SBMF capacities + capacity design",
         needs_s400, n("engineering_standards_S400") > 0 or has_cap or cite_s400,
-        f"{n('engineering_standards_S400')} queries" + (" + capacity_design block" if has_cap else "")
-        + (" + cited in calc_package" if cite_s400 else ""),
+        f"{n('engineering_standards_S400')} provision look-ups" + (" + capacity-design record" if has_cap else "")
+        + (" + cited in the calculation package" if cite_s400 else ""),
         na="n/a (no S400 seismic system, or R = 3 in SDC B/C per S400 A1.2.3)")
-    row("Connections grounded (S100 Ch. J / fastener schedules)", True, has_conn or wall_sched,
-        ("connections block present" if has_conn else "")
+    row("Connections verified (S100 Ch. J / fastener schedules)", True, has_conn or wall_sched,
+        ("connection designs present" if has_conn else "")
         + (" / wall fastener schedules filled" if wall_sched else "")
-        or "no connections block and no fastener schedules")
+        or "no connection designs and no fastener schedules")
     nmiss = sum(1 for r in rows if "MISSING" in r[3])
     # staleness / hot-rolled red flags in the cited text
     flags = []
-    if _re.search(r"aisc\s*3(41|60|58)", _ct, _re.I):
-        flags.append("cites AISC 341/360/358 for CFS members or systems — hot-rolled reflex (red flag)")
+    # AISC 341 / 358 never apply to CFS members; AISC 360 is correct for threaded rods, anchor rods, base plates,
+    # hot-rolled members and their bolts / welds -- flagged only where it is cited without such a context
+    _hot = [m for m in _re.finditer(r"aisc\s*3(41|60|58)", _ct, _re.I)]
+    _ok_ctx = _re.compile(r"rod|anchor|threaded|a449|a307|f1554|a36\b|a572|a992|a500|plate|hss|\bw\d+x|base|bolt|weld|"
+                          r"\bj3\b|\bj2\b|\bj8\b|\bj9\b|\bj10\b|j3\.|j2\.|hot-rolled", _re.I)
+    if any(m.group(1) in ("41", "58") or not _ok_ctx.search(_ct[max(0, m.start() - 120):m.end() + 120]) for m in _hot):
+        flags.append("cites AISC 341/360/358 for CFS members or systems — check that the AISI standards govern")
     if _re.search(r"\bs\s*(110|213|214)\b", _ct, _re.I):
         flags.append("cites retired S110/S213/S214 (merged into S400/S240) — staleness tell")
     if _re.search(r"\bs\s*310\b", _ct, _re.I):
-        flags.append("cites S310 — NOT in the RAG: verify the value's stated basis (a fabricated S310 "
+        flags.append("cites S310 — not in the reference library: verify the value's stated basis (a fabricated S310 "
                      "clause number is a red flag)")
     head = ("<h3>Grounding verification</h3>"
-            f"<p>Whether the design queried the RAG collections its systems require. R = {R}; "
+            f"<p>Whether the governing provisions of each standard the systems require were verified against the "
+            f"text of the standard. R = {R}; "
             + ("light-frame walls present &mdash; S100 + S240 required; S400 for the seismic "
                "system (wind shear walls: S240 B5)." if is_wall else
                "frame path &mdash; S100 required; S240/S400 only where light-frame walls/straps appear.")
             + "</p>")
     tail = ("<p class='note'>Grounding incomplete: the items marked MISSING were required for this building's "
-            "systems but no RAG query / calc-package evidence was found. Re-run those checks against the RAG.</p>"
-            if nmiss else "<p>All required RAG grounding is present.</p>")
+            "systems but no provision look-up or calculation-package evidence was found; verify those provisions "
+            "against the standards.</p>" if nmiss else "<p>All required provision verification is present.</p>")
     if flags:
         tail += ("<p class='note'><b>Citation red flags:</b></p><ul>"
                  + "".join("<li>%s</li>" % f for f in flags) + "</ul>")
@@ -5039,11 +5083,20 @@ def _cfs_write_qa_annex(name, cfg, res, pkg, root, qa_num=7):
             parts.append("<h3>%s</h3>" % _html.escape(k.replace("_", " ").capitalize()))
             parts.append("<pre>%s</pre>" % _html.escape(v if isinstance(v, str) else json.dumps(v, indent=1)[:20000]))
     notes = list((pkg or {}).get("preflight_warnings") or []) + list((res or {}).get("preflight_warnings") or [])
+    gate = []
     for dd in ((res or {}).get("directions") or {}).values():
-        notes += ["gate: %s" % f for f in dd.get("gate_flags", [])]
-    if notes:
-        parts.append("<h2>Analysis screening notes</h2><ul>%s</ul>" % "".join(
-            "<li>%s</li>" % _html.escape(str(n)) for n in dict.fromkeys(map(str, notes))))
+        gate += ["model vs tributary distribution: %s" % f for f in dd.get("gate_flags", [])]
+    if notes or gate:
+        parts.append("<h2>Analysis screening notes</h2><p>Screens the analysis raises for the engineer to evaluate; "
+                     "the evaluation recorded in the calculation package follows each group.</p>")
+        if notes:
+            parts.append("<ul>%s</ul>" % "".join("<li>%s</li>" % _html.escape(str(n)) for n in dict.fromkeys(map(str, notes))))
+        if gate:
+            parts.append("<h3>Wall-line forces: semi-rigid / rigid model vs tributary distribution</h3><ul>%s</ul>" % "".join(
+                "<li>%s</li>" % _html.escape(str(n)) for n in dict.fromkeys(map(str, gate))))
+            rsl = (pkg or {}).get("model_vs_tributary_flags_resolution")
+            parts.append("<p><b>Evaluation:</b> %s</p>" % (_pt(rsl) if rsl else
+                         "the wall lines are designed for the forces of the diaphragm analysis adopted (Section 2)."))
     try:
         parts.append(_activity_section(name))
     except Exception as ex:

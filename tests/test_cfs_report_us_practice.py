@@ -120,7 +120,7 @@ def test_wall_report_body_has_no_harness_text(wall_report):
     assert "href='qa_annex.html'" in html
     annex = open(os.path.join(root, "qa_annex.html"), encoding="utf-8").read()
     assert "Grounding verification" in annex and "CORRECTED vs my offline memory" in annex
-    assert "chunk E2.3 truncated" in annex and "Activity log" in annex
+    assert "chunk E2.3 truncated" in annex and "Design log" in annex
 
 
 def test_design_basis_tables_are_complete(wall_report):
