@@ -2696,9 +2696,8 @@ def _grounding_check(cfg, name, pkg):
     # AISC 341 / 358 never apply to CFS members; AISC 360 is correct for threaded rods, anchor rods, base plates,
     # hot-rolled members and their bolts / welds -- flagged only where it is cited without such a context
     _hot = [m for m in _re.finditer(r"aisc\s*3(41|60|58)", _ct, _re.I)]
-    _ok_ctx = _re.compile(r"rod|anchor|threaded|a449|a307|f1554|a36\b|a572|a992|a500|plate|hss|\bw\d+x|base|bolt|weld|"
-                          r"\bj3\b|\bj2\b|\bj8\b|\bj9\b|\bj10\b|j3\.|j2\.|hot-rolled", _re.I)
-    if any(m.group(1) in ("41", "58") or not _ok_ctx.search(_ct[max(0, m.start() - 120):m.end() + 120]) for m in _hot):
+    _cfs_mem = _re.compile(r"\b\d{3,4}[STUFstuf]\d{2,3}-\d{2,3}\b")          # a CFS designator, e.g. 600S162-54
+    if any(m.group(1) in ("41", "58") or _cfs_mem.search(_ct[max(0, m.start() - 80):m.end() + 80]) for m in _hot):
         flags.append("cites AISC 341/360/358 for CFS members or systems — check that the AISI standards govern")
     if _re.search(r"\bs\s*(110|213|214)\b", _ct, _re.I):
         flags.append("cites retired S110/S213/S214 (merged into S400/S240) — staleness tell")
@@ -3570,7 +3569,14 @@ def _cfs_height_limit(cfg):
     if not row or not sdc or sdc == "A":
         return None
     H = [_fnum(h) for h in (cfg.get("heights_ft") or []) if _fnum(h) is not None]
-    hn = sum(H) if H else _fnum(cfg.get("apex_ft"))
+    if H:
+        hn = sum(H)
+    else:                                   # portal: average roof height (ASCE 7-22 11.2, sloped roofs)
+        try:
+            import cfs_frame as _CF
+            hn = _CF.portal_hn(cfg)
+        except Exception:
+            hn = _fnum(cfg.get("apex_ft"))
     lim = row["hlim"].get(sdc)
     if lim == 0.0:
         return "<b>not permitted in SDC %s</b> (Table 12.2-1)" % sdc
@@ -3876,7 +3882,7 @@ def _cfs_snow_rows(cfg, pkg):
              else "<b>not stated</b>"],
             ["Exposure factor C<sub>e</sub> (Table 7.3-1)", _cn(_fnum(ce)) if ce is not None else
              ("not stated (1.0 used by the analysis)" if portal else "<b>not stated</b>")],
-            ["Thermal factor C<sub>t</sub> (Table 7.3-2)", _cn(_fnum(ct)) if ct is not None else
+            ["Thermal factor C<sub>t</sub> (Tables 7.3-2 / 7.3-3)", _cn(_fnum(ct)) if ct is not None else
              ("not stated (1.0 used by the analysis)" if portal else "<b>not stated</b>")],
             ["Snow importance factor I<sub>s</sub>", _cn(_fnum(is_)) if is_ is not None else
              "not used: ASCE 7-22 maps a risk-targeted p<sub>g</sub>"]]

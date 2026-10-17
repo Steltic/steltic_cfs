@@ -1606,6 +1606,15 @@ def portal_seismic_weight(cfg, fr, members, meta):
                       + " -> W = %.2f kip" % W)
 
 
+def portal_hn(cfg):
+    """Structural height h_n of a portal building (ASCE 7-22 11.2: for a pitched or sloped roof, from the base to
+    the AVERAGE height of the roof) = (eave + highest apex) / 2; flat roof: the eave height."""
+    eave = float(cfg.get("eave_ft") or 0.0)
+    apex = float(cfg.get("apex_ft") or max([float(sp.get("apex_ft") or 0.0)
+                                            for sp in cfg.get("spans") or []] or [0.0]) or eave)
+    return 0.5 * (eave + max(apex, eave)) if eave else apex
+
+
 def seismic_base_shear(cfg):
     """ELF base shear for the frame tributary (single level at the eave): V = Cs W_frame with
     ASCE 7-22 12.8.1.1: Cs = SDS/(R/Ie), <= SD1/(T R/Ie) for T <= TL (T = Ta = Ct hn^x,
@@ -1618,9 +1627,7 @@ def seismic_base_shear(cfg):
     SDS, R, Ie = float(s["SDS"]), float(s.get("R", 3.0)), float(s.get("Ie", 1.0))
     Cs = SDS / (R / Ie)
     note = ["Cs = SDS/(R/Ie) = %.4f" % Cs]
-    hn = float(cfg.get("apex_ft") or max([float(sp.get("apex_ft") or 0.0)
-                                          for sp in cfg.get("spans") or []] or [0.0])
-               or cfg["eave_ft"])
+    hn = portal_hn(cfg)
     T = s.get("T")
     if T is None and s.get("SD1"):
         T = float(s.get("Ct", 0.028)) * hn ** float(s.get("x", 0.8))
