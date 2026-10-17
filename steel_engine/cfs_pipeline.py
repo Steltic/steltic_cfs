@@ -118,15 +118,15 @@ def diaphragm_idealization(cfg, res=None):
     concrete = top > 1.5 or any(w in mat for w in _CONCRETE_WORDS if w != "topping")
     if decl != "flexible":
         return dict(declared=decl, flexible_ok=False, warnings=warns,
-                    note="diaphragm declared %r -- no flexible idealization; Table 12.2-1 "
+                    note="diaphragm modelled %s -- no flexible idealization; Table 12.2-1 "
                          "footnote b Omega_0 reduction not applicable" % decl)
     if concrete and not calc_ok:
-        warns.append("diaphragm declared FLEXIBLE but %s -- ASCE 7-22 12.3.1.1(3)(a) excludes "
-                     "concrete/similar topping > 1.5 in. (12.3.1.2: concrete slabs may be "
-                     "RIGID). Model semi-rigid (12.3.1) or document 12.3.1.3 "
-                     "(cfg['diaphragm_MDD_ADVE'] > 2); the footnote-b Omega_0 reduction is "
+        warns.append("flexible diaphragm idealization with %s -- ASCE 7-22 12.3.1.1(3)(a) "
+                     "excludes concrete/similar topping > 1.5 in. (12.3.1.2: concrete slabs may "
+                     "be RIGID). Model semi-rigid (12.3.1) or show 12.3.1.3 "
+                     "(delta_MDD/Delta_ADVE > 2); the footnote-b Omega_0 reduction is "
                      "WITHHELD" % ("topping %.2f in." % top if top > 1.5 else
-                                   "material %r" % mat))
+                                   "material %s" % mat))
         return dict(declared=decl, flexible_ok=False, warnings=warns,
                     note="flexible idealization NOT supported by 12.3.1.1 (concrete topping)")
     if calc_ok:
@@ -144,8 +144,8 @@ def diaphragm_idealization(cfg, res=None):
                     note="flexible idealization pending drift compliance (12.3.1.1(3)(b))")
     return dict(declared=decl, flexible_ok=True, warnings=warns,
                 note="flexible per 12.3.1.1 (%s; topping %.2f in. <= 1.5 in.; lines meet "
-                     "Table 12.12-1)" % (mat or "untopped WSP/steel deck assumed -- declare "
-                                         "cfg['diaphragm_material']", top))
+                     "Table 12.12-1)" % (mat or "material not stated: untopped wood structural "
+                                         "panels / steel deck assumed", top))
 
 
 def _om0_eff(cfg, dirn=None, res=None):

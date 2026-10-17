@@ -294,7 +294,7 @@ def test_cfs27_drift_row_by_stories_and_finishes_not_light_frame():
                                        drift_tolerant_finishes=True))
     assert dl == 0.025 and "row 1" in basis
     dl2, b2 = CE.drift_limit_for(box(system="sbmf", sds=0.3, sd1=0.1, s1=0.05))
-    assert dl2 == 0.020 and "NOT declared" in b2
+    assert dl2 == 0.020 and "not stated" in b2 and "cfg[" not in b2
     dl3, _ = CE.drift_limit_for(box(drift_limit=0.015))            # tighter user value honoured
     assert dl3 == 0.015
     # footnote a: single story + finishes accommodate -> no limit (numeric 1.0 sentinel in res)

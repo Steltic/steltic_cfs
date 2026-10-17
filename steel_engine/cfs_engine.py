@@ -590,12 +590,13 @@ def drift_limit_for(cfg, dirn=None, system=None):
                                    cfg.get("drift_limit_no_limit_single_story")),
                                with_basis=True)
     if assumed:
-        basis += ("; cfg['drift_tolerant_finishes'] NOT declared -> %s assumed (declare True/"
-                  "False)" % ("finishes accommodate drift" if acc else "'all other structures'"))
+        basis += ("; drift tolerance of the interior walls, partitions and ceilings not stated: %s"
+                  % ("light-frame construction taken to accommodate the story drift" if acc
+                     else "the 'all other structures' row used"))
     user = cfg.get("drift_limit")
     if dl is not None and isinstance(user, (int, float)) and float(user) < dl:
         dl = float(user)
-        basis += "; tighter cfg['drift_limit']=%.3f used" % dl
+        basis += "; project limit %.3f h_sx (tighter than the Table value) used" % dl
     return dl, basis
 
 

@@ -2367,7 +2367,8 @@ def _seismic_block(cfg, secs_eff, cases, tmpl, meta0, fr0, sh, pw):
     Cd = float(Cd)
     Delta = Cd * dxe / Ie
     lim = cfg.get("drift_limit")
-    lim_basis = "cfg['drift_limit'] (declared)"
+    lim_basis = ("project drift limit %.3f h_sx (stated)" % float(lim)
+                 if isinstance(lim, (int, float)) else "project drift limit (stated)")
     if lim is None:
         # Table 12.12-1 row 1 (0.025 at RC I/II) needs DECLARED drift-tolerant finishes
         # (cfg['drift_tolerant_finishes'], as on the wall path, cfs_engine.drift_limit_for);
@@ -2379,14 +2380,14 @@ def _seismic_block(cfg, secs_eff, cases, tmpl, meta0, fr0, sh, pw):
                                  str(cfg.get("risk_cat", "II")).upper(),
                                  finishes_accommodate=bool(acc) if acc is not None else False,
                                  with_basis=True)
-        lim_basis = "cfs_systems.drift_limit: " + b_
+        lim_basis = b_
         if acc is None:
-            lim_basis += ("; cfg['drift_tolerant_finishes'] NOT declared -> 'all other "
-                          "structures' assumed (declare True where the walls, partitions and "
-                          "ceilings accommodate the story drift)")
+            lim_basis += ("; drift tolerance of the walls, partitions and ceilings not stated: "
+                          "the 'all other structures' row used")
     if cfg.get("drift_no_limit_single_story") or cfg.get("drift_limit_no_limit_single_story"):
         lim = None
-        lim_basis = "Table 12.12-1 footnote a (declared: single story, finishes accommodate)"
+        lim_basis = ("Table 12.12-1 footnote a: single story whose interior walls, partitions "
+                     "and ceilings accommodate the story drift -- no drift limit")
     if lim is not None and _sdc(cfg) in ("D", "E", "F"):
         lim = lim / rho                                   # 12.12.1.1 moment frames
         lim_basis += " / rho (12.12.1.1, moment frame in SDC %s)" % _sdc(cfg)

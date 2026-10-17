@@ -314,7 +314,7 @@ def drift_limit(system_key, n_stories, risk_cat="II", finishes_accommodate=None,
     dl = _DRIFT_ROWS["row1" if row1 else "other"][rc]
     basis = ("Table 12.12-1 %s, RC %s: %.3f h_sx" %
              ("row 1 (<= 4 stories, interior walls/partitions/ceilings accommodate drift%s)"
-              % (" -- ASSUMED, not declared" if finishes_accommodate is None else "")
+              % ("; assumed, finishes not stated" if finishes_accommodate is None else "")
               if row1 else "'all other structures'", rc, dl))
     sysd = SYSTEMS.get(system_key) or {}
     if sysd.get("moment_frame") and str(SDC or "").upper() in ("D", "E", "F") and rho:
