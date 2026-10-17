@@ -407,7 +407,7 @@ searches where one pinpoint lookup would have worked, and it burns the search so
 
 | `collection=` | Document | Ask it for |
 |---|---|---|
-| `engineering_standards_S100` | AISI S100-16 (R2020) w/S3 | CFS member capacity — E2/E3/E4, F2–F4, G2, G5 web crippling, H1, Ch. J fasteners, App. 1 EWM |
+| `engineering_standards_S100` | AISI S100-16 (R2020) w/S3-22 (design to S2-20 where they differ, see US-PRACTICE) | CFS member capacity — E2/E3/E4, F2–F4, G2, G5 web crippling, H1, Ch. J fasteners, App. 1 EWM |
 | `engineering_standards_S240` | AISI S240-20 | light-frame framing, built-up interconnection, bracing, trusses |
 | `engineering_standards_S400` | AISI S400-20 | seismic / wind walls, straps, SBMF, capacity-design chains, Table E1.3-1 |
 | `engineering_standards_ASCE7` | ASCE 7-22 | **Hard rule 2 still stands: loads are computed, not retrieved.** Use this only to read back a printed value you are citing — R / Ω₀ / Cd off Table 12.2-1 is the usual one — never to generate loads |
@@ -508,6 +508,52 @@ prevent. Never invent a clause number, an equation id, a table id or a φ/Ω val
 **These rules are locked to the editions in the stem table** — AISI S100-16 (R2020) w/S3, S240-20,
 S400-20, ASCE/SEI 7-22. Every trap and every absence above is edition-specific. If the corpus is ever
 rebuilt on a different edition, **re-verify each one before reusing it**.
+
+## US-PRACTICE REQUIREMENTS (October 2026 review) — these override anything older in this file
+- **Edition.** IBC 2024 references **AISI S100-16 (2020) with Supplement 2 (S2-20)**; the corpus
+  prints S100-16 (2020) **with S3-22**. Where they differ, design to S2-20 and say so in the package:
+  screw connections (J4) use **Omega = 3.00 / phi = 0.50** (S3-22 prints 2.80 / 0.55 — do not use
+  those). State the edition once in the design basis.
+- **Screws: check the fastener itself.** Besides sheet tilting/bearing (J4.3.1) and pull-out /
+  pull-over (J4.4), check the screw's own shear and tension strength from the manufacturer's
+  ICC-ES report (Pss, Pts; e.g. a No. 12 self-drilling screw is about 2.0-2.2 kip in shear — cite
+  the product or state the assumed value as the specification minimum). Multi-ply stitching must
+  stay within the screw's drilling capacity (total steel thickness), or use bolts.
+- **Continuous threaded rods (ASTM A449):** Fy/Fu = 92/120 ksi for d <= 1 in, **81/105 ksi for
+  1-1/8 to 1-1/2 in, 58/90 ksi for 1-5/8 to 3 in**. Design the rod per AISC 360-22 J3.6
+  (phi Rn = 0.75 x 0.75 Fu Ab) or to the delegated tie-down system's ICC-ES (AC316) listing; keep
+  the elongation in the drift. Never take Fu = 120 ksi for rods over 1 in.
+- **Capacity-protected anchorage and shear transfer:** apply ONE rule to every line and state it:
+  hold-downs/chords at T_cd (S400 E1.4.1.2 / E2.4.1.2 / E3.4.1 / E6.3.3); sill/track shear
+  anchorage and wall-to-floor shear transfer at the same capacity-design shear (expected-strength
+  stack capped at the Omega0 level); concrete anchors in SDC C-F per ACI 318-19 17.10 (Omega0 or
+  the light-frame provisions of 17.10.5.3 / 17.10.6.3).
+- **Diaphragms are a deliverable.** Classify per ASCE 7-22 12.3.1 (flexible only where 12.3.1.1
+  applies — concrete-filled deck or slabs are NOT flexible light-frame diaphragms; use rigid,
+  semirigid or the 12.3.1.3 envelope), compute Fpx (12.10.1.1), unit shear, chords, collectors and
+  deflection, and state the diaphragm capacity basis (AISI S400 Ch. F for wood-structural-panel or
+  steel-sheet diaphragms; SDI / S310 for steel deck, delegated with the demand stated).
+- **Exterior studs:** design for ASCE 7-22 Ch. 30 C&C out-of-plane wind with the axial load
+  (S100 H1.2 combined), web crippling at the tracks, and deflection L/360 (L/600-L/720 behind
+  brittle finishes) — this is the most common CFS calculation in US practice.
+- **Snow / rain (ASCE 7-22):** strength-level snow — 1.2D + 1.0S, companions 0.3S (2a, 4a) and
+  0.15S (6), as the engine generates; Ct per Table 7.3-2 (1.2 unheated / open-air / cold ventilated roofs, 1.3 freezer buildings;
+  heated structures per Table 7.3-3), drift height by **Eq. 7.6-1 with the winter wind parameter W2** (not the 7-16 hd
+  formula), rain-on-snow 8 psf (7.10), rain loads and ponding (Ch. 8) for low-slope roofs.
+- **rho in SDC D-F:** show 12.3.4.2 (a) or (b) numerically (for light-frame walls, the
+  2L/hsx bay count per line and story); never assert rho = 1.0.
+- **Design basis table:** occupancy, Risk Category, Ie, site class, SDC (Tables 11.6-1 and 11.6-2,
+  with SD1), wind V / exposure / Kd / enclosure, pg / Ce / Ct / Is / pf, dead / live / collateral
+  loads, and materials (framing ASTM A1003 grade and Fy/Fu per member, screws ASTM C1513, rods
+  ASTM A449, sheathing PS-1/PS-2 or ASTM A1003 steel sheet, bolts ASTM F3125, anchors).
+- **Tables print the design demand.** A hold-down / chord / anchorage table prints the
+  capacity-design tension or shear that the D/C uses, beside the ELF value.
+- **Write as an engineer.** No "agent", "RAG", "retrieved", "seeded", "brief's trap/test", "TODO",
+  file names or cfg keys in any calc-package string. Record the design credit as
+  `calc_package_cfs['design_agent'] = {"model": ..., "provider": ..., "harness": "Steltic", "date": ...}`.
+- **US typology note:** cold-formed portal frames are uncommon in US practice (pre-engineered
+  metal buildings and hot-rolled frames dominate); design the system the brief asks for, check
+  multi-ply constructability, and say so once in the package.
 
 ## CONNECTIONS & ANCHORAGE — design these by reasoning (S100 Ch. J, S400)
 - **Sheathing fasteners** are the wall capacity (the schedule IS the design) — cite the S400 basis.
