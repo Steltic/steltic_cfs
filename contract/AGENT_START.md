@@ -515,9 +515,10 @@ rebuilt on a different edition, **re-verify each one before reusing it**.
   screw connections (J4) use **Omega = 3.00 / phi = 0.50** (S3-22 prints 2.80 / 0.55 — do not use
   those). State the edition once in the design basis.
 - **Screws: check the fastener itself.** Besides sheet tilting/bearing (J4.3.1) and pull-out /
-  pull-over (J4.4), check the screw's own shear and tension strength from the manufacturer's
-  ICC-ES report (Pss, Pts; e.g. a No. 12 self-drilling screw is about 2.0-2.2 kip in shear — cite
-  the product or state the assumed value as the specification minimum). Multi-ply stitching must
+  pull-over (J4.4), check the screw's own shear strength (J4.3.2, Pss) and tension strength
+  (J4.4.3, Pts) from the manufacturer's ICC-ES report (e.g. a No. 12 self-drilling screw is about
+  2.0-2.2 kip in shear — cite the product or state the assumed value as the specification
+  minimum); every screw limit state at phi = 0.50 / Omega = 3.00. Multi-ply stitching must
   stay within the screw's drilling capacity (total steel thickness), or use bolts.
 - **Continuous threaded rods (ASTM A449):** Fy/Fu = 92/120 ksi for d <= 1 in, **81/105 ksi for
   1-1/8 to 1-1/2 in, 58/90 ksi for 1-5/8 to 3 in**. Design the rod per AISC 360-22 J3.6
@@ -550,7 +551,27 @@ rebuilt on a different edition, **re-verify each one before reusing it**.
   capacity-design tension or shear that the D/C uses, beside the ELF value.
 - **Write as an engineer.** No "agent", "RAG", "retrieved", "seeded", "brief's trap/test", "TODO",
   file names or cfg keys in any calc-package string. Record the design credit as
-  `calc_package_cfs['design_agent'] = {"model": ..., "provider": ..., "harness": "Steltic", "date": ...}`.
+  `calc_package_cfs['design_agent'] = {"model": ..., "provider": ..., "harness": "Steltic", "date": ...}`;
+  the report prints "Designed by <model> (<provider>) with Steltic, <date>".
+- **Keys the report prints as written** (anything missing prints as "not stated"):
+  - *cfg:* `occupancy`, `risk_cat`, `site_class`, `seis` (SS, S1, SDS, SD1, Ie); `wind` V, exposure,
+    `Kd`, `Kzt`, `Ke`, `enclosure`; `snow_pg`, `snow_ce`, `snow_ct` (wall path: `snow` = the pf
+    used); `collateral`, `Lr`; portal `clad` (wall cladding in W); `materials` (cfg or package):
+    `{framing, framing_strength, straps, sheathing, steel_sheet, gypsum, screws, screws_strength,
+    rods, bolts, anchor_rods, welds}` or a list of `{item, spec, strength, used}`.
+  - *package:* `rho_justification` (the 12.3.4.2 (a)/(b) showing with numbers);
+    `design_model = {"type": "custom", "description": ...}` when the frame demands come from your
+    own model (the report then prints your demands, never the engine frame's);
+    `sample_calcs` = list of `{title, item, steps: [{step, expression, value, ref}], result, ref}`
+    (one wall, one stud, one rod, one connection).
+  - *design demands* (the value the D/C is computed on, printed beside the rho-ELF / seed):
+    wall lines `v_design_plf` + `design_basis`; hold-downs `T_design_kip` + `design_basis`; chord
+    studs `P_design_kip` with `line` + `direction`; collectors `F_design_kip` + `design_basis`;
+    anchorage (one slot per wall line, seeds `v_elf_plf` / `v_wind_plf` / `v_cd_seed_plf` /
+    `T_cd_seed_kip`) `v_design_plf` (or `v_design_klf`) + `T_design_kip` + `design_basis`; portal
+    members, joints and bases `P_design_kip` / `V_design_kip` / `M_design_kipin` / `T_design_kip`.
+    A seismic design demand below the line's capacity-design seed (T_cd less the available 0.9D
+    relief, v_cd) fails consistency unless the slot records your own Omega_E·Vn (numbers).
 - **US typology note:** cold-formed portal frames are uncommon in US practice (pre-engineered
   metal buildings and hot-rolled frames dominate); design the system the brief asks for, check
   multi-ply constructability, and say so once in the package.
@@ -594,7 +615,8 @@ run present the new schedules and WAIT for the user before updating the report.
   engineering reason; a waived item with D/C > 1.0 is allowed only for a scoped existing / by-others
   item (`waiver_scope: "existing" | "by_others" | "out_of_scope"`) and is listed in the report.
   Hold-downs: write the DESIGN tension (`T_design_kip`) — the seed `T_cum_kip` is the ρ-ELF stack,
-  not the capacity-design demand.
+  not the capacity-design demand. Anchorage slots: the design unit shear (`v_design_plf`) and
+  tension (`T_design_kip`) — `v_cd_seed_plf` / `T_cd_seed_kip` where S400 B3.4 applies.
 
 > ✅ **COMPLETION GATE (enforced by the app) — do NOT declare done until ALL hold in
 > `design/calc_package_cfs.json`:**
@@ -633,7 +655,7 @@ run present the new schedules and WAIT for the user before updating the report.
 
 ### Portal-path cfg schema (`cfs_frame`; feet / psf / kip — brief-facing)
 Portals, canopies and SBMF frames run through **`cfs_frame` via `pipeline.design_and_report`**
-whenever the cfg has `span_ft`. The cfg is in **FEET / PSF / MPH / KIP — never ×12**:
+whenever the cfg has `span_ft` (or `spans`). The cfg is in **FEET / PSF / MPH / KIP — never ×12**:
 `cfs_frame.check_units` refuses a cfg whose span/eave/apex/spacing look like inches, and
 `custom_build` is refused on this path (a cfg without `span_ft` and without `lines_x` goes to the
 HOT-ROLLED engine3d instead — wrong for CFS).
@@ -657,7 +679,11 @@ cfg = dict(
   # wind_pressures_psf=dict(wall_wind=.., wall_lee=.., roof_wind=.., roof_lee=.., case_neg=dict(...)),
   #   mirrored for wind from the other side unless wind_mirror=False
   seis=dict(SDS=0.5, SD1=0.3, S1=0.2, R=3.0, Cd=3.0, Om0=3.0, Ie=1.0,
-            W_frame_kip=12.0, T_drift=None),        # ELF Cs with SD1/T cap + minima; +/-E with rho
+            W_frame_kip=None, T_drift=None),        # ELF Cs with SD1/T cap + minima; +/-E with rho
+                                                    # W_frame_kip=None -> 12.7.2 W per frame: roof dead
+                                                    # + collateral + upper half of the side walls (clad)
+                                                    # + frame self-weight + 0.15 pf where pf > 45 psf
+  clad=2.5,                                         # psf wall cladding + girts (seismic weight only)
   rho=1.0,                                          # 12.3.4 (1.3 default in SDC D-F)
   system="not_detailed",                            # or "sbmf" (S400 E4: sbmf=dict(...) screens)
   # optional: monoslope=True (+overhang_ft), spans=[dict(span_ft=.., apex_ft=..), ...],
@@ -693,8 +719,9 @@ cfg = dict(
   stud_trib_ft=2.0,
   partition_psf=10.0,                  # 12.7.2 partition weight in W (floors only, >= 10 psf) --
                                        # keeps D_floor = TRUE dead for member design
-  wind=dict(V=115.0, exposure="C"),    # z from grade (z_base_ft / podium), leeward at qh, G/Gf
-                                       # (n1_hz), parapet_ft; Cp_ww / Cp_lw for open fronts
+  wind=dict(V=115.0, exposure="C",     # z from grade (z_base_ft / podium), leeward at qh, G/Gf
+            Kd=0.85, Kzt=1.0, Ke=1.0,  # (n1_hz), parapet_ft; Cp_ww / Cp_lw for open fronts
+            enclosure="enclosed"),     # Kd / Kzt / Ke / enclosure print in the design basis
   drift_tolerant_finishes=True,        # Table 12.12-1 row 1 (<= 4 stories) -- DECLARE it
   # irregular plans: area_sf=..., perimeter_ft=... (true values on a bounding-box model)
   # storage / platforms (12.7.2): storage=True | storage_levels=[...], L_by_level={k: psf},
@@ -749,8 +776,8 @@ floor trusses; don't force a catalog joist past the table.
   shared `eave_ft` builds a multi-gable frame with interior VALLEY columns
   (`col_I<k>`; envelopes group into `col` by prefix). The seeded S_unb split
   applies to the pooled halves — refine per-span unbalanced/valley-drift cases
-  in the fill and state it (Ex17 pattern). The viewer renders the primary-span
-  hint only.
+  in the fill and state it (Ex17 pattern). The viewer and the model figure draw
+  every span and column line.
 - **Component mode**: `structure_kind="component"` runs the shell geometry as
   a fixed-base skeleton, auto-marks every member/connection/anchorage slot
   OUT OF SCOPE (DC=0) and headlines `component_mode` in the package; put the
