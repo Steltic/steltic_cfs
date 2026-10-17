@@ -3637,7 +3637,7 @@ _CFS_TIER_TEXT = {
     "portal": "planar frame analysis with effective-section stiffness (AISI S100 Appendix 1) and "
               "direct analysis per AISI S100-16 C1.1 (0.90 EA/EI &times; &tau;<sub>b</sub>, notional "
               "loads N<sub>i</sub> = Y<sub>i</sub>/240, P-&Delta;) on the strength combinations; no "
-              "warping / torsion degree of freedom (single-channel torsion is checked separately)",
+              "warping / torsion degree of freedom",
 }
 
 
@@ -3798,7 +3798,9 @@ def _cfs_basis_rows(cfg, res, pkg):
     if ca is not None:
         rows.append(["Type II adjustment C<sub>a</sub>", _cn(ca) if not isinstance(ca, str) else _pt(ca)])
     if portal:
-        rows.append(["analysis method", _CFS_TIER_TEXT["portal"]])
+        _sc = str(cfg.get("structure_kind", "")).lower() == "portal_singlechannel" or bool(pkg.get("torsion_companion"))
+        rows.append(["analysis method", _CFS_TIER_TEXT["portal"]
+                     + (" (the single-channel torsion is checked separately, Section 4)" if _sc else "")])
     else:
         rows.append(["analysis method", _CFS_TIER_TEXT["wall"] % (
             "semi-rigid diaphragm (coupled solve)" if cfg.get("diaphragm") == "semi-rigid"
@@ -4984,8 +4986,20 @@ def _cfs_qa_section(name, root, cfg, res, pkg, annex=None, num=7):
         else:
             other.append(i)
     rows = []
+    _portal = _cfs_is_portal(cfg)
+    _cd_on = _cfs_capacity_design_required(cfg)
+    _has_hd = bool(pkg.get("holddowns")) or bool(pkg.get("anchorage") and not _portal)
     for cat, desc, _rx in _QA_CATS:
         n = len(buckets[cat])
+        if not n:            # a row that does not apply to this structure is left out (it can only read PASS)
+            if cat.startswith("Capacity design") and not _cd_on:
+                continue
+            if cat == "Anchorage chain" and not _has_hd:
+                desc = "the 0.9D+1.0W net-uplift path at the column bases designed"
+            if cat == "Code basis" and _portal:
+                desc = ("screw &phi; = 0.50 / &Omega; = 3.00 and the screw's own shear strength (S100-16 w/S2-20 J4); "
+                        "interaction &ge; its axial term (H1-1b aware); ASCE 7-22 snow factors; no preliminary "
+                        "(unchecked) values used as the design basis")
         rows.append([cat, desc, "<span class='pass'>PASS</span>" if not n else
                      "<span class='fail'>%d item(s)</span>" % n])
     if res and not _cfs_is_portal(cfg):
