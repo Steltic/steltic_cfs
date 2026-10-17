@@ -312,9 +312,10 @@ def _portal_data(cfg, name, res, pkg):
             el(nid(j, t), nid(j + 1, t), "beam", "purlin", sched_dc.get("purlin"))
         for t in sorted(col_nodes - set(meta["base_nodes"])):
             el(nid(j, t), nid(j + 1, t), "beam", "girt", sched_dc.get("girt"))
-    # side-wall X-straps in the two end bays
-    bL, bR = meta["base_nodes"]
-    eL, eR = meta["eave_nodes"]
+    # side-wall X-straps in the two end bays (exterior column lines; a multi-span frame's
+    # interior columns carry no side wall)
+    bL, bR = meta["base_nodes"][0], meta["base_nodes"][-1]
+    eL, eR = meta["eave_nodes"][0], meta["eave_nodes"][-1]
     for j in (0, nf - 2):
         for (b, e_) in ((bL, eL), (bR, eR)):
             el(nid(j, b), nid(j + 1, e_), "brace", "X-strap", sched_dc.get("strap"))
@@ -353,7 +354,7 @@ def _portal_data(cfg, name, res, pkg):
         wL = max(ps, cfg.get("Lr", 0.0)) * sp_ft / 1000.0
         beamsD, beamsL = [], []
         for j in range(nf):
-            for lab in ("raf_L", "raf_R"):
+            for lab in [k for k in members if k.startswith("raf")]:
                 for idx in members[lab]:
                     n1, n2 = fr.elems[idx][0], fr.elems[idx][1]
                     (x1, y1), (x2, y2) = fr.nodes[n1], fr.nodes[n2]
@@ -361,7 +362,7 @@ def _portal_data(cfg, name, res, pkg):
                            round(x2, 1), round(j * sp, 1), round(y2, 1)]
                     beamsD.append(seg + [[round(wD, 3)] * 4])
                     beamsL.append(seg + [[round(wL, 3)] * 4])
-        span_ft = cfg["span_ft"]
+        span_ft = meta["span_in"] / 12.0                 # total width (every span)
         loads["stat"] = {
             "D": {"beams": beamsD, "total": round(wD * span_ft * nf, 1)},
             "L": {"beams": beamsL, "total": round(wL * span_ft * nf, 1)}}
@@ -372,7 +373,13 @@ def _portal_data(cfg, name, res, pkg):
             loads["wind"] = {"z": [round(cfg["eave_ft"] * 12.0, 1)],
                              "X": [round(Hw, 2)], "Y": [0.0]}
         s = cfg.get("seis") or {}
-        if s.get("W_frame_kip"):
+        se = (res or {}).get("seismic") or {}
+        if se.get("V_kip") is not None and se.get("Cs") is not None:
+            # the analysis' ELF (W per frame stated or computed per 12.7.2)
+            loads["seis"] = {"z": [round(cfg["eave_ft"] * 12.0, 1)],
+                             "F": [round(se["V_kip"], 2)], "V": round(se["V_kip"], 2),
+                             "Cs": round(se["Cs"], 4)}
+        elif s.get("W_frame_kip"):
             Ve = s["SDS"] / (s.get("R", 3.0) / s.get("Ie", 1.0)) * s["W_frame_kip"]
             loads["seis"] = {"z": [round(cfg["eave_ft"] * 12.0, 1)],
                              "F": [round(Ve, 2)], "V": round(Ve, 2),
@@ -381,15 +388,23 @@ def _portal_data(cfg, name, res, pkg):
         loads = {}
 
     a = ((pkg or {}).get("anchorage") or [{}])[0]
-    stats = [["Frames shown", "%d @ %.1f ft o.c." % (nf, cfg["spacing_ft"])],
-             ["Span / eave / apex", "%.0f / %.0f / %.0f ft" % (cfg["span_ft"],
-                                                               cfg["eave_ft"], cfg["apex_ft"])],
+    if cfg.get("spans"):
+        geo = ["Spans / eave / apex", "%s ft / %.0f ft / %s ft" % (
+            " + ".join("%.0f" % float(x["span_ft"]) for x in cfg["spans"]), cfg["eave_ft"],
+            " / ".join("%.0f" % float(x["apex_ft"]) for x in cfg["spans"]))]
+    else:
+        geo = ["Span / eave / apex", "%.0f / %.0f / %.0f ft" % (
+            meta["span_in"] / 12.0, cfg["eave_ft"], cfg.get("apex_ft", cfg["eave_ft"]))]
+    stats = [["Frames shown", "%d @ %.1f ft o.c." % (nf, cfg["spacing_ft"])], geo,
              ["Governing combos", "col: %s · raf: %s" % (gov.get("col", "?"),
                                                          gov.get("raf", "?"))],
              ["Base V / net uplift", "%s / %s kip" % (a.get("V_base_kip", "?"),
                                                       a.get("T_net_uplift_kip", "?"))]]
     if isinstance(a.get("M_base_kipin"), (int, float)) and a["M_base_kipin"] > 1:
         stats.append(["Base moment (fixed)", "%.0f kip-in" % a["M_base_kipin"]])
+    if (res or {}).get("seismic", {}).get("W_frame_kip"):
+        stats.append(["Seismic W / V per frame", "%.1f / %.2f kip" % (
+            res["seismic"]["W_frame_kip"], res["seismic"].get("V_kip") or 0.0)])
     sv = (res or {}).get("service") or {}
     if sv:
         stats.append(["Eave sway (service)", "%s in (H/%s)" % (sv.get("eave_sway_in", "?"),

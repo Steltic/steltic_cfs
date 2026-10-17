@@ -5163,25 +5163,40 @@ def _cfs_iso_figure(cfg, name, res, pkg):
                "panel / strap diagonals." % (_html.escape(cfg["lines_x"][0].name), _html.escape(cfg["lines_x"][0].name)))
     else:
         _sp = cfg.get("spans") or []
-        span = (cfg.get("span_ft") or sum(float(x.get("span_ft", 0)) for x in _sp)) * 12.0
         He = cfg["eave_ft"] * 12.0
-        Ha = (cfg.get("apex_ft") or max([float(x.get("apex_ft", 0)) for x in _sp] or [cfg["eave_ft"]])) * 12.0
+        if _sp:                                   # multi-span: every column line and ridge
+            xs_ = [0.0]
+            for x in _sp:
+                xs_.append(xs_[-1] + float(x.get("span_ft", 0)) * 12.0)
+            apx = [float(x.get("apex_ft") or cfg["eave_ft"]) * 12.0 for x in _sp]
+        else:
+            xs_ = [0.0, float(cfg["span_ft"]) * 12.0]
+            apx = [float(cfg.get("apex_ft") or cfg["eave_ft"]) * 12.0]
+        span, Ha = xs_[-1], max(apx)
+        s1, sN = xs_[1] - xs_[0], xs_[-1] - xs_[-2]
         _ann("col_L", (0.0, 0.0, He * 0.5), (-55, 0), "#b30000")
         _ann("col_R", (span, 0.0, He * 0.5), (55, -10), "#b30000")
-        _zl = He + 0.60 * (Ha - He)
-        _ann("raf_L", (span * 0.30, 0.0, _zl), (-20, -55), "#b30000")
-        _ann("raf_R", (span * 0.72, 0.0, He + 0.55 * (Ha - He)), (60, 25), "#b30000")
+        for k, xk in enumerate(xs_[1:-1], 1):
+            _ann("col_I%d" % k, (xk, 0.0, He * 0.45), (28, -38), "#b30000")
+            _ann("valley", (xk, 0.0, He), (-10, 48), "#006400", fs=9)
+        _ann("raf_L", (s1 * 0.30, 0.0, He + 0.60 * (apx[0] - He)), (-20, -55), "#b30000")
+        _ann("raf_R", (span - sN * 0.28, 0.0, He + 0.55 * (apx[-1] - He)), (60, 25), "#b30000")
         _ann("knee", (0.0, 0.0, He), (-45, 40), "#006400")
-        _ann("apex/ridge", (span / 2.0, 0.0, Ha), (0, 55), "#006400")
+        for k, ak in enumerate(apx):
+            _ann("apex/ridge" if len(apx) == 1 else "ridge %d" % (k + 1),
+                 ((xs_[k] + xs_[k + 1]) / 2.0, 0.0, ak), (0, 55), "#006400")
         _ann("base", (0.0, 0.0, 0.0), (-30, -35), "#006400")
         nf = int(round(dy / (cfg["spacing_ft"] * 12.0))) + 1
         for j in (0, nf - 1):
             _ann("frame %d" % (j + 1), (span / 2.0, j * cfg["spacing_ft"] * 12.0, 0.0),
                  (0, -45), "#555555", fs=9)
-        cap = ("Element labels: <code>frame-col</code> / <code>frame-raf</code> (columns col_L/col_R, "
-               "rafters raf_L/raf_R), <code>conn-knee</code> / <code>conn-apex</code> (joints), "
+        cap = ("Element labels: <code>frame-col</code> / <code>frame-raf</code> (columns col_L/col_R%s, "
+               "rafters raf_L/raf_R%s), <code>conn-knee</code> / <code>conn-apex</code> (joints), "
                "<code>base-anchor</code> (bases). Blue = columns, grey = rafters, purlins and girts, "
-               "orange = X-straps.")
+               "orange = X-straps." % (
+                   ", interior columns col_I1%s" % ("&ndash;col_I%d" % (len(xs_) - 2) if len(xs_) > 3 else "")
+                   if len(xs_) > 2 else "",
+                   " (left / right halves of every span)" if len(xs_) > 2 else ""))
     buf = io.BytesIO()
     fig.savefig(buf, format="png", dpi=140)
     plt.close(fig)

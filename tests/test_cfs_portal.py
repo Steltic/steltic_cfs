@@ -438,3 +438,26 @@ def test_two_span_portal_weight_covers_both_spans():
     assert sw["roof_plan_length_ft"] == pytest.approx(70.0, abs=0.01)
     assert sw["roof_slope_length_ft"] == pytest.approx(4 * math.hypot(17.5, 4.0), abs=0.01)
     assert res["seismic"]["T_s"] == pytest.approx(0.028 * 30.0 ** 0.8, rel=1e-3)      # hn = apex
+
+
+def test_two_span_portal_viewer_and_model_figure():
+    import cfs_viewer3d as V3
+    import report as RPT
+    cfg = dict(spans=[dict(span_ft=35.0, apex_ft=30.0), dict(span_ft=35.0, apex_ft=30.0)],
+               eave_ft=26.0, spacing_ft=10.0, n_frames=3, purlin_spacing_ft=5.0, girt_spacing_ft=6.0,
+               col_section="2x1200S350-118", raf_section="2x1200S350-97", base="fixed",
+               D_roof=5.0, collateral=3.0, Lr=20.0, snow_pg=20.0,
+               wind=dict(V=110.0, exposure="C", enclosure="enclosed"),
+               seis=dict(SDS=0.30, R=3.0, Cd=3.0, Om0=3.0, Ie=1.0, W_frame_kip=None),
+               system="not_detailed", structure_kind="portal")
+    res = CF.run(cfg)
+    d = V3.viewer_data(cfg, "two-span", res, {})
+    assert len(d["fixed"]) == 3 * 3                                 # 3 column bases x 3 frames
+    xs = sorted({round(d["nodes"][str(n)][0], 1) for n in d["fixed"]})
+    assert xs == [0.0, 420.0, 840.0]
+    straps = [e for e in d["elements"] if e["sec"] == "X-strap"]
+    assert straps and all(round(d["nodes"][str(e["n"][0])][0], 1) in (0.0, 840.0) for e in straps)
+    assert d["loads"]["seis"]["V"] == pytest.approx(res["seismic"]["V_kip"], abs=0.01)
+    assert any(r[0] == "Spans / eave / apex" and "35 + 35" in r[1] for r in d["meta"]["stats"])
+    fig = RPT._cfs_iso_figure(cfg, "two-span", res, {})
+    assert "data:image/png;base64," in fig and "col_I1" in fig
