@@ -1543,7 +1543,7 @@ _PUB_SUBS = [(re.compile(p, f), r) for p, f, r in (
     (r"\s*\(?\bISSUES\.md\b\)?", 0, ""),
     (r"\bfill_package\.py\b", 0, ""),
 )]
-_CFG_KEY_RX = re.compile(r"cfg\[['\"]([A-Za-z0-9_]+)['\"]\](?:\[['\"]([A-Za-z0-9_]+)['\"]\])?")
+_CFG_KEY_RX = re.compile(r"(?:cfg|pkg|calc_package_cfs|calc_package)\[['\"]([A-Za-z0-9_]+)['\"]\](?:\[['\"]([A-Za-z0-9_]+)['\"]\])?")
 
 
 def _pub_scrub(s):
