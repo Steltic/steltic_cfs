@@ -57,6 +57,11 @@ def _filled_wall(cfg, name="w"):
                  cited="AISI S100-16 D2/D3 (retrieved verbatim); S400 B3.4")
     pkg["studs"][0].update(section="600S162-54 @ 16 in.", DC=0.4, limit_state="E2/E4/H1.2", cited="S100 E2",
                            capacity="phi*Pn = 7.4 kip")
+    for a in pkg["anchorage"]:
+        v = a["v_cd_seed_plf"]
+        a.update(selection="5/8 in. anchor bolts @ 12 in. + 3x3x1/4 plate washers; rod to embed",
+                 v_design_plf=v, T_design_kip=a["T_cd_seed_kip"], capacity=2550.0, DC=round(v / 2550.0, 3),
+                 limit_state="bolt bearing J3.3.1; anchors ACI 318-19 17.7", cited="S100 J3.3.1; ACI 318-19 Ch. 17")
     pkg["connections"] = [dict(id="conn-track-anchorage", selection="5/8 in. anchor bolts @ 16 in.",
                                demand="v = 2.23 klf (Omega0-capped story-1 shear)", DC=0.87,
                                limit_state="bolt bearing J3.3.1", capacity="phi*Rn = 2.55 klf",
@@ -136,7 +141,10 @@ def test_holddown_and_anchorage_tables_print_the_capacity_design_demand(wall_rep
     assert "T<sub>cd</sub> (kip)" in hd and "ELF&middot;&rho; T (kip)" in hd
     assert "capacity design, T<sub>cd</sub> (S400 B3.4)" in hd and "<b>60.5</b>" in hd
     con = html[html.index("Connections and anchorage"):]
-    assert "capacity design &le; 2231 plf" in con and "ELF&middot;&rho; &le; 1160 plf" in con
+    assert "capacity design &le; 2230 plf" in con and "ELF&middot;&rho; &le; 1160 plf" in con
+    anc = html[html.index("Anchorage schedule (per wall line)"):html.index("Stud and chord-stud schedule")]
+    assert "Capacity-design v<sub>cd</sub> (plf)" in anc and "anch-X-B" in anc and "2230" in anc
+    assert "capacity design (S400 B3.4)" in anc and "<b>2230</b>" in anc
 
 
 def test_sheathing_table_demand_basis_and_citation_once(wall_report):

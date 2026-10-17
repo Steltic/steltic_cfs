@@ -174,6 +174,53 @@ def test_shear_anchorage_at_elf_is_flagged(ref_pkg):
     assert CC._anchorage_shear_cd_issues(cfg, dict(pkg, connections=[cd])) == []
 
 
+def test_per_line_anchorage_slots_are_seeded(ref_pkg):
+    cfg, pkg = ref_pkg
+    anc = {a["id"]: a for a in pkg["anchorage"]}
+    assert len(anc) == len(cfg["lines_x"]) + len(cfg["lines_y"])
+    lines = pkg["capacity_design"]["lines"]
+    hds = {(h["direction"], h["line"]): h for h in pkg["holddowns"]}
+    for a in anc.values():
+        assert a["framework_slot"] and a["DC"] is None and a["capacity"] is None
+        ve = lines["%s:%s" % (a["direction"], a["line"])]["Ve_cap_by_story_kip"][a["story"]]
+        assert a["v_cd_seed_plf"] == pytest.approx(ve * 1000.0 / a["L_ft"], abs=1.0)
+        assert a["v_cd_seed_plf"] >= a["v_elf_plf"]
+        assert a["T_cd_seed_kip"] == hds[(a["direction"], a["line"])]["T_cd_seed_kip"]
+    b = anc["anch-X-B"]
+    assert b["L_ft"] == 96.0 and b["v_elf_plf"] == pytest.approx(1160, abs=1)
+    assert b["v_cd_seed_plf"] == pytest.approx(2230, abs=3) and b["T_cd_seed_kip"] == pytest.approx(60.5, abs=0.1)
+    # the report / checks take the reference unit shears from the slots
+    assert CC.capacity_design_unit_shear(pkg)[("X", "B")] == (b["v_elf_plf"], b["v_cd_seed_plf"])
+
+
+def test_anchorage_slot_shear_checked_against_its_own_line(ref_pkg):
+    cfg, pkg = ref_pkg
+    slots = [dict(a) for a in pkg["anchorage"]]
+    for a in slots:
+        a.update(v_design_plf=a["v_cd_seed_plf"], T_design_kip=a["T_cd_seed_kip"], capacity=2600.0,
+                 DC=round(a["v_cd_seed_plf"] / 2600.0, 3), selection="5/8 in. anchor bolts @ 12 in.",
+                 limit_state="bolt bearing J3.3.1", cited="S100 J3.3.1")
+    assert CC._anchorage_shear_cd_issues(cfg, dict(pkg, anchorage=slots)) == []
+    a = next(x for x in slots if x["id"] == "anch-X-A")
+    a["v_design_plf"] = a["v_elf_plf"]                        # designed at rho-ELF
+    iss = CC._anchorage_shear_cd_issues(cfg, dict(pkg, anchorage=slots))
+    assert len(iss) == 1 and "[anchorage anch-X-A]" in iss[0] and "v_cd_seed_plf" in iss[0]
+    # its own Omega_E*Vn (numbers) is an accepted basis
+    a["design_basis"] = "own expected strength: Omega_E*Vn = 1.0 x 1160 plf x 48 ft = 55.7 kip (Omega_E = 1.0)"
+    assert CC._anchorage_shear_cd_issues(cfg, dict(pkg, anchorage=slots)) == []
+
+
+def test_anchorage_tension_check_never_reads_a_shear_capacity_as_tension(ref_pkg):
+    cfg, pkg = ref_pkg
+    a = dict(pkg["anchorage"][0], v_design_plf=2300.0, capacity=2550.0, DC=0.9,
+             selection="5/8 in. anchor bolts @ 12 in.", limit_state="bolt bearing", cited="S100 J3.3.1")
+    iss = CC._capacity_design_numeric_issues(cfg, dict(pkg, anchorage=[a]))
+    assert not any("[anchorage %s]" % a["id"] in i for i in iss)
+    a["T_design_kip"] = 20.0                                   # a stated design tension IS checked
+    iss = CC._capacity_design_numeric_issues(cfg, dict(pkg, anchorage=[a]))
+    assert any("[anchorage %s]" % a["id"] in i for i in iss)
+
+
 # ---------------- ELF self-check vs the analysis ----------------
 
 def test_parse_and_compare_elf_spot_check():

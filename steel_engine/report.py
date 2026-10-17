@@ -2040,6 +2040,56 @@ def _cfs_holddown_schedule(pkg, cfg=None):
                           "&phi;T<sub>n</sub> (kip)", "D/C", "Ref."], rows, refs))
 
 
+def _cfs_anchorage_schedule(pkg, cfg=None):
+    """Per-line anchorage (sill / bottom-track shear anchorage and hold-down anchorage at the base
+    story): the rho-ELF, wind and capacity-design unit shears beside the design shear the D/C
+    uses, and T_cd beside the design tension."""
+    import consistency as _CC
+    slots = [a for a in pkg.get("anchorage") or [] if isinstance(a, dict) and a.get("line") is not None]
+    if not slots:
+        return ""
+    refs = _Refs()
+    rows = []
+    for a in slots:
+        v_elf, v_w, v_cd = _fnum(a.get("v_elf_plf")), _fnum(a.get("v_wind_plf")), _fnum(a.get("v_cd_seed_plf"))
+        dem = _CC._shear_demand_plf(a)
+        T_des = next((_fnum(a.get(k)) for k in ("T_design_kip", "T_demand_kip", "Tu_kip")
+                      if _fnum(a.get(k)) is not None), None)
+
+        def near(x):
+            return x is not None and dem is not None and abs(dem - x) <= 0.02 * x + 1.0
+        lab = a.get("design_basis") or a.get("demand_basis_used")
+        lab = _pt(lab) if lab else ("&mdash;" if dem is None else
+                                    "capacity design (S400 B3.4)" if near(v_cd) else
+                                    "wind (1.0W)" if near(v_w) else "seismic (&rho;E)" if near(v_elf) else
+                                    "designer's value (basis not stated)")
+        if a.get("waived"):
+            rows.append([_pt(a.get("id")), _pt(a.get("direction")), _num_or(v_elf, "%.0f"), _num_or(v_w, "%.0f"),
+                         _num_or(v_cd, "%.0f"), "", _waived_cell(a), _num_or(a.get("T_cd_seed_kip")), "", "", "",
+                         "", refs.ref(a.get("cited"))])
+            continue
+        cap = a.get("capacity")
+        rows.append([_pt(a.get("id")), _pt(a.get("direction")), _num_or(v_elf, "%.0f"), _num_or(v_w, "%.0f"),
+                     _num_or(v_cd, "%.0f"), ("<b>%s</b>" % _num_or(dem, "%.0f")) if dem is not None else "<b>PENDING</b>",
+                     lab, _num_or(a.get("T_cd_seed_kip")), _num_or(T_des),
+                     _pt(a.get("selection")) or "<b>PENDING</b>",
+                     _num_or(cap) if _fnum(cap) is not None else (_pt(cap) or "&mdash;"),
+                     _cdc_e(a), refs.ref(a.get("cited"))])
+    cd = _cfs_capacity_design_required(cfg) if cfg else any(_fnum(a.get("v_cd_seed_plf")) for a in slots)
+    intro = ("<p>Anchorage of each wall line at the base story: sill / bottom-track shear anchorage (unit "
+             "shear) and the hold-down anchorage (tension). &rho;-ELF and wind unit shears; "
+             "v<sub>cd</sub> = the line's capacity-design story shear / L (expected strength "
+             "&Omega;<sub>E</sub>V<sub>n</sub>, not above the &Omega;<sub>0</sub>-level effect; S400 B3.4). "
+             "The <i>design v</i> and <i>design T</i> are the demands the D/C is computed on; concrete "
+             "anchorage to ACI 318-19 Ch. 17.</p>" if cd else
+             "<p>Anchorage of each wall line at the base story (unit shear and hold-down tension). Capacity "
+             "design is not required for this system and SDC (S400 A1.2.3).</p>")
+    return ("<h3>Anchorage schedule (per wall line)</h3>" + intro
+            + _ref_table(["ID", "Dir", "&rho;-ELF v (plf)", "Wind v (plf)", "Capacity-design v<sub>cd</sub> (plf)",
+                          "Design v (plf)", "Basis of design v", "T<sub>cd</sub> (kip)", "Design T (kip)",
+                          "Anchorage", "Design strength", "D/C", "Ref."], rows, refs))
+
+
 def _entry_design_demand(e, keys, derive=True):
     for k in keys:
         if _fnum(e.get(k)) is not None:
@@ -2243,7 +2293,8 @@ def _cfs_schedules_section(pkg, cfg=None, res=None):
     D/C uses beside the ELF value. Returns '' when the package has none (frame-path buildings)."""
     if not isinstance(pkg, dict):
         return ""
-    h = [_cfs_wall_schedule(pkg, cfg), _cfs_holddown_schedule(pkg, cfg), _cfs_stud_schedule(pkg),
+    h = [_cfs_wall_schedule(pkg, cfg), _cfs_holddown_schedule(pkg, cfg), _cfs_anchorage_schedule(pkg, cfg),
+         _cfs_stud_schedule(pkg),
          _cfs_collector_schedule(pkg), _cfs_seed_blocks(pkg), _cfs_drift_section(pkg, cfg)]
     if not _CFS_PUB[0]:                 # draft: the framework flags stay inline
         for key, label in (("model_vs_tributary_flags", "Model-vs-tributary gate"),
@@ -4523,11 +4574,14 @@ def _cfs_item_status(key, cfg, pkg):
         st = [s_ for s_ in pkg.get("studs") or [] if "chord" in str((s_ or {}).get("id", "")).lower()]
         dh = worst(pkg.get("holddowns") or [])
         dc = worst(st)
+        da = worst([a for a in pkg.get("anchorage") or [] if isinstance(a, dict) and a.get("line") is not None])
         parts = []
         if dc is not None:
             parts.append("chord studs D/C %.2f" % dc)
         if dh is not None:
             parts.append("hold-downs D/C %.2f" % dh)
+        if da is not None:
+            parts.append("anchorage D/C %.2f" % da)
         return ", ".join(parts) or NS
     if key == "holddown":
         d = worst(pkg.get("holddowns") or [])
@@ -4932,7 +4986,7 @@ _CFS_APPX_GROUPS = [
     ("Collectors", "collectors"),
     ("Frame members", "members"),
     ("Connections", "connections"),
-    ("Base anchorage", "anchorage"),
+    ("Anchorage", "anchorage"),
     ("Purlin / girt / strap schedules", "schedules"),
 ]
 _CFS_APPX_ORDER = ["direction", "story", "line", "member", "joint", "group", "section",

@@ -94,7 +94,8 @@ SEED_KEYS = frozenset((
     "diaphragm_basis", "drift_basis", "drift_limit_basis", "L_factor_basis", "Ca_basis",
     "capacity_design_applicability", "elf_by_direction", "weight_by_level_kip",
     "stability_warnings", "by_direction", "strap_ductility",
-    "gravity_framing", "framework_slot"))
+    "gravity_framing", "framework_slot", "v_elf_plf", "v_elf_by_story_plf", "v_cd_seed_plf",
+    "v_cd_by_story_plf", "L_ft"))
 
 
 def _walk_agent(obj, skip=SEED_KEYS):
@@ -877,11 +878,12 @@ def _capacity_design_numeric_issues(cfg, pkg):
     except Exception:
         pass
 
-    def _design_demand(e):
-        for k in ("T_design_kip","design_T_kip","T_demand_kip","demand_kip","Tu_kip",
-                  "T_u_kip","demand"):
+    def _design_demand(e, tension_only=False):
+        keys=("T_design_kip","design_T_kip","T_demand_kip","Tu_kip","T_u_kip")
+        for k in keys + (() if tension_only else ("demand_kip","demand")):
             v=_num(e.get(k))
             if v is not None: return v, k
+        if tension_only: return None, None
         dc=_num(e.get("DC")); cap=_num(e.get("capacity"))
         if dc is not None and cap is not None and cap > 0:
             return dc*cap, "DC x capacity"
@@ -914,7 +916,7 @@ def _capacity_design_numeric_issues(cfg, pkg):
             # the framework's capacity-design seed: min(Omega_E*Vn stack, Omega_0 stack), / Ca for
             # Type II (cfs-wallloads CFS-06/18/20). The design tension may be lower only by the
             # 0.9D dead relief available, or where the agent computed its OWN Omega_E*Vn (numbers)
-            d, src=_design_demand(e)
+            d, src=_design_demand(e, tension_only=(kind in ("anchorage", "connection")))
             if d is None: continue
             relief=_num(e.get("dead_relief_kip_available")) or 0.0
             floor=max(tcd-relief, 0.0)
@@ -1765,6 +1767,12 @@ def capacity_design_unit_shear(pkg):
     out = {}
     if not isinstance(pkg, dict):
         return out
+    for a in pkg.get("anchorage") or []:         # seeded per-line anchorage slots (preferred)
+        if isinstance(a, dict) and _num(a.get("v_cd_seed_plf")) is not None and a.get("line") is not None:
+            out[(str(a.get("direction")), str(a["line"]))] = (_num(a.get("v_elf_plf")),
+                                                               _num(a["v_cd_seed_plf"]))
+    if out:
+        return out
     lines = ((pkg.get("capacity_design") or {}).get("lines") or {}) \
         if isinstance(pkg.get("capacity_design"), dict) else {}
     slots = {}
@@ -1788,6 +1796,21 @@ def capacity_design_unit_shear(pkg):
         L_ft = V * 1000.0 / v
         out[(d, l)] = (v, _num(ve[k1]) * 1000.0 / L_ft)
     return out
+
+
+def _shear_demand_plf(c):
+    """Design unit shear (plf) of an anchorage slot / connection: v_design_plf-type fields, klf
+    fields, or the first 'N klf' / 'N plf' in its demand text."""
+    for k in ("v_design_plf", "v_demand_plf", "v_u_plf"):
+        if _num(c.get(k)) is not None:
+            return _num(c.get(k))
+    for k in ("v_design_klf", "v_demand_klf", "v_u_klf"):
+        if _num(c.get(k)) is not None:
+            return 1000.0 * _num(c.get(k))
+    m = _UNIT_SHEAR_RX.search(str(c.get("demand") or ""))
+    if m:
+        return float(m.group(1)) * (1000.0 if m.group(2).lower() in ("klf", "kip/ft") else 1.0)
+    return None
 
 
 def _anchorage_shear_cd_issues(cfg, pkg):
@@ -1815,9 +1838,22 @@ def _anchorage_shear_cd_issues(cfg, pkg):
     ref = capacity_design_unit_shear(pkg)
     if not ref:
         return out
-    v_elf = max(a for a, _b in ref.values())
+    v_elf = max(a or 0.0 for a, _b in ref.values())
     v_cd = max(b for _a, b in ref.values())
-    for c in (pkg.get("connections") or []) + (pkg.get("anchorage") or []):
+    for a in pkg.get("anchorage") or []:         # seeded per-line slots: their own line's demand
+        if not isinstance(a, dict) or a.get("waived") or _num(a.get("v_cd_seed_plf")) is None:
+            continue
+        dem = _shear_demand_plf(a)
+        if dem is None:
+            continue
+        txt = _entry_text({k: v for k, v in a.items() if k not in SEED_KEYS})
+        own = re.search(r"omega_?e\s*\*?\s*v_?n|expected strength.{0,40}\d", txt, re.I)
+        if dem < 0.99 * _num(a["v_cd_seed_plf"]) and not own:
+            out.append("[anchorage %s] shear anchorage designed for %.0f plf, below the line's "
+                       "capacity-design unit shear v_cd_seed_plf = %.0f plf (rho-ELF %.0f plf; S400 B3.4) "
+                       "-- design for it, or record the line's own expected-strength Omega_E*Vn (numbers)"
+                       % (a.get("id"), dem, _num(a["v_cd_seed_plf"]), _num(a.get("v_elf_plf")) or 0.0))
+    for c in pkg.get("connections") or []:
         if not isinstance(c, dict) or c.get("waived"):
             continue
         head = " ".join(str(c.get(k) or "") for k in ("id", "type", "joint", "selection",
@@ -1825,18 +1861,7 @@ def _anchorage_shear_cd_issues(cfg, pkg):
         if not _ANCH_RX.search(head) or re.search(r"uplift|hold[- ]?down|\brod\b|clip|strap",
                                                   head, re.I):
             continue
-        dem = None
-        for k in ("v_design_plf", "v_demand_plf", "v_u_plf"):
-            if _num(c.get(k)) is not None:
-                dem = _num(c.get(k)); break
-        if dem is None:
-            for k in ("v_design_klf", "v_demand_klf", "v_u_klf"):
-                if _num(c.get(k)) is not None:
-                    dem = 1000.0 * _num(c.get(k)); break
-        if dem is None:
-            m = _UNIT_SHEAR_RX.search(str(c.get("demand") or ""))
-            if m:
-                dem = float(m.group(1)) * (1000.0 if m.group(2).lower() in ("klf", "kip/ft") else 1.0)
+        dem = _shear_demand_plf(c)
         if dem is None:
             continue
         txt = _entry_text({k: v for k, v in c.items() if k not in SEED_KEYS})
