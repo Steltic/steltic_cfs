@@ -181,7 +181,7 @@ def test_sample_calcs_block():
                                  steps=[dict(step="Design strength", expression="phi vn = 0.60 x 2820",
                                              value=1692.0, ref="S400 E1.3.2")], result="OK")]}
     h = RPT._cfs_sample_calcs(pkg)
-    assert "Sample calculations" in h and "&phi; vn = 0.60 x 2820" in h and "1692" in h
+    assert "Sample calculations" in h and "&phi; vn = 0.60 &times; 2820" in h and "1692" in h
     assert RPT._cfs_sample_calcs({}) == ""
 
 
@@ -251,6 +251,8 @@ def test_portal_basis_prints_the_12_7_2_frame_weight():
     w = lab["Seismic weight per frame (&sect;12.7.2)"]
     assert ("W = %s kip" % RPT._cn(res["seismic"]["W_frame_kip"])) in w and "roof dead" in w and "collateral" in w
     assert "V = C<sub>s</sub>W" in lab["ELF (&sect;12.8), per frame"]
+    assert "4.5 psf &times; " in w and " &rarr; W = " in w
+    assert "all other structures" in lab["drift-limit basis"] and "cfg[" not in lab["drift-limit basis"]
     grav = {r[0]: r[1] for r in RPT._cfs_gravity_rows(pcfg, pkg)}
     assert grav["Wall cladding (in the seismic weight, &sect;12.7.2)"] == "2.5 psf"
 

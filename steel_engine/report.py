@@ -1575,7 +1575,8 @@ def _pt(x):
         return _html.escape(s)
     s = _html.escape(_pub_scrub(s))
     # engineering symbols for the framework / designer shorthand
-    s = s.replace("&gt;=", "&ge;").replace("&lt;=", "&le;")
+    s = s.replace("&gt;=", "&ge;").replace("&lt;=", "&le;").replace(" -&gt; ", " &rarr; ")
+    s = re.sub(r"(?<=\S) x (?=[\d(])", " &times; ", s)          # '4.5 psf x 15.0 ft' products
     s = re.sub(r"\bOm0_eff\b", "&Omega;<sub>0,eff</sub>", s)
     s = re.sub(r"\bOm(?:ega_?)?0\b", "&Omega;<sub>0</sub>", s)
     s = re.sub(r"\bOmega_E\b", "&Omega;<sub>E</sub>", s)
@@ -3708,7 +3709,8 @@ def _cfs_basis_rows(cfg, res, pkg):
                 break
     if dl is not None:
         rows.append(["drift limit (Table 12.12-1)", "&Delta;<sub>a</sub> = %s h<sub>sx</sub>" % _cn(_fnum(dl))])
-    dlb = pkg.get("drift_limit_basis")
+    dlb = pkg.get("drift_limit_basis") or (_cfs_portal_seis(pkg, res).get("drift_limit_basis")
+                                           if portal else None)
     if dlb:
         rows.append(["drift-limit basis", "; ".join("%s: %s" % (_html.escape(str(d)), _pt(_drift_basis_clean(b)))
                                                      for d, b in dlb.items())
