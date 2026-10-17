@@ -94,7 +94,7 @@ SEED_KEYS = frozenset((
     "diaphragm_basis", "drift_basis", "drift_limit_basis", "L_factor_basis", "Ca_basis",
     "capacity_design_applicability", "elf_by_direction", "weight_by_level_kip",
     "stability_warnings", "by_direction", "strap_ductility",
-    "gravity_framing"))
+    "gravity_framing", "framework_slot"))
 
 
 def _walk_agent(obj, skip=SEED_KEYS):

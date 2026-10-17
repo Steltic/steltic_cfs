@@ -515,7 +515,8 @@ def _completion_gate(ws):
             probs += _hr_gate_sanity(jd, pkg)          # hot-rolled route: sanity suite (HR-14 port)
         # seeded collector slots must be filled (a prose note does not count)
         for c in list(colls) + list(con):
-            if isinstance(c, dict) and "SEEDED" in (str(c.get("type", "")) + str(c.get("basis", ""))).upper() \
+            if isinstance(c, dict) and (c.get("framework_slot") or
+                                        "SEEDED" in (str(c.get("type", "")) + str(c.get("basis", ""))).upper()) \
                     and c.get("DC") is None and not c.get("waived") and not (c.get("checks") or []):
                 probs.append("seeded collector slot '%s' was never designed -- collectors on "
                              "re-entrant/step lines are REQUIRED (fill it or waive with justification)"

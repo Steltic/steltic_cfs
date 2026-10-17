@@ -2153,7 +2153,7 @@ def _cfs_collector_schedule(pkg):
                                            "demand_kip", "Emh_kip"))
         basis = next((c.get(k) for k in ("design_basis", "demand_basis_used",
                                          "capacity_design_basis") if c.get(k)), None)
-        if basis is None:
+        if basis is None and not c.get("framework_slot"):   # the framework's basis is not a design basis
             b = str(c.get("basis") or "")
             basis = None if (not b or b.strip().upper().startswith("SEEDED")) else b
         sel = c.get("selection") if not str(c.get("selection") or "").upper().startswith("SEEDED") \
@@ -4947,7 +4947,7 @@ _CFS_APPX_SKIP = {"id", "checks", "rows", "waived", "basis", "note", "notes", "i
                   "demand_pairs", "by_joint", "per_base", "by_direction", "sign", "Om0_note", "k_kip_in",
                   "device_class", "type_ii", "recheck_after_rerun", "governing_label", "wind_case",
                   "M_signed_kipin", "Pc_paired_kip", "Pt_paired_kip", "combo_pos", "combo_neg", "at_pos",
-                  "at_neg"}
+                  "at_neg", "framework_slot"}
 
 
 def _cfs_appendix_calcs(pkg, cfg=None, res=None, name=None):
