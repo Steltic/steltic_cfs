@@ -462,3 +462,28 @@ def test_completion_gate_two_package_files(tmp_path):
     _write(jd, _clean_pkg())
     (jd / "design" / "calc_package.json").write_text("{}")
     assert any("TWO package files" in p for p in _completion_gate(_WS(jd)))
+
+
+def test_completion_gate_strap_bays_need_strap_selection_not_sheathing(tmp_path):
+    """Strap bays carry the strap selection + end connection (same rule as
+    consistency._cfs_slot_issues); a 'NONE -- X-strap bay' sheathing entry is not required."""
+    from steltic.agent import _completion_gate
+    jd = tmp_path / "job"
+    pkg = _clean_pkg()
+    pkg["system"] = "strap_braced"
+    pkg["wall_lines"] = [dict(id="wall-X-N-s1", direction="X", story=1, cited="S400 E3.3.1", DC=0.6,
+                              selection="6 in. x 68 mil strap each face, 4 bays",
+                              connection="20 No. 12 screws each strap end")]
+    _write(jd, pkg)
+    assert not [p for p in _completion_gate(_WS(jd)) if "wall-X-N-s1" in p]
+    pkg["wall_lines"][0] = dict(id="wall-X-N-s1", direction="X", story=1, cited="S400 E3.3.1", DC=0.6,
+                                sheathing="NONE -- X-strap bay")
+    _write(jd, pkg)
+    assert any("strap bay 'wall-X-N-s1'" in p for p in _completion_gate(_WS(jd)))
+    # mixed systems: the Y direction is WSP and still needs sheathing + fasteners
+    pkg["system"] = "strap_braced (X) + wsp_shearwall (Y)"
+    pkg["system_by_direction"] = {"X": "strap_braced", "Y": "wsp_shearwall"}
+    pkg["wall_lines"] = [dict(id="wall-Y-1-s1", direction="Y", story=1, cited="S400 E1", DC=0.5,
+                              selection="strap")]
+    _write(jd, pkg)
+    assert any("no sheathing + fastener_schedule" in p for p in _completion_gate(_WS(jd)))

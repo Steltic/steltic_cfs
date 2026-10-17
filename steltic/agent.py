@@ -327,7 +327,8 @@ def _resolve_package(jd):
         cfg_txt = (pathlib.Path(jd) / "cfg.py").read_text(errors="replace")
     except Exception:
         pass
-    cfs_job = cfs.exists() or bool(re.search(r"\b(lines_x|lines_y|span_ft)\b", cfg_txt))
+    cfs_job = cfs.exists() or bool(re.search(r"\b(lines_x|lines_y|span_ft)\b|\bspans\s*=|['\"]spans['\"]\s*:",
+                                             cfg_txt))
     if cfs_job and cfs.exists() and hr.exists():
         return cfs, ["TWO package files (design/calc_package_cfs.json AND design/calc_package.json) -- "
                      "the CFS package is calc_package_cfs.json; merge any fills from calc_package.json "
@@ -399,13 +400,39 @@ def _hr_gate_sanity(jd, pkg):
     return probs
 
 
+def _wall_slot_system(pkg, w):
+    """System key of a wall slot from the package alone (engine-free mirror of
+    consistency.wall_slot_system): slot system, line system, direction system, building system."""
+    if w.get("system"):
+        return str(w["system"]).lower()
+    d = str(w.get("direction") or "")
+    m = re.match(r"^wall-([XY])-(.+)-s(\d+)$", str(w.get("id", "")))
+    line = str(w.get("line") or (m.group(2) if m else ""))
+    ls = ((pkg.get("elf_by_direction") or {}).get(d) or {}).get("line_systems") or {}
+    if isinstance(ls, dict) and ls.get(line):
+        return str(ls[line]).lower()
+    sbd = pkg.get("system_by_direction") or {}
+    cda = (pkg.get("capacity_design_applicability") or {}).get(d) or {}
+    return str(sbd.get(d) or (cda.get("system") if isinstance(cda, dict) else None)
+               or pkg.get("system") or "").lower()
+
+
+def _strap_slot_complete(w):
+    brace = any(w.get(k) for k in ("selection", "strap", "straps", "bracing", "strap_schedule",
+                                   "fastener_schedule")) or \
+        bool(w.get("sheathing") and not re.search(r"\bnone\b", str(w["sheathing"]), re.I))
+    conn = any(w.get(k) for k in ("connection", "strap_connection", "fastener_schedule"))
+    return brace and conn
+
+
 def _completion_gate(ws):
     """Checks on the job's ONE authoritative package (design/calc_package_cfs.json on CFS jobs)
     before a final answer is accepted. Returns a list of problems ([] = clean). Engine-free
     (the engine runs in the sandbox), so it reads what the engine wrote:
       * every slot: numeric D/C (string D/Cs parsed) <= 1.0 + a cited clause, or a JUSTIFIED
         waiver (an NG waiver needs a declared existing / by-others scope);
-      * CFS completeness (sheathing + fasteners, hold-downs designed, connections, collectors);
+      * CFS completeness (sheathing + fasteners, or strap selection + end connection on strap
+        bays; hold-downs designed, connections, collectors);
       * drift_table rows and any reported P-Delta theta must PASS -- a *_resolution note never
         clears a failing row; unresolved model-vs-tributary / drift flags; a declared two-stage
         podium must be ELIGIBLE in the framework block;
@@ -462,8 +489,16 @@ def _completion_gate(ws):
                                  % (label, x.get("id")))
         # ---- CFS-specific completeness ----
         for w in walls:
-            if isinstance(w, dict) and not w.get("waived") and \
-                    not (w.get("sheathing") and w.get("fastener_schedule")):
+            if not isinstance(w, dict) or w.get("waived"):
+                continue
+            if _wall_slot_system(pkg, w) == "strap_braced":
+                # strap bays: strap selection + strap-end connection (no sheathing), the same rule
+                # as consistency._cfs_slot_issues
+                if not _strap_slot_complete(w):
+                    probs.append("strap bay '%s' has no strap selection (selection) + end connection "
+                                 "(connection) -- a strap-bay capacity without them is unverifiable"
+                                 % w.get("id"))
+            elif not (w.get("sheathing") and w.get("fastener_schedule")):
                 probs.append("wall slot '%s' has no sheathing + fastener_schedule -- a wall capacity "
                              "without them is unverifiable (rubric red flag)" % w.get("id"))
         for h in hds:

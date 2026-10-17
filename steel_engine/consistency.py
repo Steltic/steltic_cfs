@@ -1142,20 +1142,12 @@ def _cfs_slot_issues(cfg, pkg):
         return out
     blob = json.dumps(pkg).lower()
     ablob = _agent_text(pkg)
-    _sbd = ((cfg or {}).get("system_by_dir") or {}) if isinstance(cfg, dict) else {}
-    _sys0 = str(((cfg or {}).get("system") if isinstance(cfg, dict) else "") or
-                pkg.get("system") or "").lower()
     for w in pkg.get("wall_lines") or []:
         if not isinstance(w, dict) or w.get("waived"):
             continue
-        wsys = str(_sbd.get(w.get("direction")) or _sys0).lower()
-        if wsys == "strap_braced":
+        if wall_slot_system(pkg, w, cfg) == "strap_braced":
             # strap bays: the design is the strap selection + its end connection (no sheathing)
-            brace = any(w.get(k) for k in ("selection", "strap", "straps", "bracing", "strap_schedule",
-                                           "fastener_schedule")) or \
-                bool(w.get("sheathing") and not re.search(r"\bnone\b", str(w["sheathing"]), re.I))
-            conn = any(w.get(k) for k in ("connection", "strap_connection", "fastener_schedule"))
-            if not (brace and conn):
+            if not strap_slot_complete(w):
                 out.append("[wall %s] strap bay without its strap selection (selection) and end "
                            "connection (connection) -- a strap-bay capacity without them is "
                            "unverifiable (S400 E3)" % w.get("id"))
@@ -1733,6 +1725,36 @@ def wall_slot_line(w):
         return str(w["line"])
     m = re.match(r"^wall-([XY])-(.+)-s(\d+)$", str(w.get("id", "")))
     return m.group(2) if m else ""
+
+
+def wall_slot_system(pkg, w, cfg=None):
+    """System key of one wall slot: the slot's own 'system', its line's system
+    (elf_by_direction[d].line_systems), the direction's system (system_by_direction /
+    capacity_design_applicability / cfg system_by_dir), else the building system."""
+    if w.get("system"):
+        return str(w["system"]).lower()
+    d = str(w.get("direction") or "")
+    pkg = pkg if isinstance(pkg, dict) else {}
+    ls = ((pkg.get("elf_by_direction") or {}).get(d) or {}).get("line_systems") or {}
+    if isinstance(ls, dict) and ls.get(wall_slot_line(w)):
+        return str(ls[wall_slot_line(w)]).lower()
+    for src in (pkg.get("system_by_direction") or {},
+                {k: (v or {}).get("system") for k, v in (pkg.get("capacity_design_applicability") or {}).items()
+                 if isinstance(v, dict)},
+                ((cfg or {}).get("system_by_dir") or {}) if isinstance(cfg, dict) else {}):
+        if isinstance(src, dict) and src.get(d):
+            return str(src[d]).lower()
+    return str(((cfg or {}).get("system") if isinstance(cfg, dict) else None) or pkg.get("system") or "").lower()
+
+
+def strap_slot_complete(w):
+    """A strap bay is designed when it carries its strap selection (selection / strap / bracing,
+    or the strap data in fastener_schedule) and the strap-end connection."""
+    brace = any(w.get(k) for k in ("selection", "strap", "straps", "bracing", "strap_schedule",
+                                   "fastener_schedule")) or \
+        bool(w.get("sheathing") and not re.search(r"\bnone\b", str(w["sheathing"]), re.I))
+    conn = any(w.get(k) for k in ("connection", "strap_connection", "fastener_schedule"))
+    return brace and conn
 
 
 def capacity_design_unit_shear(pkg):

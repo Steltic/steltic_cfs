@@ -1904,9 +1904,9 @@ def _wall_design_demand(w):
     return val, ("D/C &times; strength (basis not stated)" if derived else "basis not stated")
 
 
-def _is_strap_slot(cfg, w):
-    sysd = _cfs_dir_system(cfg or {}, str(w.get("direction") or "")) if cfg else ""
-    if sysd == "strap_braced":
+def _is_strap_slot(cfg, w, pkg=None):
+    import consistency as _CC
+    if _CC.wall_slot_system(pkg or {}, w, cfg) == "strap_braced":
         return True
     sh = str(w.get("sheathing") or "").lower()
     return bool(re.search(r"\bnone\b|x-?strap|strap bay", sh))
@@ -1918,7 +1918,7 @@ def _cfs_wall_schedule(pkg, cfg=None):
         return ""
     out = []
     for strap in (False, True):
-        grp = [w for w in walls if _is_strap_slot(cfg, w) == strap]
+        grp = [w for w in walls if _is_strap_slot(cfg, w, pkg) == strap]
         if not grp:
             continue
         refs = _Refs()
