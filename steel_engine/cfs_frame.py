@@ -30,6 +30,10 @@ cfg = dict(
   #    dict(cases=[dict(name, from_side='L'|'R', wall_wind, wall_lee, roof_wind, roof_lee)])
   wind_mirror=True,                       # legacy overrides are mirrored (wind from the right)
   seis=dict(SDS=0.25, SD1=0.10, R=3.0, Cd=3.0, Om0=3.0, Ie=1.0, W_frame_kip=None),
+  #   W_frame_kip=None -> computed per ASCE 7-22 12.7.2 (portal_seismic_weight): roof dead +
+  #   collateral + upper half of the side-wall cladding (clad, psf) + frame self-weight
+  #   (+ 15% of the snow where pf > 45 psf); a stated value is used as given
+  clad=0.0,                               # psf, wall cladding + girts (seismic weight only)
   rho=None,                               # 12.3.4 (default 1.3 in SDC D-F, else 1.0)
   pattern_snow=True, unbalanced_factors=(0.3, 1.5),                # SEEDS -- agent verifies 7.6
   point_loads=[dict(case="D"|"L"|"Lr"|..., x_ft=, y_ft=None (on roof), P_kip=down, H_kip=, M_kipin=)],
@@ -111,7 +115,7 @@ def check_units(cfg):
             "portal dimensions look like INCHES (x12): %s. The cfs_frame portal path takes "
             "FEET and PSF (e.g. span_ft=60 for a 60-ft span) and converts to kip-inch "
             "internally -- do NOT multiply by 12." % ", ".join(hard))
-    for k in ("D_roof", "Lr", "collateral"):
+    for k in ("D_roof", "Lr", "collateral", "clad"):
         x = cfg.get(k)
         if x is not None and (float(x) < 0.0 or float(x) > 150.0):
             raise PortalInputError("%s=%g is not a plausible roof load in PSF" % (k, float(x)))
@@ -1540,6 +1544,68 @@ def rho_portal(cfg):
     return 1.3 if _sdc(cfg) in ("D", "E", "F") else 1.0
 
 
+def portal_seismic_weight(cfg, fr, members, meta):
+    """ASCE 7-22 12.7.2 effective seismic weight tributary to one interior frame (single
+    level, lumped at the eave), tributary width spacing_ft:
+      roof dead load D_roof and collateral (permanent: sprinklers, ceilings, lighting, ducts)
+      on the roof slope area; the upper half of the side-wall cladding (cfg['clad'] psf, walls
+      at the two exterior columns, none on open sides or for an open building); the frame
+      self-weight (when self_weight); item 4: 15 % of the uniform design snow load where the
+      flat-roof snow load pf exceeds 45 psf. Returns dict(W_kip, items_kip, basis)."""
+    sp = float(cfg["spacing_ft"])
+    L_slope = L_proj = 0.0
+    for lab, idxs in members.items():
+        if not lab.startswith("raf"):
+            continue
+        for idx in idxs:
+            Lx, c, _s = fr._geom(fr.elems[idx])
+            L_slope += Lx / 12.0
+            L_proj += abs(Lx * c) / 12.0
+    D = float(cfg.get("D_roof", 0.0) or 0.0)
+    col = float(cfg.get("collateral", 0.0) or 0.0)
+    clad = float(cfg.get("clad", 0.0) or 0.0)
+    items, parts = {}, []
+    items["roof_dead"] = D * sp * L_slope / 1000.0
+    parts.append("roof dead %.1f psf x %.1f ft x %.1f ft (slope length) = %.2f kip"
+                 % (D, sp, L_slope, items["roof_dead"]))
+    if col:
+        items["collateral"] = col * sp * L_slope / 1000.0
+        parts.append("collateral %.1f psf = %.2f kip" % (col, items["collateral"]))
+    try:
+        encl = enclosure_of(cfg)[0]
+    except PortalInputError:
+        encl = "enclosed"
+    w = cfg.get("wind") or {}
+    open_sides = {str(x).upper() for x in (w.get("open_sides") or ())}
+    sides = [] if encl == "open" else [x for x in ("L", "R") if x not in open_sides]
+    hts = {"L": meta["He_in"] / 12.0, "R": meta.get("HeR_in", meta["He_in"]) / 12.0}
+    if clad and sides:
+        items["cladding"] = clad * sp * sum(hts[x] / 2.0 for x in sides) / 1000.0
+        parts.append("wall cladding %.1f psf x %.1f ft x (%s) ft (upper half of the side walls) "
+                     "= %.2f kip" % (clad, sp, " + ".join("%.1f/2" % hts[x] for x in sides),
+                                     items["cladding"]))
+    elif not sides:
+        parts.append("no side walls (open building / open sides)")
+    else:
+        parts.append("wall cladding weight not stated: none included")
+    if cfg.get("self_weight", True):
+        items["frame_self_weight"] = _self_weight_total(fr, members, meta)
+        parts.append("frame self-weight %.2f kip" % items["frame_self_weight"])
+    pf = snow_ps(cfg)
+    if pf > 45.0:
+        items["snow"] = 0.15 * pf * sp * L_proj / 1000.0
+        parts.append("item 4: 0.15 x pf %.1f psf x %.1f ft x %.1f ft (plan) = %.2f kip"
+                     % (pf, sp, L_proj, items["snow"]))
+    elif pf > 0:
+        parts.append("flat-roof snow pf = %.1f psf <= 45 psf: no snow in W (item 4)" % pf)
+    W = sum(items.values())
+    return dict(W_kip=round(W, 3), items_kip={k: round(v, 3) for k, v in items.items()},
+                tributary_width_ft=sp, roof_slope_length_ft=round(L_slope, 2),
+                roof_plan_length_ft=round(L_proj, 2),
+                basis="ASCE 7-22 12.7.2, one interior frame: " + "; ".join(parts)
+                      + " -> W = %.2f kip" % W)
+
+
 def seismic_base_shear(cfg):
     """ELF base shear for the frame tributary (single level at the eave): V = Cs W_frame with
     ASCE 7-22 12.8.1.1: Cs = SDS/(R/Ie), <= SD1/(T R/Ie) for T <= TL (T = Ta = Ct hn^x,
@@ -1552,7 +1618,9 @@ def seismic_base_shear(cfg):
     SDS, R, Ie = float(s["SDS"]), float(s.get("R", 3.0)), float(s.get("Ie", 1.0))
     Cs = SDS / (R / Ie)
     note = ["Cs = SDS/(R/Ie) = %.4f" % Cs]
-    hn = float(cfg.get("apex_ft") or cfg["eave_ft"])
+    hn = float(cfg.get("apex_ft") or max([float(sp.get("apex_ft") or 0.0)
+                                          for sp in cfg.get("spans") or []] or [0.0])
+               or cfg["eave_ft"])
     T = s.get("T")
     if T is None and s.get("SD1"):
         T = float(s.get("Ct", 0.028)) * hn ** float(s.get("x", 0.8))
@@ -2058,6 +2126,13 @@ def run(cfg):
     if warn:
         pw += warn
     fr0, members0, meta0 = build_portal(cfg, secs)
+    s0 = cfg.get("seis")
+    if isinstance(s0, dict) and s0.get("W_frame_kip") is None and \
+            float(s0.get("SDS") or 0.0) > 0.0 and _sdc(cfg) != "A":
+        # 12.7.2 seismic weight of the frame when the design input does not state it
+        wsw = portal_seismic_weight(cfg, fr0, members0, meta0)
+        cfg = dict(cfg, seis=dict(s0, W_frame_kip=wsw["W_kip"], W_frame_basis=wsw["basis"]))
+        res["seismic_weight"] = wsw
     has_wind = bool(cfg.get("wind")) or "wind_pressures_psf" in cfg
     wind = wind_cases(cfg) if has_wind else dict(cases=[], warnings=[], basis="no wind")
     meta0["_wind"] = wind
@@ -2324,6 +2399,8 @@ def _seismic_block(cfg, secs_eff, cases, tmpl, meta0, fr0, sh, pw):
     rho = rho_portal(cfg)
     out = dict(V_kip=round(sh["V_kip"], 3), Cs=round(sh["Cs"], 4), T_s=sh.get("T_s"),
                W_frame_kip=sh["W_kip"], basis=sh["basis"], rho=rho,
+               W_frame_basis=s.get("W_frame_basis") or "seismic weight per frame as stated in "
+                                                       "the design input",
                rho_basis="ASCE 7-22 12.3.4 (%s); multiplies strength E only"
                          % ("declared" if (cfg.get("rho") is not None or s.get("rho")
                                            is not None) else "SDC %s default" % _sdc(cfg)),
@@ -2367,7 +2444,8 @@ def _seismic_block(cfg, secs_eff, cases, tmpl, meta0, fr0, sh, pw):
     Cd = float(Cd)
     Delta = Cd * dxe / Ie
     lim = cfg.get("drift_limit")
-    lim_basis = "cfg['drift_limit'] (declared)"
+    lim_basis = ("project drift limit %.3f h_sx (stated)" % float(lim)
+                 if isinstance(lim, (int, float)) else "project drift limit (stated)")
     if lim is None:
         # Table 12.12-1 row 1 (0.025 at RC I/II) needs DECLARED drift-tolerant finishes
         # (cfg['drift_tolerant_finishes'], as on the wall path, cfs_engine.drift_limit_for);
@@ -2379,14 +2457,14 @@ def _seismic_block(cfg, secs_eff, cases, tmpl, meta0, fr0, sh, pw):
                                  str(cfg.get("risk_cat", "II")).upper(),
                                  finishes_accommodate=bool(acc) if acc is not None else False,
                                  with_basis=True)
-        lim_basis = "cfs_systems.drift_limit: " + b_
+        lim_basis = b_
         if acc is None:
-            lim_basis += ("; cfg['drift_tolerant_finishes'] NOT declared -> 'all other "
-                          "structures' assumed (declare True where the walls, partitions and "
-                          "ceilings accommodate the story drift)")
+            lim_basis += ("; drift tolerance of the walls, partitions and ceilings not stated: "
+                          "the 'all other structures' row used")
     if cfg.get("drift_no_limit_single_story") or cfg.get("drift_limit_no_limit_single_story"):
         lim = None
-        lim_basis = "Table 12.12-1 footnote a (declared: single story, finishes accommodate)"
+        lim_basis = ("Table 12.12-1 footnote a: single story whose interior walls, partitions "
+                     "and ceilings accommodate the story drift -- no drift limit")
     if lim is not None and _sdc(cfg) in ("D", "E", "F"):
         lim = lim / rho                                   # 12.12.1.1 moment frames
         lim_basis += " / rho (12.12.1.1, moment frame in SDC %s)" % _sdc(cfg)

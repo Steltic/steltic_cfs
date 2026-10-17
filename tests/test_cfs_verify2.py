@@ -45,7 +45,7 @@ def test_portal_drift_limit_needs_declared_finishes():
     lo = dict(sds=0.25, sd1=0.10, s1=0.06)
     und = CF.run(_seis_cfg(**lo))["seismic"]
     assert und["drift_limit"] == pytest.approx(0.020)
-    assert "NOT declared" in und["drift_limit_basis"]
+    assert "not stated" in und["drift_limit_basis"] and "cfg[" not in und["drift_limit_basis"]
     dec = CF.run(_seis_cfg(drift_tolerant_finishes=True, **lo))["seismic"]
     assert dec["drift_limit"] == pytest.approx(0.025)
     no = CF.run(_seis_cfg(drift_tolerant_finishes=False, **lo))["seismic"]

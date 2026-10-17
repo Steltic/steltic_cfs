@@ -118,15 +118,15 @@ def diaphragm_idealization(cfg, res=None):
     concrete = top > 1.5 or any(w in mat for w in _CONCRETE_WORDS if w != "topping")
     if decl != "flexible":
         return dict(declared=decl, flexible_ok=False, warnings=warns,
-                    note="diaphragm declared %r -- no flexible idealization; Table 12.2-1 "
+                    note="diaphragm modelled %s -- no flexible idealization; Table 12.2-1 "
                          "footnote b Omega_0 reduction not applicable" % decl)
     if concrete and not calc_ok:
-        warns.append("diaphragm declared FLEXIBLE but %s -- ASCE 7-22 12.3.1.1(3)(a) excludes "
-                     "concrete/similar topping > 1.5 in. (12.3.1.2: concrete slabs may be "
-                     "RIGID). Model semi-rigid (12.3.1) or document 12.3.1.3 "
-                     "(cfg['diaphragm_MDD_ADVE'] > 2); the footnote-b Omega_0 reduction is "
+        warns.append("flexible diaphragm idealization with %s -- ASCE 7-22 12.3.1.1(3)(a) "
+                     "excludes concrete/similar topping > 1.5 in. (12.3.1.2: concrete slabs may "
+                     "be RIGID). Model semi-rigid (12.3.1) or show 12.3.1.3 "
+                     "(delta_MDD/Delta_ADVE > 2); the footnote-b Omega_0 reduction is "
                      "WITHHELD" % ("topping %.2f in." % top if top > 1.5 else
-                                   "material %r" % mat))
+                                   "material %s" % mat))
         return dict(declared=decl, flexible_ok=False, warnings=warns,
                     note="flexible idealization NOT supported by 12.3.1.1 (concrete topping)")
     if calc_ok:
@@ -144,8 +144,8 @@ def diaphragm_idealization(cfg, res=None):
                     note="flexible idealization pending drift compliance (12.3.1.1(3)(b))")
     return dict(declared=decl, flexible_ok=True, warnings=warns,
                 note="flexible per 12.3.1.1 (%s; topping %.2f in. <= 1.5 in.; lines meet "
-                     "Table 12.12-1)" % (mat or "untopped WSP/steel deck assumed -- declare "
-                                         "cfg['diaphragm_material']", top))
+                     "Table 12.12-1)" % (mat or "material not stated: untopped wood structural "
+                                         "panels / steel deck assumed", top))
 
 
 def _om0_eff(cfg, dirn=None, res=None):
@@ -745,12 +745,14 @@ def collector_seeds(cfg, res):
         else:
             nm, dirs = str(sp), ["X", "Y"]
         ent = dict(id="collector-%s" % nm, line=nm,
-                   basis=("SEEDED numeric (ASCE 7-22 12.10.1.1 Fpx / 12.10.2.1): per-level "
-                          "whole-diaphragm design forces below; the collector force = its "
-                          "share of the level force accumulated along the run + transfer "
-                          "forces%s" % ("" if isinstance(sp, dict) and sp.get("trib_fraction")
-                                        is not None else " -- AGENT applies the tributary "
-                                        "fraction/run length")),
+                   basis=("ASCE 7-22 12.10.1.1 (Fpx) / 12.10.2.1 (Omega_0 in SDC C-F): "
+                          "per-level whole-diaphragm design forces below; the collector force "
+                          "is its share of the level force accumulated along the run plus the "
+                          "transfer forces%s" % ("" if isinstance(sp, dict) and
+                                                 sp.get("trib_fraction") is not None else
+                                                 "; the designer applies the tributary "
+                                                 "fraction and run length")),
+                   framework_slot=True,
                    by_direction={d: tabs[d] for d in dirs},
                    limit_state=None, cited=None, capacity=None, DC=None)
         if isinstance(sp, dict) and sp.get("trib_fraction") is not None:
@@ -892,7 +894,8 @@ def build_package(name, cfg, res):
     rho = _rho_seismic(cfg)
     fL, L_basis = live_companion_factor(cfg)
     di = diaphragm_idealization(cfg, res)
-    pkg = dict(building=name, code="AISI S100-16(R2020)+S2/S3, S240-20, S400-20 -- LRFD",
+    pkg = dict(building=name, code="AISI S100-16 (2020) w/S2-20, AISI S240-20, AISI S400-20 -- LRFD; "
+                                   "ASCE 7-22",
                system=sysname, combos_note=COMBOS_NOTE,
                combos=enumerate_combos(cfg),
                L_factor=fL, L_factor_basis=L_basis,
@@ -906,7 +909,7 @@ def build_package(name, cfg, res):
                         Ta_s=round(e["Ta"], 3),
                         note="pure ELF (no rho); per-slot seeds below already include rho"),
                diaphragm_basis=di,
-               wall_lines=[], holddowns=[], studs=[], collectors=[], drift_table=[],
+               wall_lines=[], holddowns=[], anchorage=[], studs=[], collectors=[], drift_table=[],
                preflight_warnings=list(res.get("preflight_warnings", [])) + di["warnings"])
     # seismic weight breakdown (12.7.2 items) -- storage / partitions visible in the package
     sw = {}
@@ -1185,6 +1188,7 @@ def build_package(name, cfg, res):
                          "between Type II segments carry the same v; deflection per "
                          "E1.4.2.3 (Type I deflection / Ca)")
             pkg["holddowns"].append(hd)
+            pkg["anchorage"].append(_anchorage_slot(pkg, dirn, lname, lr, _ln, rho_d, Ca, wl, hd))
         if dd.get("gate_flags"):
             pkg.setdefault("model_vs_tributary_flags", []).extend(dd["gate_flags"])
         if dd.get("drift_flags"):
@@ -1257,6 +1261,46 @@ def _pair_rows(env):
     return out
 
 
+def _anchorage_slot(pkg, dirn, lname, lr, ln, rho_d, Ca, wl, hd):
+    """Per-line anchorage slot (base story): shear anchorage of the sill / bottom track to the
+    floor or foundation (unit shears, plf) and the hold-down anchorage of the line (tension,
+    kip). v_elf_plf = rho-ELF unit shear; v_wind_plf = 1.0W unit shear; v_cd_seed_plf = the
+    line's capacity-design story shear / L (expected strength Omega_E*Vn, not above the
+    Omega_0 level -- S400 B3.4; seeded only where capacity design is required); by-story
+    values serve the wall-to-floor transfer at the upper stories. Type II lines divide by Ca."""
+    ks = sorted(lr)
+    base_k = ks[0]
+
+    def L(k):
+        return ln.length(k) if ln is not None else 0.0
+
+    def ca(k):
+        return (Ca or {}).get(k) or 1.0
+    anc = dict(id="anch-%s-%s" % (dirn, lname), line=lname, direction=dirn, story=base_k,
+               L_ft=round(L(base_k), 2),
+               v_elf_plf=round(lr[base_k]["v_unit_plf"] * rho_d / ca(base_k), 0),
+               v_elf_by_story_plf={k: round(lr[k]["v_unit_plf"] * rho_d / ca(k), 0) for k in ks},
+               framework_slot=True,
+               basis="anchorage of wall line %s (%s): sill / bottom-track shear anchorage at the base "
+                     "story (unit shear) and the hold-down anchorage (tension); design for the larger "
+                     "of the wind and seismic demands, the seismic one at the capacity-design level "
+                     "where S400 B3.4 applies (v_cd_seed_plf, T_cd_seed_kip); concrete side to "
+                     "ACI 318-19 Ch. 17" % (lname, dirn),
+               limit_state=None, cited=None, capacity=None, DC=None)
+    if wl and wl.get("v_plf", {}).get(base_k) is not None:
+        anc["v_wind_plf"] = wl["v_plf"][base_k]
+    cdl = ((pkg.get("capacity_design") or {}).get("lines") or {}).get("%s:%s" % (dirn, lname)) or {}
+    ve = cdl.get("Ve_cap_by_story_kip") or {}
+    if ve and L(base_k) > 0:
+        anc["v_cd_seed_plf"] = round(ve[base_k] * 1000.0 / (L(base_k) * ca(base_k)), 0)
+        anc["v_cd_by_story_plf"] = {k: round(ve[k] * 1000.0 / (L(k) * ca(k)), 0)
+                                    for k in ks if k in ve and L(k) > 0}
+    for k in ("T_cum_kip", "T_bay_seed_kip", "T_wind_kip", "T_cd_seed_kip"):
+        if hd.get(k) is not None:
+            anc[k] = hd[k]
+    return anc
+
+
 def build_portal_package(name, cfg, res):
     """calc_package for the PORTAL path (cfs_frame.run() result). Same contract discipline:
     demand slots seeded, every capacity/citation field left for the agent.
@@ -1269,7 +1313,8 @@ def build_portal_package(name, cfg, res):
     shear, NET UPLIFT, compression and base moment, plus Omega_0-level seeds when seismic.
     Seismic (drift Cd delta_xe/Ie, theta, rho, Omega_0), SBMF screens/Ve, crane and fatigue
     slots when declared."""
-    pkg = dict(building=name, code="AISI S100-16(R2020)+S2/S3, S400-20 -- LRFD; ASCE 7-22",
+    pkg = dict(building=name, code="AISI S100-16 (2020) w/S2-20 (AISI S400-20 where it applies) -- "
+                                   "LRFD; ASCE 7-22",
                kind="cfs_portal", system=cfg.get("system") or "portal frame",
                structure_kind=res["structure_kind"], combos_note=PORTAL_COMBOS_NOTE,
                combos=[dict(label=n, role=c.get("role", "strength"))
@@ -1522,7 +1567,7 @@ def design_and_report(name, cfg, outdir=None, do_report=True):
                                      if "P-DELTA" not in w]
         portal = True
     else:
-        portal = "span_ft" in cfg
+        portal = "span_ft" in cfg or bool(cfg.get("spans"))
         if portal:
             import cfs_frame as CF
             res = CF.run(cfg)

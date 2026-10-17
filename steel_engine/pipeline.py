@@ -44,8 +44,10 @@ except Exception:
 
 def _is_cfs_cfg(cfg):
     """CFS cfgs are unmistakable: wall path carries lines_x/lines_y (WallLine lists),
-    portal path carries span_ft. engine3d grid cfgs carry NX/SX/heights."""
-    return isinstance(cfg, dict) and ("lines_x" in cfg or "span_ft" in cfg)
+    portal path carries span_ft (single span) or spans (multi-span frames). engine3d grid cfgs
+    carry NX/SX/heights."""
+    return isinstance(cfg, dict) and ("lines_x" in cfg or "lines_y" in cfg or "span_ft" in cfg
+                                      or bool(cfg.get("spans")))
 
 
 def _root(name):
@@ -314,7 +316,7 @@ def _cfs_engine_res(cfg):
         res["preflight_warnings"] = [w for w in res.get("preflight_warnings", [])
                                      if "P-DELTA" not in w]
         return res
-    if "span_ft" in cfg:
+    if "span_ft" in cfg or cfg.get("spans"):
         import cfs_frame as CF
         return CF.run(cfg)
     import cfs_engine as CE

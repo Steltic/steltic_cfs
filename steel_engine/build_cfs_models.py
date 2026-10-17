@@ -379,12 +379,15 @@ def _pcfg(s):
              D_roof=s["D_roof"], Lr=s.get("Lr", 20.0), snow_pg=s.get("snow_pg", 0.0),
              wind=dict(V=s["V_mph"], exposure=s.get("exp", "C"),
                        enclosed=s.get("enclosed", True)),
-             seis=dict(SDS=s.get("SDS", 0.25), R=3.0, Ie=1.0, W_frame_kip=None),
+             seis=dict(SDS=s.get("SDS", 0.25), R=3.0, Cd=3.0, Om0=3.0, Ie=1.0,
+                       W_frame_kip=None),     # Table 12.2-1 H; W per 12.7.2 by the engine
              pattern_snow=s.get("snow_pg", 0.0) > 0,
              structure_kind=s.get("structure_kind"),
              analysis_fidelity=s.get("tier", 1), direct_analysis=True)
     if "wind_pressures_psf" in s:
         c["wind_pressures_psf"] = dict(s["wind_pressures_psf"])
+    if s.get("drift_tolerant_finishes") is not None:
+        c["drift_tolerant_finishes"] = bool(s["drift_tolerant_finishes"])
     return c
 
 
@@ -393,13 +396,17 @@ def _pcfg_code(s):
     if "wind_pressures_psf" in s:
         ov = "\n  wind_pressures_psf=%r,   # OPEN building: Cn net-pressure seed, agent verifies 27.3.2" \
              % (s["wind_pressures_psf"],)
+    if s.get("drift_tolerant_finishes") is not None:
+        ov += ("\n  drift_tolerant_finishes=%r,   # Table 12.12-1 row 1: walls / partitions / "
+               "ceilings accommodate the story drift (stated)" % bool(s["drift_tolerant_finishes"]))
     return f"""import cfs_frame as CF
 cfg = dict(span_ft={s['span']}, eave_ft={s['eave']}, apex_ft={s['apex']}, spacing_ft={s['spacing']},
   purlin_spacing_ft={s.get('purlin', 5.0)}, girt_spacing_ft={s.get('girt', 6.0)},
   col_section="{s['col']}", raf_section="{s['raf']}", base="{s.get('base', 'pinned')}",
   D_roof={s['D_roof']}, Lr={s.get('Lr', 20.0)}, snow_pg={s.get('snow_pg', 0.0)},          # psf
   wind=dict(V={s['V_mph']}, exposure="{s.get('exp', 'C')}", enclosed={s.get('enclosed', True)}),
-  seis=dict(SDS={s.get('SDS', 0.25)}, R=3.0, Ie=1.0, W_frame_kip=None),
+  seis=dict(SDS={s.get('SDS', 0.25)}, R=3.0, Cd=3.0, Om0=3.0, Ie=1.0,
+            W_frame_kip=None),   # Table 12.2-1 H; W_frame_kip=None -> 12.7.2 weight computed
   pattern_snow={s.get('snow_pg', 0.0) > 0}, structure_kind={s.get('structure_kind')!r},
   analysis_fidelity={s.get('tier', 1)}, direct_analysis=True,{ov})
 res = CF.run(cfg)   # cases -> LRFD combos (S100 C1.1 0.9 tau_b + Yi/240 + P-Delta) -> Tier-1
@@ -511,6 +518,7 @@ PSPECS = [
       span=55.0, eave=18.0, apex=22.0, spacing=20.0, col="2x1200S350-118",
       raf="2x1200S350-97", D_roof=5.5, Lr=20.0, snow_pg=20.0, V_mph=110, SDS=0.40,
       SDC="C", mezzanine=True, plan_desc="55 ft span + interior mezzanine",
+      drift_tolerant_finishes=True,    # metal-panel walls, no brittle finishes: row 1 (stated)
       feature="two systems,mezzanine,mass separation,R pairing"),
  dict(id="P04", title="Open canopy 24x60 -- Cn net-pressure wind on fixed-base piers",
       desc="Open-sided canopy, 24-ft span, 12-ft frames, FIXED bases (drilled piers -- the "

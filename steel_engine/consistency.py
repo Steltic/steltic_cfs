@@ -46,7 +46,8 @@ def _here_repo():
 
 def is_cfs_cfg(cfg):
     """Same test as pipeline._is_cfs_cfg: wall path carries lines_x/lines_y, portal span_ft."""
-    return isinstance(cfg, dict) and ("lines_x" in cfg or "lines_y" in cfg or "span_ft" in cfg)
+    return isinstance(cfg, dict) and ("lines_x" in cfg or "lines_y" in cfg or "span_ft" in cfg
+                                      or bool(cfg.get("spans")))
 
 
 def package_path(root, cfg=None):
@@ -93,7 +94,8 @@ SEED_KEYS = frozenset((
     "diaphragm_basis", "drift_basis", "drift_limit_basis", "L_factor_basis", "Ca_basis",
     "capacity_design_applicability", "elf_by_direction", "weight_by_level_kip",
     "stability_warnings", "by_direction", "strap_ductility",
-    "gravity_framing"))
+    "gravity_framing", "framework_slot", "v_elf_plf", "v_elf_by_story_plf", "v_cd_seed_plf",
+    "v_cd_by_story_plf", "L_ft"))
 
 
 def _walk_agent(obj, skip=SEED_KEYS):
@@ -876,11 +878,12 @@ def _capacity_design_numeric_issues(cfg, pkg):
     except Exception:
         pass
 
-    def _design_demand(e):
-        for k in ("T_design_kip","design_T_kip","T_demand_kip","demand_kip","Tu_kip",
-                  "T_u_kip","demand"):
+    def _design_demand(e, tension_only=False):
+        keys=("T_design_kip","design_T_kip","T_demand_kip","Tu_kip","T_u_kip")
+        for k in keys + (() if tension_only else ("demand_kip","demand")):
             v=_num(e.get(k))
             if v is not None: return v, k
+        if tension_only: return None, None
         dc=_num(e.get("DC")); cap=_num(e.get("capacity"))
         if dc is not None and cap is not None and cap > 0:
             return dc*cap, "DC x capacity"
@@ -892,14 +895,28 @@ def _capacity_design_numeric_issues(cfg, pkg):
                                               +str((m.get("inputs") or {}).get("role",""))
                                               +str(m.get("role",""))).lower():
             entries.append(("chord", m))
+    # anchorage slots / connections that carry the capacity-design seed (rod hardware, anchors)
+    entries += [("anchorage", a) for a in (pkg.get("anchorage") or [])
+                if isinstance(a, dict) and _num(a.get("T_cd_seed_kip")) is not None]
+    entries += [("connection", c) for c in (pkg.get("connections") or [])
+                if isinstance(c, dict) and _num(c.get("T_cd_seed_kip")) is not None]
+    lines_cd=((pkg.get("capacity_design") or {}).get("lines") or {}) \
+        if isinstance(pkg.get("capacity_design"), dict) else {}
     for kind, e in entries:
         if e.get("waived"): continue
         tcd=_num(e.get("T_cd_seed_kip"))
+        if tcd is None and kind == "chord" and e.get("line") is not None:
+            # a chord stud of a named line: the line's capacity-design tension seed
+            ln=lines_cd.get("%s:%s" % (e.get("direction"), e.get("line"))) or \
+                next((v for k, v in lines_cd.items() if str(k).split(":")[-1] == str(e.get("line"))
+                      and isinstance(v, dict)), None)
+            if isinstance(ln, dict):
+                tcd=_num(ln.get("T_cd_bay_seed_kip")) or _num(ln.get("T_cd_seed_kip"))
         if tcd is not None and tcd > 0:
             # the framework's capacity-design seed: min(Omega_E*Vn stack, Omega_0 stack), / Ca for
             # Type II (cfs-wallloads CFS-06/18/20). The design tension may be lower only by the
             # 0.9D dead relief available, or where the agent computed its OWN Omega_E*Vn (numbers)
-            d, src=_design_demand(e)
+            d, src=_design_demand(e, tension_only=(kind in ("anchorage", "connection")))
             if d is None: continue
             relief=_num(e.get("dead_relief_kip_available")) or 0.0
             floor=max(tcd-relief, 0.0)
@@ -1128,8 +1145,15 @@ def _cfs_slot_issues(cfg, pkg):
     blob = json.dumps(pkg).lower()
     ablob = _agent_text(pkg)
     for w in pkg.get("wall_lines") or []:
-        if isinstance(w, dict) and not w.get("waived") and \
-                not (w.get("sheathing") and w.get("fastener_schedule")):
+        if not isinstance(w, dict) or w.get("waived"):
+            continue
+        if wall_slot_system(pkg, w, cfg) == "strap_braced":
+            # strap bays: the design is the strap selection + its end connection (no sheathing)
+            if not strap_slot_complete(w):
+                out.append("[wall %s] strap bay without its strap selection (selection) and end "
+                           "connection (connection) -- a strap-bay capacity without them is "
+                           "unverifiable (S400 E3)" % w.get("id"))
+        elif not (w.get("sheathing") and w.get("fastener_schedule")):
             out.append("[wall %s] no sheathing + fastener_schedule -- a wall capacity without them "
                        "is unverifiable (S400 tables are sheathing x fastener x sides)" % w.get("id"))
     for h in pkg.get("holddowns") or []:
@@ -1293,6 +1317,657 @@ def _two_stage_issues(cfg, pkg):
     return out
 
 
+# ---- code-basis screens (US-practice review of the published CFS reports, 2026-10) -------------
+# The design basis is AISI S100-16 (2020) w/S2-20 as referenced by IBC 2024, ASCE 7-22 LRFD.
+
+# ASTM A449 (Table 3, mechanical properties by nominal diameter): (max dia in., Fy ksi, Fu ksi)
+A449_GRADES = ((1.0, 92.0, 120.0), (1.5, 81.0, 105.0), (3.0, 58.0, 90.0))
+# UNC threads per inch (ASME B1.1) for the tensile-stress area At = 0.7854 (d - 0.9743/n)^2
+_UNC_TPI = {0.5: 13, 0.625: 11, 0.75: 10, 0.875: 9, 1.0: 8, 1.125: 7, 1.25: 7, 1.375: 6,
+            1.5: 6, 1.75: 5, 2.0: 4.5, 2.25: 4.5, 2.5: 4.0, 2.75: 4.0, 3.0: 4.0}
+
+
+def a449_strength(d_in):
+    """(Fy, Fu) in ksi of an ASTM A449 rod of nominal diameter d_in (None above 3 in.)."""
+    for dmax, fy, fu in A449_GRADES:
+        if d_in <= dmax + 1e-6:
+            return fy, fu
+    return None
+
+
+def rod_areas(d_in):
+    """(Ag, At) in in.^2: gross area and UNC tensile-stress area of a threaded rod."""
+    import math
+    n = _UNC_TPI.get(round(d_in, 3)) or min(_UNC_TPI.items(), key=lambda kv: abs(kv[0] - d_in))[1]
+    return math.pi * d_in ** 2 / 4.0, 0.7854 * (d_in - 0.9743 / n) ** 2
+
+
+def a449_phiTn_max(d_in):
+    """Upper bound of the LRFD tension strength of an A449 rod with the CORRECT grade for its
+    diameter: min(0.90 Fy Ag yield, 0.75 Fu At rupture) (S100 D2/D3 form; AISC 360 J3.6
+    0.75 x 0.75 Fu Ab is lower still)."""
+    g = a449_strength(d_in)
+    if not g:
+        return None
+    Ag, At = rod_areas(d_in)
+    return min(0.90 * g[0] * Ag, 0.75 * g[1] * At)
+
+
+_DIA_UNIT = r"\s*(?:in\.?|inch(?:es)?|\"|”|''|-in\b|-inch\b)"
+_DIA_PATTERNS = (
+    re.compile(r"(?<![\d/.])(\d)\s*-\s*(\d{1,2})/(\d{1,2})" + _DIA_UNIT, re.I),     # 1-1/2 in.
+    re.compile(r"(?<![\d/.\-])(\d{1,2})/(\d{1,2})" + _DIA_UNIT, re.I),               # 7/8 in.
+    re.compile(r"(?<![\d/.\-])(\d(?:\.\d{1,3})?)" + _DIA_UNIT, re.I),                # 1.25 in.
+)
+
+
+def parse_rod_diameter(text):
+    """Largest nominal diameter (in.) quoted next to a rod / A449 / threaded-rod mention in the
+    text, or None. Plate thicknesses etc. are ignored unless the word 'rod' (or A449, threaded,
+    dia) sits within ~30 characters of the dimension."""
+    if not isinstance(text, str) or not text:
+        return None
+    best = None
+    taken = []
+    for i, rx in enumerate(_DIA_PATTERNS):
+        for m in rx.finditer(text):
+            if any(a <= m.start() < b for a, b in taken):
+                continue
+            g = m.groups()
+            try:
+                if i == 0:
+                    d = int(g[0]) + int(g[1]) / float(g[2])
+                elif i == 1:
+                    d = int(g[0]) / float(g[1])
+                else:
+                    d = float(g[0])
+            except (ValueError, ZeroDivisionError):
+                continue
+            taken.append((m.start(), m.end()))
+            if not (0.375 <= d <= 4.0):
+                continue
+            win = text[max(0, m.start() - 30): m.end() + 30].lower()
+            if re.search(r"\brods?\b|a449|threaded|\bdia\b|diameter|ø", win):
+                best = d if best is None else max(best, d)
+    return best
+
+
+def _entry_text(e):
+    """All string leaves of an entry (its own fields + checks + rows) as one blob."""
+    acc = []
+    _gather_text(e, acc)
+    return " | ".join(t for t in acc if isinstance(t, str))
+
+
+_PHITN_RX = re.compile(r"(?:phi|φ|ϕ)\s*[_]?\s*t?\s*\*?\s*T\s*_?n\s*(?:\([^)]*\))?\s*[=:≈~]\s*"
+                       r"(\d+(?:\.\d+)?)", re.I)
+
+
+def _claimed_tension_capacity(e):
+    """The LRFD tension strength an entry claims (kip): numeric capacity, a phiTn key in its
+    checks, or 'phi*Tn = N' in its capacity / limit-state text."""
+    cap = e.get("capacity")
+    if isinstance(cap, (int, float)) and not isinstance(cap, bool):
+        return float(cap)
+    for c in [e] + [c for c in (e.get("checks") or []) if isinstance(c, dict)]:
+        v = _find(c, frozenset(("phitn", "phitnrod", "phitny", "phitnr")))
+        if v is not None:
+            return v
+    for k in ("capacity", "limit_state", "note"):
+        m = _PHITN_RX.search(str(e.get(k) or ""))
+        if m:
+            return float(m.group(1))
+    return None
+
+
+_FU120_RX = re.compile(r"\bF_?u\s*[=:]?\s*120(?:\.0+)?(?![\d.])|(?<![\d.])120(?:\.0+)?\s*ksi\b|"
+                       r"[*×x]\s*120(?:\.0+)?\s*[*×x]|\b0\.75\s*[*×x]\s*120(?![\d.])", re.I)
+_FY81_RX = re.compile(r"\bF_?y\s*[=:]?\s*81(?:\.0+)?(?![\d.])|(?<![\d.])81(?:\.0+)?\s*ksi\b|"
+                      r"\b0\.9\s*[*×x]\s*81(?![\d.])|\bF_?u\s*[=:]?\s*105(?![\d.])|"
+                      r"(?<![\d.])105\s*ksi\b|\b0\.75\s*[*×x]\s*105(?![\d.])", re.I)
+
+
+def _rod_grade_issues(pkg):
+    """ASTM A449 threaded rods: strength steps down with diameter (Fy/Fu = 92/120 ksi to 1 in.,
+    81/105 ksi over 1 to 1-1/2 in., 58/90 ksi over 1-1/2 to 3 in.). Flags a rod over 1 in.
+    computed with Fu = 120 ksi, a rod over 1-1/2 in. computed with 81/105 ksi, and any claimed
+    phiTn above min(0.9FyAg, 0.75FuAt) at the correct grade."""
+    out = []
+    if not isinstance(pkg, dict):
+        return out
+    pool = [("hold-down", h) for h in pkg.get("holddowns") or []] + \
+           [("connection", c) for c in pkg.get("connections") or []] + \
+           [("anchorage", a) for a in pkg.get("anchorage") or []]
+    for kind, e in pool:
+        if not isinstance(e, dict) or e.get("waived"):
+            continue
+        txt = _entry_text({k: v for k, v in e.items() if k not in SEED_KEYS})
+        if not re.search(r"a\s*449", txt, re.I):
+            continue
+        d = parse_rod_diameter(txt)
+        if d is None or d <= 1.0 + 1e-6:
+            continue
+        g = a449_strength(d)
+        if not g:
+            continue
+        cid = e.get("id")
+        if _FU120_RX.search(txt):
+            out.append("[%s %s] ASTM A449 rod %.3g in. computed with Fu = 120 ksi -- A449 over 1 in. "
+                       "is Fy/Fu = 81/105 ksi (to 1-1/2 in.) and 58/90 ksi (1-5/8 to 3 in.); this "
+                       "rod is %g/%g ksi -- recompute the rod strength" % (kind, cid, d, g[0], g[1]))
+        elif d > 1.5 + 1e-6 and _FY81_RX.search(txt):
+            out.append("[%s %s] ASTM A449 rod %.3g in. computed with the 81/105-ksi grade -- over "
+                       "1-1/2 in. A449 is Fy/Fu = 58/90 ksi; recompute the rod strength"
+                       % (kind, cid, d))
+        cap = _claimed_tension_capacity(e)
+        ub = a449_phiTn_max(d)
+        if cap is not None and ub and cap > 1.02 * ub:
+            out.append("[%s %s] claimed rod strength %.1f kip exceeds the ASTM A449 strength of a "
+                       "%.3g-in. rod at Fy/Fu = %g/%g ksi: min(0.9FyAg, 0.75FuAt) = %.1f kip -- "
+                       "re-derive the rod (and its D/C)" % (kind, cid, cap, d, g[0], g[1], ub))
+    return out
+
+
+_SCREW_CTX = re.compile(r"\bscrews?\b|\bJ4(?:\.\d+)*\b|self[- ]drill|\bno\.\s?(?:6|8|10|12|14)\b|"
+                        r"#\s?(?:8|10|12|14)\b", re.I)
+_PHI055_RX = re.compile(r"(?:phi|φ|ϕ)\s*_?\s*[a-z]{0,2}\s*(?:=|:|of)?\s*0?\.55(?![\d])", re.I)
+_OM280_RX = re.compile(r"(?:omega|Ω)\s*_?\s*[a-z]{0,2}\s*(?:=|:|of)?\s*2\.80?(?![\d])", re.I)
+
+
+def _screw_phi_issues(pkg):
+    """Screw connections (AISI S100 J4) checked with phi = 0.55 / Omega = 2.80. The design basis
+    (S100-16 (2020) w/S2-20, as referenced by IBC 2024) uses phi = 0.50 / Omega = 3.00 for screw
+    shear (tilting/bearing), pull-out and pull-over -- the higher factor is unconservative."""
+    out = []
+    if not isinstance(pkg, dict):
+        return out
+    for kind, key in (("connection", "connections"), ("collector", "collectors"),
+                      ("hold-down", "holddowns"), ("wall", "wall_lines"), ("stud", "studs"),
+                      ("member", "members"), ("anchorage", "anchorage"),
+                      ("schedule", "schedules")):
+        for e in pkg.get(key) or []:
+            if not isinstance(e, dict) or e.get("waived"):
+                continue
+            texts = []
+            _gather_text({k: v for k, v in e.items() if k not in SEED_KEYS}, texts)
+            hit = None
+            for t in texts:
+                if not isinstance(t, str):
+                    continue
+                for rx in (_PHI055_RX, _OM280_RX):
+                    for m in rx.finditer(t):
+                        win = t[max(0, m.start() - 90): m.end() + 30]
+                        if _SCREW_CTX.search(win) and not re.search(r"\bweld|\bbolt", win, re.I):
+                            hit = m.group(0)
+                            break
+                    if hit:
+                        break
+                if hit:
+                    break
+            if hit:
+                out.append("[%s %s] screw connection checked with '%s' -- AISI S100-16 (2020) w/S2-20 "
+                           "(IBC 2024) J4 uses phi = 0.50 / Omega = 3.00 for screw connections; "
+                           "re-derive the screw strengths and D/C" % (kind, e.get("id"), hit.strip()))
+    return out
+
+
+def _screw_shear_strength_issues(pkg):
+    """A screw connection designed for tilting/bearing (S100 J4.3.1) must also check the shear
+    strength of the screw itself (J4.3.2: the manufacturer's tested Pss) -- the published
+    reports quoted per-screw strengths above typical No. 12 Pss values."""
+    out = []
+    for c in (pkg.get("connections") or []) if isinstance(pkg, dict) else []:
+        if not isinstance(c, dict) or c.get("waived"):
+            continue
+        txt = _entry_text({k: v for k, v in c.items() if k not in SEED_KEYS})
+        if not re.search(r"J4\.3\.1|tilting", txt, re.I) or not _SCREW_CTX.search(txt):
+            continue
+        if re.search(r"J4\.3\.2|\bP_?ss\b|screw shear strength|shear strength of the screw|"
+                     r"fastener shear|screw (?:itself|body)|\bESR\b|manufacturer", txt, re.I):
+            continue
+        out.append("[connection %s] screw connection checked for tilting/bearing (S100 J4.3.1) "
+                   "only -- add the shear strength of the screw itself (J4.3.2, from the "
+                   "manufacturer's tested Pss) as a limit state" % c.get("id"))
+    return out
+
+
+_P_DEM_KEYS = frozenset(("pu", "pr", "pdesign", "pdemand", "pucomp", "prcomp", "nu"))
+_P_CAP_KEYS = frozenset(("phipn", "pc", "phipne", "phipnl", "phipnd", "pa", "phicpn",
+                         "phipnmin", "pnphi"))
+_PHIPN_RX = re.compile(r"(?:phi|φ|ϕ)\s*_?c?\s*\*?\s*P\s*_?n[a-z]?\s*[=:≈~]\s*(\d+(?:\.\d+)?)", re.I)
+
+
+def _interaction_issues(pkg):
+    """Combined axial + bending checks: the interaction ratio can never be below its own axial
+    term -- Pr/Pc for AISI S100 H1.2 (and AISC H1-1a); Pr/(2Pc) for AISC H1-1b, which applies
+    only when Pr/Pc < 0.2. A correct H1-1b check whose D/C is below Pr/Pc is NOT flagged."""
+    out = []
+    if not isinstance(pkg, dict):
+        return out
+    for kind, key in (("member", "members"), ("stud", "studs")):
+        for e in pkg.get(key) or []:
+            if not isinstance(e, dict) or e.get("waived"):
+                continue
+            cid = e.get("id")
+            for c in [c for c in (e.get("checks") or []) if isinstance(c, dict)]:
+                name = "%s %s" % (c.get("limit_state") or "", c.get("name") or "")
+                if not _is_interaction(name):
+                    continue
+                dc = _dc_num(c.get("DC"))
+                P, Pc = _find(c, _P_DEM_KEYS), _find(c, _P_CAP_KEYS)
+                if dc is None or P is None or not Pc:
+                    continue
+                txt = " ".join(str(v) for v in c.values() if isinstance(v, str))
+                out += _interaction_floor(kind, cid, name.strip(), dc, P, Pc, txt)
+            # entry level: the headline D/C (the worst pair) can never be below P/Pc of the
+            # max-moment pair the slot carries
+            if any(_is_interaction(str(c.get("limit_state") or c.get("name") or ""))
+                   for c in (e.get("checks") or []) if isinstance(c, dict)) or \
+                    _is_interaction(str(e.get("limit_state") or "")):
+                dc = worst_dc(e)
+                P = _num(e.get("P_design_kip")) if e.get("P_design_kip") is not None else \
+                    _num(e.get("P_kip"))
+                m = _PHIPN_RX.search(str(e.get("capacity") or ""))
+                Pc = float(m.group(1)) if m else None
+                if dc is not None and P and Pc:
+                    txt = " ".join(str(e.get(k) or "") for k in ("limit_state", "capacity"))
+                    out += _interaction_floor(kind, cid, "headline", dc, P, Pc, txt)
+    return out
+
+
+def _interaction_floor(kind, cid, name, dc, P, Pc, txt):
+    ratio = abs(P) / Pc
+    h1b = bool(re.search(r"H1-1b", txt + " " + name, re.I))
+    out = []
+    if h1b and ratio >= 0.2 + 0.005:
+        out.append("[%s %s] check '%s' uses AISC H1-1b but Pr/Pc = %.3f >= 0.2 -- H1-1a governs "
+                   "(H1-1b applies only when Pr/Pc < 0.2)" % (kind, cid, name, ratio))
+    floor = ratio / 2.0 if h1b else ratio
+    if dc + max(ABS_TOL, 0.02 * floor) < floor:
+        out.append("[%s %s] interaction '%s' D/C %.3f is below its own axial term %s = %.3f "
+                   "(Pr = %.3g, Pc = %.3g) -- the interaction sum cannot be smaller; reconcile"
+                   % (kind, cid, name, dc, "Pr/(2Pc)" if h1b else "Pr/Pc", floor, P, Pc))
+    return out
+
+
+_SNOW16_RX = re.compile(r"(?<![\d.])(1\.6|0\.5|0\.2)\s*\*?\s*S(?![a-zA-Z])")
+
+
+def _snow_factor_issues(pkg):
+    """Governing combinations written with the ASCE 7-16 snow factors (1.6S primary, 0.5S
+    companion, 0.2S seismic). ASCE 7-22 2.3.1 maps a strength-level snow load: 1.0S primary,
+    0.3S companion, 0.15S in the seismic combination."""
+    out = []
+    if not isinstance(pkg, dict):
+        return out
+    for kind, key in (("member", "members"), ("connection", "connections"),
+                      ("anchorage", "anchorage"), ("schedule", "schedules"), ("stud", "studs")):
+        for e in pkg.get(key) or []:
+            if not isinstance(e, dict) or e.get("waived"):
+                continue
+            labs = [e.get(k) for k in ("governing_combo", "combo", "uplift_combo")]
+            for c in (e.get("checks") or []) + (e.get("rows") or []):
+                if isinstance(c, dict):
+                    labs += [c.get(k) for k in ("combo", "governing_combo")]
+            hit = next((str(x) for x in labs if isinstance(x, str) and _SNOW16_RX.search(x)), None)
+            if hit:
+                out.append("[%s %s] combination '%s' uses an ASCE 7-16 snow factor -- ASCE 7-22 "
+                           "2.3.1 uses 1.0S (0.3S as a companion, 0.15S with E); re-run with the "
+                           "7-22 combinations" % (kind, e.get("id"), hit[:80]))
+    return out
+
+
+_DRIFT716_RX = re.compile(r"0\.43\s*[*x×]?\s*\(?\s*[\w.]+\s*\)?\s*\^\s*\(?\s*1\s*/\s*3", re.I)
+_ROS5_RX = re.compile(r"\b5(?:\.0)?\s*-?\s*psf\s+rain[- ]on[- ]snow|rain[- ]on[- ]snow[^.;]{0,30}\b5(?:\.0)?\s*psf",
+                      re.I)
+
+
+def _snow_basis_issues(pkg):
+    """ASCE 7-16 snow provisions in the designer's records: the drift height
+    hd = 0.43 lu^(1/3) (pg + 10)^(1/4) - 1.5 (ASCE 7-22 Eq. 7.6-1 uses the winter wind parameter
+    W2) and the 5-psf rain-on-snow surcharge (ASCE 7-22 7.10: 8 psf)."""
+    txt = _agent_text(pkg) if isinstance(pkg, dict) else ""
+    out = []
+    if _DRIFT716_RX.search(txt):
+        out.append("snow drift height computed with the ASCE 7-16 equation hd = 0.43 lu^(1/3)(pg+10)^(1/4) "
+                   "- 1.5 -- ASCE 7-22 Eq. 7.6-1 uses the winter wind parameter W2; recompute the drifts")
+    if _ROS5_RX.search(txt):
+        out.append("rain-on-snow surcharge taken as 5 psf (ASCE 7-16) -- ASCE 7-22 7.10 uses 8 psf where it "
+                   "applies; recheck")
+    return out
+
+
+def _h11_compression_issues(pkg):
+    """AISI S100 H1.1 is combined TENSION and bending; a member whose governing axial force is
+    compression is checked with H1.2 (combined compressive axial load and bending)."""
+    out = []
+    for kind, key in (("member", "members"), ("stud", "studs")):
+        for e in (pkg.get(key) or []) if isinstance(pkg, dict) else []:
+            if not isinstance(e, dict) or e.get("waived"):
+                continue
+            comp = (_num(e.get("Pc_paired_kip")) or 0.0) > 0.5 or \
+                (_num(e.get("P_design_kip")) or 0.0) > 0.5 or \
+                any((_find(c, frozenset(("pu", "pr", "pucomp"))) or 0.0) > 0.5 and
+                    re.search(r"compress|\bH1\b|interaction", str(c.get("limit_state") or ""), re.I)
+                    for c in (e.get("checks") or []) if isinstance(c, dict))
+            if not comp:
+                continue
+            txt = _entry_text({k: v for k, v in e.items() if k not in SEED_KEYS})
+            if re.search(r"\bH1\.1\b", txt) and not re.search(r"\bH1\.2\b", txt):
+                out.append("[%s %s] combined check cites S100 H1.1 (tension + bending) for a member in "
+                           "compression -- use H1.2 (compression + bending)" % (kind, e.get("id")))
+    return out
+
+
+def _rho_basis_issues(cfg, pkg):
+    """rho = 1.0 in SDC D-F needs the ASCE 7-22 12.3.4.2 showing (condition (a): removal of one
+    element does not reduce story strength by more than 33 % nor create an extreme torsional
+    irregularity; condition (b): regular plan with at least two bays of perimeter SFRS per side,
+    light-frame bays = 2L/h_sx), with numbers -- asserting the clause is not a check."""
+    if not isinstance(cfg, dict) or not is_cfs_cfg(cfg) or not isinstance(pkg, dict):
+        return []
+    s = cfg.get("seis") or {}
+    try:
+        import cfs_systems as _CS
+        cat = _CS.sdc(float(s.get("SDS", 0) or 0), float(s.get("SD1", 0) or 0),
+                      float(s.get("S1", 0) or 0), str(cfg.get("risk_cat", "II")))
+    except Exception:
+        return []
+    if cat not in ("D", "E", "F"):
+        return []
+    rb = cfg.get("rho_by_dir") or {}
+    rhos = [_num(rb.get(d, pkg.get("rho", cfg.get("rho")))) for d in ("X", "Y")]
+    if not any(r is not None and abs(r - 1.0) < 1e-9 for r in rhos):
+        return []
+    txt = " ".join([_agent_text(pkg), str(pkg.get("rho_basis") or ""),
+                    json.dumps(pkg.get("rho_justification") or "")])
+    if re.search(r"12\.3\.4\.2.{0,300}?\d", txt, re.S) and \
+            re.search(r"\d+\s*(?:bays?|%|percent)|2l/h|33\s*%|torsion", txt, re.I):
+        return []
+    return ["rho = 1.0 in SDC %s without the ASCE 7-22 12.3.4.2 showing -- record condition (a) (strength "
+            "loss <= 33 %% on removing a wall line, no extreme torsional irregularity) or (b) (regular plan, "
+            ">= 2 bays of perimeter SFRS per side per story; light-frame bays = 2L/h_sx) with numbers in "
+            "rho_justification, or use rho = 1.3" % cat]
+
+
+def _seed_label_issues(pkg):
+    """A designed collector whose printed basis is still the framework's 'SEEDED' label."""
+    out = []
+    for c in (pkg.get("collectors") or []) if isinstance(pkg, dict) else []:
+        if not isinstance(c, dict) or c.get("waived"):
+            continue
+        designed = c.get("DC") is not None or bool(c.get("checks"))
+        if not designed:
+            continue
+
+        def _seedy(k):
+            return isinstance(c.get(k), str) and c[k].strip().upper().startswith("SEEDED")
+        own = any(isinstance(c.get(k), str) and c[k].strip() and not _seedy(k)
+                  for k in ("design_basis", "demand_basis_used", "capacity_design_basis"))
+        printed = [k for k in ("selection", "description", "label", "design_basis") if _seedy(k)]
+        if not printed and _seedy("basis") and not own:
+            printed = ["basis"]
+        if printed:
+            lab = str(c.get(printed[0]))
+            out.append("[collector %s] the framework's placeholder label '%s' is left in place as the design "
+                       "basis -- state the actual basis in design_basis (e.g. S400 expected strength "
+                       "capped at the Omega0 level, or ASCE 7-22 12.10.2.1 Omega0)"
+                       % (c.get("id"), lab[:70]))
+    return out
+
+
+_ANCH_RX = re.compile(r"anchor|sill|track[- ]to|wall[- ]to[- ](?:floor|podium|foundation|slab)|"
+                      r"shear transfer|rim", re.I)
+_UNIT_SHEAR_RX = re.compile(r"(\d+(?:\.\d+)?)\s*(klf|plf|kip/ft|lb/ft)", re.I)
+
+
+def wall_slot_line(w):
+    """Line name of a wall slot: its 'line' key, else parsed from 'wall-<dir>-<line>-s<story>'."""
+    if w.get("line") is not None:
+        return str(w["line"])
+    m = re.match(r"^wall-([XY])-(.+)-s(\d+)$", str(w.get("id", "")))
+    return m.group(2) if m else ""
+
+
+def wall_slot_system(pkg, w, cfg=None):
+    """System key of one wall slot: the slot's own 'system', its line's system
+    (elf_by_direction[d].line_systems), the direction's system (system_by_direction /
+    capacity_design_applicability / cfg system_by_dir), else the building system."""
+    if w.get("system"):
+        return str(w["system"]).lower()
+    d = str(w.get("direction") or "")
+    pkg = pkg if isinstance(pkg, dict) else {}
+    ls = ((pkg.get("elf_by_direction") or {}).get(d) or {}).get("line_systems") or {}
+    if isinstance(ls, dict) and ls.get(wall_slot_line(w)):
+        return str(ls[wall_slot_line(w)]).lower()
+    for src in (pkg.get("system_by_direction") or {},
+                {k: (v or {}).get("system") for k, v in (pkg.get("capacity_design_applicability") or {}).items()
+                 if isinstance(v, dict)},
+                ((cfg or {}).get("system_by_dir") or {}) if isinstance(cfg, dict) else {}):
+        if isinstance(src, dict) and src.get(d):
+            return str(src[d]).lower()
+    return str(((cfg or {}).get("system") if isinstance(cfg, dict) else None) or pkg.get("system") or "").lower()
+
+
+def strap_slot_complete(w):
+    """A strap bay is designed when it carries its strap selection (selection / strap / bracing,
+    or the strap data in fastener_schedule) and the strap-end connection."""
+    brace = any(w.get(k) for k in ("selection", "strap", "straps", "bracing", "strap_schedule",
+                                   "fastener_schedule")) or \
+        bool(w.get("sheathing") and not re.search(r"\bnone\b", str(w["sheathing"]), re.I))
+    conn = any(w.get(k) for k in ("connection", "strap_connection", "fastener_schedule"))
+    return brace and conn
+
+
+def capacity_design_unit_shear(pkg):
+    """{(direction, line): (v_ELF_plf, v_cd_plf)} at the base story: the rho-ELF unit shear of the
+    wall slot and the framework's capacity-design (Omega0-capped / Omega_E*Vn) unit shear
+    Ve_cap / L from capacity_design.lines -- the demand capacity-protected shear anchorage of
+    that line is designed for (S400 B3.4)."""
+    out = {}
+    if not isinstance(pkg, dict):
+        return out
+    for a in pkg.get("anchorage") or []:         # seeded per-line anchorage slots (preferred)
+        if isinstance(a, dict) and _num(a.get("v_cd_seed_plf")) is not None and a.get("line") is not None:
+            out[(str(a.get("direction")), str(a["line"]))] = (_num(a.get("v_elf_plf")),
+                                                               _num(a["v_cd_seed_plf"]))
+    if out:
+        return out
+    lines = ((pkg.get("capacity_design") or {}).get("lines") or {}) \
+        if isinstance(pkg.get("capacity_design"), dict) else {}
+    slots = {}
+    for w in pkg.get("wall_lines") or []:
+        if isinstance(w, dict) and w.get("direction") and w.get("story") is not None:
+            slots[(str(w["direction"]), wall_slot_line(w), int(w["story"]))] = w
+    for key, ln in lines.items():
+        if not isinstance(ln, dict):
+            continue
+        d, l = str(ln.get("direction") or str(key).split(":")[0]), str(ln.get("line") or str(key).split(":")[-1])
+        ve = ln.get("Ve_cap_by_story_kip") or {}
+        if not ve:
+            continue
+        k1 = min(ve, key=lambda s: int(s))
+        w = slots.get((d, l, int(k1)))
+        if not w:
+            continue
+        V, v = _num(w.get("V_kip")), _num(w.get("v_unit_plf"))
+        if not V or not v:
+            continue
+        L_ft = V * 1000.0 / v
+        out[(d, l)] = (v, _num(ve[k1]) * 1000.0 / L_ft)
+    return out
+
+
+def _shear_demand_plf(c):
+    """Design unit shear (plf) of an anchorage slot / connection: v_design_plf-type fields, klf
+    fields, or the first 'N klf' / 'N plf' in its demand text."""
+    for k in ("v_design_plf", "v_demand_plf", "v_u_plf"):
+        if _num(c.get(k)) is not None:
+            return _num(c.get(k))
+    for k in ("v_design_klf", "v_demand_klf", "v_u_klf"):
+        if _num(c.get(k)) is not None:
+            return 1000.0 * _num(c.get(k))
+    m = _UNIT_SHEAR_RX.search(str(c.get("demand") or ""))
+    if m:
+        return float(m.group(1)) * (1000.0 if m.group(2).lower() in ("klf", "kip/ft") else 1.0)
+    return None
+
+
+def _anchorage_shear_cd_issues(cfg, pkg):
+    """Shear anchorage (sill / bottom-track anchors, wall-to-floor transfer) of an S400 wall
+    system that requires capacity design, designed at the rho-ELF unit shear although the
+    framework's capacity-design shear of the lines is larger -- the published reports listed
+    anchorage as capacity-protected (S400 E1.4.1.2 / E2.4.1.2 / E3.3 / E6.4.1.2) and then used
+    the ELF shear. Clears when the slot shows its own expected-strength / Omega0 numbers."""
+    out = []
+    if not isinstance(pkg, dict) or not isinstance(cfg, dict):
+        return out
+    sysname = str(cfg.get("system") or pkg.get("system") or "").lower()
+    if sysname not in _CD_GATE_SYSTEMS:
+        return out
+    try:
+        import cfs_systems as _CS
+        _s = cfg.get("seis") or {}
+        if not _CS.capacity_design_required(
+                sysname, _s.get("R"), _CS.sdc(float(_s.get("SDS", 0) or 0), float(_s.get("SD1", 0) or 0),
+                                              float(_s.get("S1", 0) or 0),
+                                              str(cfg.get("risk_cat", "II"))))[0]:
+            return out
+    except Exception:
+        return out
+    ref = capacity_design_unit_shear(pkg)
+    if not ref:
+        return out
+    v_elf = max(a or 0.0 for a, _b in ref.values())
+    v_cd = max(b for _a, b in ref.values())
+    for a in pkg.get("anchorage") or []:         # seeded per-line slots: their own line's demand
+        if not isinstance(a, dict) or a.get("waived") or _num(a.get("v_cd_seed_plf")) is None:
+            continue
+        dem = _shear_demand_plf(a)
+        if dem is None:
+            continue
+        txt = _entry_text({k: v for k, v in a.items() if k not in SEED_KEYS})
+        own = re.search(r"omega_?e\s*\*?\s*v_?n|expected strength.{0,40}\d", txt, re.I)
+        if dem < 0.99 * _num(a["v_cd_seed_plf"]) and not own:
+            out.append("[anchorage %s] shear anchorage designed for %.0f plf, below the line's "
+                       "capacity-design unit shear v_cd = %.0f plf (rho-ELF %.0f plf; S400 B3.4) "
+                       "-- design for it, or record the line's own expected-strength Omega_E*Vn (numbers)"
+                       % (a.get("id"), dem, _num(a["v_cd_seed_plf"]), _num(a.get("v_elf_plf")) or 0.0))
+    for c in pkg.get("connections") or []:
+        if not isinstance(c, dict) or c.get("waived"):
+            continue
+        head = " ".join(str(c.get(k) or "") for k in ("id", "type", "joint", "selection",
+                                                       "description"))
+        if not _ANCH_RX.search(head) or re.search(r"uplift|hold[- ]?down|\brod\b|clip|strap",
+                                                  head, re.I):
+            continue
+        dem = _shear_demand_plf(c)
+        if dem is None:
+            continue
+        txt = _entry_text({k: v for k, v in c.items() if k not in SEED_KEYS})
+        if re.search(r"om(?:ega)?_?0|Ω\s*0|Ω<sub>0|overstrength|expected|omega_?e|Ω_?E|"
+                     r"capacity[- ]design|ve_?cap", txt, re.I):
+            continue
+        if dem <= 1.05 * v_elf and v_cd > 1.05 * dem:
+            out.append("[connection %s] shear anchorage designed for %.0f plf, the rho-ELF unit shear "
+                       "(max %.0f plf at the base story), while the capacity-design shear of the "
+                       "lines (Omega0-capped / Omega_E*Vn, S400 B3.4) reaches %.0f plf -- design the "
+                       "anchorage for it, or record the expected-strength basis (numbers) on the slot"
+                       % (c.get("id"), dem, v_elf, v_cd))
+    return out
+
+
+_WV_EXPL_W = re.compile(r"\bW\s*(?:=|:|is)?\s*([\d,]+(?:\.\d+)?)\s*(?:kips?|k)?\b")
+_WV_PROD = re.compile(r"(\d*\.\d+)\s*[x×*]\s*([\d,]+(?:\.\d+)?)\s*(?:kips?\s*)?=\s*"
+                      r"([\d,]+(?:\.\d+)?)\s*kips?\b", re.I)
+_WV_V = re.compile(r"\bV\b(?:_?(?:base|kip))?\s*(?:=|:)?\s*([^;\n]*?)(\d[\d,]*(?:\.\d+)?)\s*kips?\b")
+
+
+def parse_W_V(obj):
+    """(W, V) in kip quoted by a self-check block (dict with W/V keys, or text such as
+    'V = 0.1538 x 1767 = 271.8 kip' / 'W 3876 / V 536.7 kip'); None where not found."""
+    W = V = None
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            nk = _norm_key(k)
+            if nk in ("w", "wkip", "wtotal", "seismicweight") and _num(v) is not None:
+                W = _num(v)
+            if nk in ("v", "vkip", "vbase", "baseshear") and _num(v) is not None:
+                V = _num(v)
+        txt = " ".join(str(v) for v in obj.values() if isinstance(v, str))
+    elif isinstance(obj, str):
+        txt = obj
+    else:
+        return None, None
+    if W is None:
+        m = _WV_EXPL_W.search(txt)
+        if m:
+            W = float(m.group(1).replace(",", ""))
+    pm = _WV_PROD.search(txt)
+    if W is None and pm:
+        W = float(pm.group(2).replace(",", ""))
+    if V is None:
+        m = _WV_V.search(txt)
+        if m:
+            V = float(m.group(2).replace(",", ""))
+        elif pm:
+            V = float(pm.group(3).replace(",", ""))
+    return W, V
+
+
+def elf_spot_check_compare(pkg, W_ref=None, V_ref=None):
+    """[(quantity, quoted, reference)] for every W / V a package self-check quotes that differs
+    from the reference (default: the framework ELF of the same run, pkg['elf']) by > 0.5 %."""
+    sc = None
+    for k in ("elf_spot_check", "elf_self_check", "self_check"):
+        if isinstance(pkg, dict) and pkg.get(k):
+            sc = pkg[k]
+            break
+    if sc is None:
+        return None
+    elf = (pkg or {}).get("elf") or {}
+    W_ref = W_ref if W_ref is not None else _num(elf.get("W_kip"))
+    V_ref = V_ref if V_ref is not None else _num(elf.get("V_kip"))
+    W, V = parse_W_V(sc)
+    diffs = []
+    for q, a, b in (("W", W, W_ref), ("V", V, V_ref)):
+        if a is not None and b:
+            if abs(a - b) > 0.005 * abs(b) + 0.05:
+                diffs.append((q, a, b))
+    return dict(W=W, V=V, W_ref=W_ref, V_ref=V_ref, diffs=diffs)
+
+
+def _elf_spot_check_issues(pkg):
+    r = elf_spot_check_compare(pkg)
+    if not r or not r["diffs"]:
+        return []
+    return ["ELF self-check quotes %s, but the analysis (Section 3) gives %s -- a self-check must use "
+            "the same W and V as the analysis; reconcile the numbers or the claim 'matches'"
+            % (", ".join("%s = %.1f kip" % (q, a) for q, a, _b in r["diffs"]),
+               ", ".join("%s = %.1f kip" % (q, b) for q, _a, b in r["diffs"]))]
+
+
+def code_basis_issues(cfg, pkg):
+    """The 2026-10 US-practice screens in one call (the report's QA chapter lists them):
+    screw phi/Omega (S2-20), the screw's own shear strength, ASTM A449 strength by diameter,
+    the interaction lower bound (H1-1b aware), ASCE 7-16 snow factors / drift equation /
+    rain-on-snow, H1.1 cited for members in compression, rho = 1.0 in SDC D-F without the
+    12.3.4.2 showing, seed labels left as the design basis, shear anchorage at ELF on
+    capacity-designed systems, and an ELF self-check that does not match the analysis."""
+    out = []
+    for fn, args in ((_screw_phi_issues, (pkg,)), (_screw_shear_strength_issues, (pkg,)),
+                     (_rod_grade_issues, (pkg,)), (_interaction_issues, (pkg,)),
+                     (_snow_factor_issues, (pkg,)), (_snow_basis_issues, (pkg,)),
+                     (_h11_compression_issues, (pkg,)), (_rho_basis_issues, (cfg, pkg)),
+                     (_seed_label_issues, (pkg,)),
+                     (_anchorage_shear_cd_issues, (cfg, pkg)), (_elf_spot_check_issues, (pkg,))):
+        try:
+            out += fn(*args)
+        except Exception as ex:                       # a screen must never break the gate
+            out.append("code-basis screen %s failed: %s" % (fn.__name__, ex))
+    return out
+
+
 def check(name, root=None, pkg=None, verbose=True):
     """Run the self-consistency check. Returns a list of issue strings ([] == consistent).
     Reads the job's ONE authoritative package (package_path: calc_package_cfs.json on CFS jobs)
@@ -1369,6 +2044,7 @@ def check(name, root=None, pkg=None, verbose=True):
     issues += _drift_table_issues(pkg)                      # CFS-29c: failing drift rows FAIL
     issues += _theta_issues(pkg)                            # 12.8.7 theta <= theta_max
     issues += _two_stage_issues(_dcfg, pkg)                 # CFS-32 two-stage eligibility
+    issues += code_basis_issues(_dcfg, pkg)                 # US-practice code-basis screens (2026-10)
     issues += _completeness_issues(pkg)
     if path is not None:
         _stamp(root, path, issues)

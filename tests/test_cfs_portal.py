@@ -370,3 +370,94 @@ def test_build_cfs_models_portal_gates():
     import build_cfs_models as B
     _docs, table = B.build_portals()
     assert all(st == "PASS" for _id, st, _p in table), table
+
+
+def test_spans_only_portal_cfg_is_a_cfs_job():
+    """A multi-span portal declared with `spans` alone (no span_ft) is a CFS job everywhere."""
+    import consistency as CC
+    import pipeline as PL
+    import preflight as PF
+    import report as RPT
+    cfg = dict(spans=[dict(span_ft=35.0, apex_ft=30.0), dict(span_ft=35.0, apex_ft=30.0)],
+               eave_ft=26.0, spacing_ft=10.0)
+    assert PL._is_cfs_cfg(cfg) and CC.is_cfs_cfg(cfg) and PF._is_cfs(cfg) and RPT._cfs_is_portal(cfg)
+    assert not PL._is_cfs_cfg(dict(NX=2, NY=2, heights=[180.0]))
+
+
+# ---------------- ASCE 7-22 12.7.2 seismic weight of the frame (W_frame_kip not stated) ----------------
+
+def _w_cfg(**kw):
+    cfg = dict(CF._demo_cfg(), D_roof=4.5, collateral=3.0, clad=2.5, snow_pg=10.0,
+               seis=dict(SDS=0.30, SD1=0.12, S1=0.08, R=3.0, Cd=3.0, Om0=3.0, Ie=1.0,
+                         W_frame_kip=None), system="not_detailed")
+    cfg.update(kw)
+    return cfg
+
+
+def test_portal_seismic_weight_is_computed_per_12_7_2():
+    cfg = _w_cfg()
+    secs = dict(col=CF.frame_section(cfg["col_section"]), raf=CF.frame_section(cfg["raf_section"]))
+    fr, members, meta = CF.build_portal(cfg, secs)
+    w = CF.portal_seismic_weight(cfg, fr, members, meta)
+    sp, it = cfg["spacing_ft"], w["items_kip"]
+    half = math.hypot(cfg["span_ft"] / 2.0, cfg["apex_ft"] - cfg["eave_ft"])
+    assert w["roof_slope_length_ft"] == pytest.approx(2 * half, abs=0.01)
+    assert it["roof_dead"] == pytest.approx(4.5 * sp * 2 * half / 1000.0, rel=1e-3)
+    assert it["collateral"] == pytest.approx(3.0 * sp * 2 * half / 1000.0, rel=1e-3)
+    assert it["cladding"] == pytest.approx(2.5 * sp * cfg["eave_ft"] / 1000.0, rel=1e-3)   # 2 x h/2
+    assert it["frame_self_weight"] > 0 and "snow" not in it                  # pf = 7 psf <= 45
+    assert w["W_kip"] == pytest.approx(sum(it.values()), abs=2e-3)
+    assert "12.7.2" in w["basis"] and "no snow in W" in w["basis"] and "cfg[" not in w["basis"]
+    # item 4 (ASCE 7-22): 15 % of the snow where pf > 45 psf, on the plan length
+    w2 = CF.portal_seismic_weight(dict(cfg, snow_pg=80.0), fr, members, meta)
+    assert w2["items_kip"]["snow"] == pytest.approx(0.15 * 56.0 * sp * cfg["span_ft"] / 1000.0, rel=1e-3)
+    # an open building has no side-wall cladding
+    w3 = CF.portal_seismic_weight(dict(cfg, wind=dict(V=115.0, enclosure="open")), fr, members, meta)
+    assert "cladding" not in w3["items_kip"]
+
+
+def test_run_uses_the_computed_weight_and_states_its_basis():
+    res = CF.run(_w_cfg())
+    se, sw = res["seismic"], res["seismic_weight"]
+    assert se["W_frame_kip"] == pytest.approx(sw["W_kip"]) and se["W_frame_basis"] == sw["basis"]
+    assert se["V_kip"] == pytest.approx(se["Cs"] * sw["W_kip"], rel=1e-3)
+    assert any("E" in c for c in res["combos"])
+    stated = CF.run(_w_cfg(seis=dict(SDS=0.30, SD1=0.12, S1=0.08, R=3.0, Cd=3.0, Om0=3.0,
+                                     Ie=1.0, W_frame_kip=8.0)))
+    assert "seismic_weight" not in stated and stated["seismic"]["W_frame_kip"] == 8.0
+    assert "as stated" in stated["seismic"]["W_frame_basis"]
+
+
+def test_two_span_portal_weight_covers_both_spans():
+    cfg = _w_cfg(spans=[dict(span_ft=35.0, apex_ft=30.0), dict(span_ft=35.0, apex_ft=30.0)],
+                 eave_ft=26.0, spacing_ft=10.0)
+    for k in ("span_ft", "apex_ft"):
+        cfg.pop(k, None)
+    res = CF.run(cfg)
+    sw = res["seismic_weight"]
+    assert sw["roof_plan_length_ft"] == pytest.approx(70.0, abs=0.01)
+    assert sw["roof_slope_length_ft"] == pytest.approx(4 * math.hypot(17.5, 4.0), abs=0.01)
+    assert res["seismic"]["T_s"] == pytest.approx(0.028 * 30.0 ** 0.8, rel=1e-3)      # hn = apex
+
+
+def test_two_span_portal_viewer_and_model_figure():
+    import cfs_viewer3d as V3
+    import report as RPT
+    cfg = dict(spans=[dict(span_ft=35.0, apex_ft=30.0), dict(span_ft=35.0, apex_ft=30.0)],
+               eave_ft=26.0, spacing_ft=10.0, n_frames=3, purlin_spacing_ft=5.0, girt_spacing_ft=6.0,
+               col_section="2x1200S350-118", raf_section="2x1200S350-97", base="fixed",
+               D_roof=5.0, collateral=3.0, Lr=20.0, snow_pg=20.0,
+               wind=dict(V=110.0, exposure="C", enclosure="enclosed"),
+               seis=dict(SDS=0.30, R=3.0, Cd=3.0, Om0=3.0, Ie=1.0, W_frame_kip=None),
+               system="not_detailed", structure_kind="portal")
+    res = CF.run(cfg)
+    d = V3.viewer_data(cfg, "two-span", res, {})
+    assert len(d["fixed"]) == 3 * 3                                 # 3 column bases x 3 frames
+    xs = sorted({round(d["nodes"][str(n)][0], 1) for n in d["fixed"]})
+    assert xs == [0.0, 420.0, 840.0]
+    straps = [e for e in d["elements"] if e["sec"] == "X-strap"]
+    assert straps and all(round(d["nodes"][str(e["n"][0])][0], 1) in (0.0, 840.0) for e in straps)
+    assert d["loads"]["seis"]["V"] == pytest.approx(res["seismic"]["V_kip"], abs=0.01)
+    assert any(r[0] == "Spans / eave / apex" and "35 + 35" in r[1] for r in d["meta"]["stats"])
+    fig = RPT._cfs_iso_figure(cfg, "two-span", res, {})
+    assert "data:image/png;base64," in fig and "col_I1" in fig
