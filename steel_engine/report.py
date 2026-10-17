@@ -3838,6 +3838,8 @@ def _cfs_gravity_rows(cfg, pkg):
         rows = [psf("D_roof", "Roof dead load (superimposed)"),
                 psf("collateral", "Collateral load"),
                 psf("Lr", "Roof live load L<sub>r</sub> (Table 4.3-1)")]
+        if cfg.get("clad") is not None:
+            rows.append(psf("clad", "Wall cladding (in the seismic weight, &sect;12.7.2)"))
         fw = ((pkg.get("analysis_basis") or {}).get("frame_self_weight_kip"))
         if fw is not None:
             rows.append(["Frame self-weight", "%s kip per frame (included by the analysis)" % _cn(_fnum(fw))])

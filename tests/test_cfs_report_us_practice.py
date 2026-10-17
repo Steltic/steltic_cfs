@@ -251,6 +251,8 @@ def test_portal_basis_prints_the_12_7_2_frame_weight():
     w = lab["Seismic weight per frame (&sect;12.7.2)"]
     assert ("W = %s kip" % RPT._cn(res["seismic"]["W_frame_kip"])) in w and "roof dead" in w and "collateral" in w
     assert "V = C<sub>s</sub>W" in lab["ELF (&sect;12.8), per frame"]
+    grav = {r[0]: r[1] for r in RPT._cfs_gravity_rows(pcfg, pkg)}
+    assert grav["Wall cladding (in the seismic weight, &sect;12.7.2)"] == "2.5 psf"
 
 
 # ---------------- custom / hand-model portal ----------------
