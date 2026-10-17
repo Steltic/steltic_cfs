@@ -273,13 +273,13 @@ def two_stage(cfg, res, rho_upper, period=None):
     R_u = float(s["R"])
     R_l, rho_l = ts.get("R_lower"), ts.get("rho_lower", 1.0)
     period = period if period is not None else rayleigh_period(cfg, res)
-    blk = dict(procedure="ASCE 7-22 12.2.3.2 two-stage ELF (framework-evaluated)",
+    blk = dict(procedure="ASCE 7-22 12.2.3.2 two-stage equivalent lateral force procedure",
                R_upper=R_u, rho_upper=rho_upper, R_lower=R_l, rho_lower=rho_l,
                lower_system=ts.get("lower_system"), by_direction={}, reactions_to_podium=[],
                upper_height_ft=round(sum(cfg["heights_ft"]), 2),
                notes=["(c)/(e): upper portion designed as a separate structure with its own "
-                      "R/rho by ELF (this run); lower portion by ELF with its own R/rho -- agent/"
-                      "podium EOR", "(f): the height limit of Table 12.2-1 is checked on the "
+                      "R/rho by ELF (this design); lower portion by ELF with its own R/rho (podium "
+                      "design by its engineer of record)", "(f): the height limit of Table 12.2-1 is checked on the "
                       "upper portion measured from its base (the model base = podium top)"])
     if R_l:
         f = (R_u / float(rho_upper)) / (float(R_l) / float(rho_l or 1.0))
@@ -321,7 +321,7 @@ def two_stage(cfg, res, rho_upper, period=None):
             T_c = _combined_rayleigh(cfg, res, dd, lines, float(K_l), float(ts["W_lower_kip"]),
                                      float(ts.get("podium_height_ft", 0.0) or 0.0))
             T_c_basis = ("Rayleigh estimate: upper stacks on a podium shear spring K_lower with "
-                         "mass W_lower (framework)")
+                         "mass W_lower")
         d = dict(V_upper_kip=round(e["V"], 2), delta_top_in=round(d_top, 4) if d_top else None,
                  K_upper_kip_in=round(K_u, 1) if K_u else None,
                  K_lower_kip_in=K_l, T_upper_s=T_u, T_combined_s=T_c, T_combined_basis=T_c_basis)
@@ -342,7 +342,7 @@ def two_stage(cfg, res, rho_upper, period=None):
                             % (float(T_c) / T_u))
         else:
             msgs.append("(b) NOT EVALUATED: supply cfg['two_stage']['T_combined_s'] (or "
-                        "W_lower_kip for the framework Rayleigh estimate)")
+                        "W_lower_kip for the Rayleigh estimate)")
         if blk["amplification"] is None:
             msgs.append("(d) NOT EVALUATED: R_lower missing")
         if ok_a is False or ok_b is False:
@@ -367,6 +367,9 @@ def two_stage(cfg, res, rho_upper, period=None):
                 direction=dirn, line=ln.name, V_Eh_kip=round(V, 1), T_Eh_kip=round(T, 1),
                 V_Eh_amplified_kip=round(V * amp, 1) if amp else None,
                 T_Eh_amplified_kip=round(T * amp, 1) if amp else None))
+    sts = [v.get("status") for v in blk["by_direction"].values()]       # overall verdict
+    blk["status"] = ("NOT ELIGIBLE" if "NOT ELIGIBLE" in sts else
+                     "ELIGIBLE" if sts and all(s_ == "ELIGIBLE" for s_ in sts) else "NOT EVALUATED")
     return blk
 
 

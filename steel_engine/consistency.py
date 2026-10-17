@@ -1216,6 +1216,15 @@ def _cfs_slot_issues(cfg, pkg):
         out.append("wind-governed/high-wind brief and no 0.9D+1.0W NET-UPLIFT design in the package "
                    "-- the uplift path (roof-to-wall, wall-to-floor, floor-to-foundation) is a "
                    "REQUIRED anchorage design chain (the seeded combo list alone does not count)")
+    # 12.8.7: where 0.10 < theta <= theta_max the drift carries 1/(1-theta); the member forces need the same
+    # factor (or a rational P-delta analysis) -- the package must say how they were amplified
+    if pkg.get("stability_warnings"):
+        pdf = pkg.get("pdelta_forces")
+        if not (isinstance(pdf, dict) and _num(pdf.get("factor")) is not None and pdf.get("applied_to")):
+            out.append("theta > 0.10 at %d line/story location(s) (ASCE 7-22 12.8.7): the drift includes "
+                       "1/(1-theta) but the member forces must be amplified too (or a rational P-delta "
+                       "analysis used) -- record calc_package['pdelta_forces'] = {'factor': <1/(1-theta)>, "
+                       "'applied_to': '<which line forces / stories>'}" % len(pkg["stability_warnings"]))
     # unresolved pipeline gates
     for key, what in (("model_vs_tributary_flags", "model-vs-tributary divergence"),
                       ("drift_flags", "drift limit exceedance"),
