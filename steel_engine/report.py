@@ -715,7 +715,9 @@ def _log_txt(tool, d, result=False):
     if result:
         m = re.match(r"(\d+) hits?", d)
         if tool == "search_engineering_standards":
-            return ("%s matching provision%s" % (m.group(1), "" if m.group(1) == "1" else "s")) if m else "no match"
+            if not m or m.group(1) == "0":
+                return "no match in the standards corpus"
+            return "%s matching provision%s" % (m.group(1), "" if m.group(1) == "1" else "s")
         m = re.search(r"(\d+) issues?", d)
         if m:
             return "%s issues" % m.group(1)
@@ -742,7 +744,8 @@ def _activity_section(name):
     recs, src = _load_activity(name)
     h = ["<h2>Design log</h2>",
          "<p>Analysis runs, self-consistency checks and code-provision look-ups recorded while this design was "
-         "prepared; a look-up that returned no match was repeated with other search terms.</p>"]
+         "prepared. A look-up with no match in the standards corpus is listed as such; the provisions the report "
+         "cites are the ones found.</p>"]
     if not recs:
         h.append("<p class='cnote'>No design log was recorded for this job.</p>")
         return "".join(h)
@@ -2716,7 +2719,8 @@ def _grounding_check(cfg, name, pkg):
             + "</p>")
     tail = ("<p class='note'>Grounding incomplete: the items marked MISSING were required for this building's "
             "systems but no provision look-up or calculation-package evidence was found; verify those provisions "
-            "against the standards.</p>" if nmiss else "<p>All required provision verification is present.</p>")
+            "against the standards.</p>" if nmiss else "<p>Every standard the systems require was consulted (look-ups "
+            "or calculation-package citations, above).</p>")
     if flags:
         tail += ("<p class='note'><b>Citation red flags:</b></p><ul>"
                  + "".join("<li>%s</li>" % f for f in flags) + "</ul>")
