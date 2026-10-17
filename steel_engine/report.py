@@ -2685,7 +2685,7 @@ def _is_cfs_job(name, root):
     except Exception:
         cfg = None
     if isinstance(cfg, dict):
-        return "lines_x" in cfg or "lines_y" in cfg or "span_ft" in cfg
+        return "lines_x" in cfg or "lines_y" in cfg or "span_ft" in cfg or bool(cfg.get("spans"))
     if E is not None and name in E.CFG:
         return False
     return os.path.exists(os.path.join(root, "design", "calc_package_cfs.json"))
@@ -5048,7 +5048,7 @@ def _cfs_iso_figure(cfg, name, res, pkg):
     fig = plt.figure(figsize=(16.0, 7.5))
     ax = fig.add_subplot(111, projection="3d")
     ax.add_collection3d(Line3DCollection(segs, colors=cols, linewidths=0.9, alpha=0.9))
-    portal = "span_ft" in cfg
+    portal = _cfs_is_portal(cfg)
     if not portal:
         from mpl_toolkits.mplot3d.art3d import Poly3DCollection
         z = [0.0]
@@ -5093,7 +5093,10 @@ def _cfs_iso_figure(cfg, name, res, pkg):
                "<code>hd-&lt;dir&gt;-&lt;line&gt;</code>. Blue = chord studs, grey = tracks, orange = "
                "panel / strap diagonals." % (_html.escape(cfg["lines_x"][0].name), _html.escape(cfg["lines_x"][0].name)))
     else:
-        span, He, Ha = cfg["span_ft"] * 12.0, cfg["eave_ft"] * 12.0, cfg["apex_ft"] * 12.0
+        _sp = cfg.get("spans") or []
+        span = (cfg.get("span_ft") or sum(float(x.get("span_ft", 0)) for x in _sp)) * 12.0
+        He = cfg["eave_ft"] * 12.0
+        Ha = (cfg.get("apex_ft") or max([float(x.get("apex_ft", 0)) for x in _sp] or [cfg["eave_ft"]])) * 12.0
         _ann("col_L", (0.0, 0.0, He * 0.5), (-55, 0), "#b30000")
         _ann("col_R", (span, 0.0, He * 0.5), (55, -10), "#b30000")
         _zl = He + 0.60 * (Ha - He)
