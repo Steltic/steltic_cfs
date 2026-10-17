@@ -1622,6 +1622,79 @@ def _snow_factor_issues(pkg):
     return out
 
 
+_DRIFT716_RX = re.compile(r"0\.43\s*[*x×]?\s*\(?\s*[\w.]+\s*\)?\s*\^\s*\(?\s*1\s*/\s*3", re.I)
+_ROS5_RX = re.compile(r"\b5(?:\.0)?\s*-?\s*psf\s+rain[- ]on[- ]snow|rain[- ]on[- ]snow[^.;]{0,30}\b5(?:\.0)?\s*psf",
+                      re.I)
+
+
+def _snow_basis_issues(pkg):
+    """ASCE 7-16 snow provisions in the designer's records: the drift height
+    hd = 0.43 lu^(1/3) (pg + 10)^(1/4) - 1.5 (ASCE 7-22 Eq. 7.6-1 uses the winter wind parameter
+    W2) and the 5-psf rain-on-snow surcharge (ASCE 7-22 7.10: 8 psf)."""
+    txt = _agent_text(pkg) if isinstance(pkg, dict) else ""
+    out = []
+    if _DRIFT716_RX.search(txt):
+        out.append("snow drift height computed with the ASCE 7-16 equation hd = 0.43 lu^(1/3)(pg+10)^(1/4) "
+                   "- 1.5 -- ASCE 7-22 Eq. 7.6-1 uses the winter wind parameter W2; recompute the drifts")
+    if _ROS5_RX.search(txt):
+        out.append("rain-on-snow surcharge taken as 5 psf (ASCE 7-16) -- ASCE 7-22 7.10 uses 8 psf where it "
+                   "applies; recheck")
+    return out
+
+
+def _h11_compression_issues(pkg):
+    """AISI S100 H1.1 is combined TENSION and bending; a member whose governing axial force is
+    compression is checked with H1.2 (combined compressive axial load and bending)."""
+    out = []
+    for kind, key in (("member", "members"), ("stud", "studs")):
+        for e in (pkg.get(key) or []) if isinstance(pkg, dict) else []:
+            if not isinstance(e, dict) or e.get("waived"):
+                continue
+            comp = (_num(e.get("Pc_paired_kip")) or 0.0) > 0.5 or \
+                (_num(e.get("P_design_kip")) or 0.0) > 0.5 or \
+                any((_find(c, frozenset(("pu", "pr", "pucomp"))) or 0.0) > 0.5 and
+                    re.search(r"compress|\bH1\b|interaction", str(c.get("limit_state") or ""), re.I)
+                    for c in (e.get("checks") or []) if isinstance(c, dict))
+            if not comp:
+                continue
+            txt = _entry_text({k: v for k, v in e.items() if k not in SEED_KEYS})
+            if re.search(r"\bH1\.1\b", txt) and not re.search(r"\bH1\.2\b", txt):
+                out.append("[%s %s] combined check cites S100 H1.1 (tension + bending) for a member in "
+                           "compression -- use H1.2 (compression + bending)" % (kind, e.get("id")))
+    return out
+
+
+def _rho_basis_issues(cfg, pkg):
+    """rho = 1.0 in SDC D-F needs the ASCE 7-22 12.3.4.2 showing (condition (a): removal of one
+    element does not reduce story strength by more than 33 % nor create an extreme torsional
+    irregularity; condition (b): regular plan with at least two bays of perimeter SFRS per side,
+    light-frame bays = 2L/h_sx), with numbers -- asserting the clause is not a check."""
+    if not isinstance(cfg, dict) or not is_cfs_cfg(cfg) or not isinstance(pkg, dict):
+        return []
+    s = cfg.get("seis") or {}
+    try:
+        import cfs_systems as _CS
+        cat = _CS.sdc(float(s.get("SDS", 0) or 0), float(s.get("SD1", 0) or 0),
+                      float(s.get("S1", 0) or 0), str(cfg.get("risk_cat", "II")))
+    except Exception:
+        return []
+    if cat not in ("D", "E", "F"):
+        return []
+    rb = cfg.get("rho_by_dir") or {}
+    rhos = [_num(rb.get(d, pkg.get("rho", cfg.get("rho")))) for d in ("X", "Y")]
+    if not any(r is not None and abs(r - 1.0) < 1e-9 for r in rhos):
+        return []
+    txt = " ".join([_agent_text(pkg), str(pkg.get("rho_basis") or ""),
+                    json.dumps(pkg.get("rho_justification") or "")])
+    if re.search(r"12\.3\.4\.2.{0,300}?\d", txt, re.S) and \
+            re.search(r"\d+\s*(?:bays?|%|percent)|2l/h|33\s*%|torsion", txt, re.I):
+        return []
+    return ["rho = 1.0 in SDC %s without the ASCE 7-22 12.3.4.2 showing -- record condition (a) (strength "
+            "loss <= 33 %% on removing a wall line, no extreme torsional irregularity) or (b) (regular plan, "
+            ">= 2 bays of perimeter SFRS per side per story; light-frame bays = 2L/h_sx) with numbers in "
+            "rho_justification, or use rho = 1.3" % cat]
+
+
 def _seed_label_issues(pkg):
     """A designed collector whose printed basis is still the framework's 'SEEDED' label."""
     out = []
@@ -1829,13 +1902,16 @@ def _elf_spot_check_issues(pkg):
 def code_basis_issues(cfg, pkg):
     """The 2026-10 US-practice screens in one call (the report's QA chapter lists them):
     screw phi/Omega (S2-20), the screw's own shear strength, ASTM A449 strength by diameter,
-    the interaction lower bound (H1-1b aware), ASCE 7-16 snow factors, seed labels left as the
-    design basis, shear anchorage at ELF on capacity-designed systems, and an ELF self-check
-    that does not match the analysis."""
+    the interaction lower bound (H1-1b aware), ASCE 7-16 snow factors / drift equation /
+    rain-on-snow, H1.1 cited for members in compression, rho = 1.0 in SDC D-F without the
+    12.3.4.2 showing, seed labels left as the design basis, shear anchorage at ELF on
+    capacity-designed systems, and an ELF self-check that does not match the analysis."""
     out = []
     for fn, args in ((_screw_phi_issues, (pkg,)), (_screw_shear_strength_issues, (pkg,)),
                      (_rod_grade_issues, (pkg,)), (_interaction_issues, (pkg,)),
-                     (_snow_factor_issues, (pkg,)), (_seed_label_issues, (pkg,)),
+                     (_snow_factor_issues, (pkg,)), (_snow_basis_issues, (pkg,)),
+                     (_h11_compression_issues, (pkg,)), (_rho_basis_issues, (cfg, pkg)),
+                     (_seed_label_issues, (pkg,)),
                      (_anchorage_shear_cd_issues, (cfg, pkg)), (_elf_spot_check_issues, (pkg,))):
         try:
             out += fn(*args)

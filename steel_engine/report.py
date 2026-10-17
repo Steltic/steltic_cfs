@@ -1807,6 +1807,8 @@ def _cfs_drift_rows(dt, extended=False):
                                          "drift_amplified", "ratio", "drift_ratio", "theta",
                                          "value_in", "Delta_in") if d.get(k) is not None), None)
         lim = d.get("limit") if d.get("limit") is not None else d.get("criterion")
+        if isinstance(lim, str) and lim.lstrip().upper().startswith("AGENT"):
+            lim = None                                  # framework placeholder, not a criterion
         _dcv, _vv, _lv = _fnum(d.get("DC")), _fnum(val), _fnum(lim)
         num_fail = (_dcv is not None and _dcv > 1.0 + 1e-9) or \
             (_vv is not None and _lv is not None and _lv > 0 and _vv > _lv * (1 + 1e-6))
@@ -1820,7 +1822,7 @@ def _cfs_drift_rows(dt, extended=False):
             status = "<b>NG</b>"
         else:
             status = "<b>no verdict</b>"
-        lim_cell = _pt(lim) if lim is not None else "&mdash;"
+        lim_cell = _pt(lim) if lim is not None else "<b>not stated</b>"
         dc_cell = _cdc(d.get("DC")) if d.get("DC") is not None else "&mdash;"
         if extended:
             ss, rot = d.get("drift_single_story"), d.get("drift_rotation_from_below")
@@ -3574,10 +3576,13 @@ def _cfs_basis_rows(cfg, res, pkg):
         rows.append(["Response coefficients (Table 12.2-1)", "; ".join(cells)])
         rho = pkg.get("rho", cfg.get("rho"))
         if rho is not None:
-            rows.append(["Redundancy factor &rho; (&sect;12.3.4)", "%s%s" % (
+            rj = pkg.get("rho_justification") or (pkg.get("rho_basis") if "12.3.4.2" in str(pkg.get("rho_basis") or "")
+                                                   else None)
+            rows.append(["Redundancy factor &rho; (&sect;12.3.4)", "%s%s%s" % (
                 _cn(_fnum(rho)) if _fnum(rho) is not None else _pt(rho),
                 " &mdash; applied to the strength demands; not to drift (&sect;12.3.4.1)"
-                if not portal else "")])
+                if not portal else "",
+                ("<br>Basis: %s" % (_cn(rj) if isinstance(rj, (dict, list)) else _pt(rj))) if rj else "")])
         hl = _cfs_height_limit(cfg)
         if hl:
             rows.append(["Height limit (Table 12.2-1)", hl])
@@ -4745,7 +4750,7 @@ def _cfs_framework_checks_html(pkg):
 _QA_CATS = (
     ("Design basis inputs", "system, governing hazard per direction (with numbers) and the declared inputs "
                             "the analysis needs",
-     r"governing_hazard|declare system|R=\d|declare cfg|NOT declared"),
+     r"governing_hazard|declare system|R=\d|declare cfg|NOT declared|12\.3\.4\.2"),
     ("Completeness", "every designed item carries a limit state, design strength, reference and D/C "
                      "(or a justified waiver)",
      r"no limit_state|no cited|no D/C|no sheathing|connections list is empty|not found|without an "
@@ -4763,7 +4768,7 @@ _QA_CATS = (
     ("Code basis", "screw &phi; = 0.50 / &Omega; = 3.00 and the screw's own shear strength (S100-16 w/S2-20 J4); "
                    "ASTM A449 rod strength by diameter; interaction &ge; its axial term (H1-1b aware); "
                    "ASCE 7-22 snow factors; no framework labels as design basis",
-     r"screw|A449|interaction|H1-1b|snow factor|seed label|rod strength"),
+     r"screw|A449|interaction|H1-1b|H1\.1|snow factor|snow drift|rain-on-snow|seed label|rod strength"),
     ("Drift and stability", "every drift row within its Table 12.12-1 limit; &theta; &le; &theta;<sub>max</sub>",
      r"\[drift|theta|stability"),
     ("ELF self-check", "a quoted self-check uses the same W and V as Section 3", r"ELF self-check"),

@@ -210,3 +210,22 @@ def test_code_basis_issues_is_wired_into_check(tmp_path):
                                 DC=0.5, cited="S100 J4")]}
     iss = CC.check("x", root=str(tmp_path), pkg=pkg, verbose=False)
     assert any("phi = 0.50 / Omega = 3.00" in i for i in iss)
+
+
+def test_rho_one_in_sdc_d_needs_the_12_3_4_2_showing():
+    cfg = ref_cfg(rho=1.0)
+    pkg = {"rho": 1.0, "rho_basis": "ASCE 7-22 12.3.4 (canonical SDC); rho=1.00 is MULTIPLIED into ..."}
+    assert CC._rho_basis_issues(cfg, pkg)
+    assert CC._rho_basis_issues(cfg, dict(pkg, solution_notes="rho = 1.0 per 12.3.4.2")), "assertion only"
+    ok = dict(pkg, rho_justification="12.3.4.2(b): regular plan; 4 bays of 24-ft walls per side >= 2L/h = 2 x 24/10")
+    assert CC._rho_basis_issues(cfg, ok) == []
+    assert CC._rho_basis_issues(ref_cfg(seis=CS.seis_cfs(0.45, 0.19, 0.17, "wsp_shearwall"), rho=1.0), pkg) == []
+
+
+def test_h11_for_members_in_compression_and_716_snow_equations():
+    m = dict(id="frame-raf", Pc_paired_kip=5.2, DC=0.86, limit_state="H1.1 interaction", cited="S100 H1.1")
+    assert CC._h11_compression_issues({"members": [m]})
+    assert CC._h11_compression_issues({"members": [dict(m, cited="S100 H1.2")]}) == []
+    pkg = {"snow_map": {"step": "hd = 0.43*(180)^(1/3)*(30)^(1/4) - 1.5 = 4.19 ft", "ros": "5-psf rain-on-snow"}}
+    iss = CC._snow_basis_issues(pkg)
+    assert len(iss) == 2 and "W2" in iss[0] and "8 psf" in iss[1]
