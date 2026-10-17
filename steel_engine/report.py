@@ -4075,9 +4075,15 @@ def _cfs_design_basis(cfg, res, pkg):
     return "".join(h)
 
 
+def _cfs_title(name, cfg, pkg):
+    """The report title: the curated cfg['project_title'] first (the same title as the published example list),
+    then the package's project_title, cfg['title'], the job name."""
+    return (cfg or {}).get("project_title") or (pkg or {}).get("project_title") or (cfg or {}).get("title") or name
+
+
 def _cfs_title_block(name, cfg, res, pkg):
     portal = _cfs_is_portal(cfg)
-    title = pkg.get("project_title") or cfg.get("project_title") or cfg.get("title") or name
+    title = _cfs_title(name, cfg, pkg)
     kind = "Cold-formed steel portal frame" if portal else "Cold-formed steel light-frame building"
     stds = [CFS_EDITION]
     if not portal or pkg.get("studs") or pkg.get("wall_lines"):
@@ -5391,8 +5397,8 @@ def build_report_cfs(name, cfg, res, pkg, root, pkg_name="calc_package_cfs.json"
         _chapter_guard(parts, "grounding verification", _grounding_check, cfg, name, pkg)
     _chapter_guard(parts, "appendix A", _cfs_appendix_calcs, pkg, cfg, res, name)
     html = ("<!doctype html><html><head><meta charset='utf-8'><title>%s &mdash; CFS design report"
-            "</title><style>%s%s%s</style>%s</head><body>" % (_html.escape(str(name)), CSS, CHK_CSS, CFS_CSS,
-                                                              MATHJAX)
+            "</title><style>%s%s%s</style>%s</head><body>" % (_html.escape(str(_cfs_title(name, cfg, pkg))), CSS,
+                                                              CHK_CSS, CFS_CSS, MATHJAX)
             + "".join(parts) + "</body></html>")
     path = os.path.join(root, "report.html")
     open(path, "w", encoding="utf-8").write(html)
