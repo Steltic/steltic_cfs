@@ -3928,6 +3928,9 @@ def _cfs_gravity_rows(cfg, pkg):
             rows.append(["Frame self-weight", "%s kip per frame (included by the analysis)" % _cn(_fnum(fw))])
         if cfg.get("point_loads") or cfg.get("crane"):
             rows.append(["Point / crane loads", "as declared (Section 3)"])
+        if cfg.get("rain") is not None or cfg.get("rain_basis"):
+            rows.append(psf("rain", "Rain load R (ASCE 7-22 &sect;8.2, Eq. 8.2-1)", ns="see basis") if cfg.get("rain") is not None
+                        else ["Rain load R (ASCE 7-22 &sect;8.2, Eq. 8.2-1)", _pt(cfg["rain_basis"])])
         return rows
     rows = [psf("D_floor", "Floor dead load"), psf("D_roof", "Roof dead load"),
             psf("clad", "Exterior cladding (per unit wall area)"),
@@ -3935,6 +3938,9 @@ def _cfs_gravity_rows(cfg, pkg):
             psf("L_floor", "Floor live load L<sub>o</sub> (Table 4.3-1)"),
             psf("Lr", "Roof live load L<sub>r</sub> (Table 4.3-1)")]
     rows.append(psf("collateral", "Collateral load"))
+    if cfg.get("rain") is not None or cfg.get("rain_basis"):
+        rows.append(psf("rain", "Rain load R (ASCE 7-22 &sect;8.2, Eq. 8.2-1)", ns="see basis") if cfg.get("rain") is not None
+                    else ["Rain load R (ASCE 7-22 &sect;8.2, Eq. 8.2-1)", _pt(cfg["rain_basis"])])
     if cfg.get("storage_levels") or cfg.get("storage"):
         rows.append(["Storage live load", _cn(cfg.get("L_by_level") or cfg.get("storage"))])
     return rows
