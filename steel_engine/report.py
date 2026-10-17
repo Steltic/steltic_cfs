@@ -1892,7 +1892,13 @@ def _cfs_drift_rows(dt, extended=False):
                 thc = "<b>%s</b>" % thc
             rows.append([_pt(item), _num_or(val, "%.4f"), split, thc, lim_cell, dc_cell, status])
         else:
-            rows.append([_pt(item), _num_or(val, "%.4g"), lim_cell, dc_cell, status])
+            vkey = next((k for k in ("drift_design", "drift_amplified_design", "drift_amplified", "ratio",
+                                     "drift_ratio", "theta", "value_in", "Delta_in", "value")
+                         if d.get(k) is not None), None)
+            vtxt = _num_or(val, "%.4g")
+            if vkey in ("value_in", "Delta_in") and _fnum(val) is not None:
+                vtxt += " in."                                # a displacement / deflection, not a ratio
+            rows.append([_pt(item), vtxt, lim_cell, dc_cell, status])
     return rows
 
 
@@ -4084,9 +4090,10 @@ def _cfs_design_basis(cfg, res, pkg):
          "<h3>1.5 Snow</h3>", _table(["Item", "Value"], _cfs_snow_rows(cfg, pkg)),
          "<h3>1.6 Gravity loads</h3>", _table(["Load", "Value"], _cfs_gravity_rows(cfg, pkg)),
          "<h3>1.7 Materials</h3>", _table(["Item", "Specification", "Strength", "Used in this design"],
-                                          _cfs_materials_rows(cfg, pkg)),
-         "<p class='tnote'>&ldquo;Not stated&rdquo; marks an input the project criteria must supply; the "
-         "report does not assume it.</p>"]
+                                          _cfs_materials_rows(cfg, pkg))]
+    if re.search(r"not stated", "".join(h[3:]), re.I):      # the footnote only where an input is so marked
+        h.append("<p class='tnote'>&ldquo;Not stated&rdquo; marks an input the project criteria must supply; the "
+                 "report does not assume it.</p>")
     return "".join(h)
 
 

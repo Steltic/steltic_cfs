@@ -179,7 +179,9 @@ def frame_section(name, arrangement=None):
                     single=True, n_ply=1, e0_in=(0.0 if kind == "Z" else p["m"]),
                     designator=name, base=base, kind=kind,
                     w_self_kip_in=p["A"] * STEEL_KIP_PER_IN3, props=p)
-    b = SEC.built_up(base, n, arr or "back_to_back")
+    # portal members: pairs side by side are not credited with composite out-of-plane action (no designed shear
+    # connection between pairs -- lip screws do not provide one); each pair acts on its own
+    b = SEC.built_up(base, n, arr or "back_to_back", pairs="independent")
     return dict(A=b["A"], Ix=b["Ix"], Ag=b["A"], depth=b["depth"], Fy=b["Fy"], single=False,
                 n_ply=n, e0_in=0.0, designator=name, base=base, kind="built_up_%s" % arr,
                 w_self_kip_in=b["A"] * STEEL_KIP_PER_IN3, props=b)
