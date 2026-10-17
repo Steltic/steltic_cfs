@@ -1535,10 +1535,13 @@ _PUB_SUBS = [(re.compile(p, f), r) for p, f, r in (
     (r"\b(?:the\s+)?(?:design\s+)?agent's\b", re.I, "the"),
     (r"\bagent[- ](?:derived|computed|authored|designed|filled)\b", re.I, "designed"),
     (r"\b(?:the\s+)?(?:design\s+)?agent\b", re.I, "the designer"),
-    (r"\bseeded\b", re.I, "framework"),
-    (r"\bseed\s+(values?|demands?|forces?)\b", re.I, r"framework \1"),
-    (r"\bseeds\b", re.I, "framework values"),
-    (r"\bseed\b(?!\s+band)", re.I, "framework value"),
+    (r"\bseeded\b", re.I, "preliminary"),
+    (r"\bseed\s+(values?|demands?|forces?)\b", re.I, r"preliminary \1"),
+    (r"\bseeds\b", re.I, "preliminary values"),
+    (r"\bseed\b(?!\s+band)", re.I, "preliminary value"),
+    (r"\b(?:the\s+)?pipeline's\s+framework\s+", re.I, "the engine's "),
+    (r"\bthe\s+pipeline's\b", re.I, "the engine's"),
+    (r"\bframework\s+(screening|value|values|text)\b", re.I, r"engine \1"),
     (r"(?:design/)?calc_package(?:_cfs)?\.json", 0, "the calculation package"),
     (r"\s*\(?\bISSUES\.md\b\)?", 0, ""),
     (r"\bfill_package\.py\b", 0, ""),
@@ -4967,7 +4970,7 @@ def _cfs_qa_section(name, root, cfg, res, pkg, annex=None, num=7):
                  "listed in %d.1 passed for this package.</p>" % (num, num))
     if annex:
         h.append("<p class='tnote'>Design-process records (source verification of the cited standards, "
-                 "framework screening notes and the design activity log) are in the QA annex: "
+                 "engine screening notes and the design log) are in the QA annex: "
                  "<a href='%s'>%s</a>.</p>" % (annex, annex))
     return "".join(h)
 
