@@ -519,7 +519,8 @@ def sdc_findings(cfg):
 
 
 def _is_cfs(cfg):
-    return isinstance(cfg, dict) and ("lines_x" in cfg or "lines_y" in cfg or "span_ft" in cfg)
+    return isinstance(cfg, dict) and ("lines_x" in cfg or "lines_y" in cfg or "span_ft" in cfg
+                                      or bool(cfg.get("spans")))
 
 
 _CFS_KINDS = ("wall", "podium", "portal", "canopy", "purlin", "portal_singlechannel", "component")

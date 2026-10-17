@@ -429,7 +429,7 @@ def _portal_data(cfg, name, res, pkg):
 
 # =============================================================== assembly
 def viewer_data(cfg, name, res, pkg):
-    if "span_ft" in cfg:
+    if "span_ft" in cfg or cfg.get("spans"):
         return _portal_data(cfg, name, res, pkg)
     return _wall_data(cfg, name, res, pkg)
 

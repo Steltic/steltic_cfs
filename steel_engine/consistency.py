@@ -46,7 +46,8 @@ def _here_repo():
 
 def is_cfs_cfg(cfg):
     """Same test as pipeline._is_cfs_cfg: wall path carries lines_x/lines_y, portal span_ft."""
-    return isinstance(cfg, dict) and ("lines_x" in cfg or "lines_y" in cfg or "span_ft" in cfg)
+    return isinstance(cfg, dict) and ("lines_x" in cfg or "lines_y" in cfg or "span_ft" in cfg
+                                      or bool(cfg.get("spans")))
 
 
 def package_path(root, cfg=None):

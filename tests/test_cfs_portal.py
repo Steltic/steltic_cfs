@@ -370,3 +370,15 @@ def test_build_cfs_models_portal_gates():
     import build_cfs_models as B
     _docs, table = B.build_portals()
     assert all(st == "PASS" for _id, st, _p in table), table
+
+
+def test_spans_only_portal_cfg_is_a_cfs_job():
+    """A multi-span portal declared with `spans` alone (no span_ft) is a CFS job everywhere."""
+    import consistency as CC
+    import pipeline as PL
+    import preflight as PF
+    import report as RPT
+    cfg = dict(spans=[dict(span_ft=35.0, apex_ft=30.0), dict(span_ft=35.0, apex_ft=30.0)],
+               eave_ft=26.0, spacing_ft=10.0)
+    assert PL._is_cfs_cfg(cfg) and CC.is_cfs_cfg(cfg) and PF._is_cfs(cfg) and RPT._cfs_is_portal(cfg)
+    assert not PL._is_cfs_cfg(dict(NX=2, NY=2, heights=[180.0]))

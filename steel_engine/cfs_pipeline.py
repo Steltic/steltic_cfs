@@ -1522,7 +1522,7 @@ def design_and_report(name, cfg, outdir=None, do_report=True):
                                      if "P-DELTA" not in w]
         portal = True
     else:
-        portal = "span_ft" in cfg
+        portal = "span_ft" in cfg or bool(cfg.get("spans"))
         if portal:
             import cfs_frame as CF
             res = CF.run(cfg)

@@ -5226,7 +5226,7 @@ def build_report_cfs_from_disk(name, root=None):
         import pipeline as _PL
         res = _PL._cfs_engine_res(cfg)
     except ImportError:
-        if "span_ft" in cfg:
+        if _cfs_is_portal(cfg):
             import cfs_frame as CF
             res = CF.run(cfg)
         else:
