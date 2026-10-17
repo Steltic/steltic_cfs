@@ -1070,8 +1070,8 @@ def _user_wind_cases(cfg):
         else:
             roof_spec = dict(roof_by_label=roof)
         return dict(dict(name=name, from_side=side, walls=walls, edge_Fx=edge,
-                         desc=d.get("desc") or ("user supplied (%s)" % ("as given" if side == "L"
-                                                                     else "mirrored: wind from the right"))),
+                         desc=d.get("desc") or ("specified wind case" if side == "L"
+                                                else "specified wind case, mirrored (wind from the right)")),
                     **roof_spec)
 
     if wp.get("cases"):
