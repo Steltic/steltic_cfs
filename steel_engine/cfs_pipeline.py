@@ -115,7 +115,10 @@ def diaphragm_idealization(cfg, res=None):
     warns = []
     ratio = cfg.get("diaphragm_MDD_ADVE")
     calc_ok = isinstance(ratio, (int, float)) and float(ratio) > 2.0
-    concrete = top > 1.5 or any(w in mat for w in _CONCRETE_WORDS if w != "topping")
+    # 12.3.1.1(3)(a): a NONSTRUCTURAL topping (gypsum concrete) <= 1-1/2 in. does not remove the
+    # light-frame flexible idealization -- gypcrete counts only through its thickness
+    concrete = top > 1.5 or any(w in mat for w in _CONCRETE_WORDS
+                                if w not in ("topping", "gypcrete", "gyp-crete"))
     if decl != "flexible":
         return dict(declared=decl, flexible_ok=False, warnings=warns,
                     note="diaphragm modelled %s -- no flexible idealization; Table 12.2-1 "
@@ -189,11 +192,11 @@ def _chord_dead_relief(cfg, line, dirn, w_bay_ft):
                    ([pos[i + 1] - pos[i]] if i < len(pos) - 1 else [])
             if gaps:
                 span = max(gaps)
-                how = "largest adjacent lateral-line spacing (surrogate)"
+                how = "taken as the largest adjacent lateral-line spacing"
     if span is None or not w_bay_ft:
         return None, ("chord tributary not derivable from cfg geometry (no joist_span_ft, "
-                      "no adjacent line) -- agent computes (0.9-0.2SDS)*D over half-bay x "
-                      "half joist span and documents it before taking any relief")
+                      "no adjacent line): compute (0.9-0.2SDS)D over half-bay x half joist span "
+                      "and document it before taking any relief")
     N = cfg["stories"]
     D_trib = 0.0
     for k in range(1, N + 1):
@@ -396,7 +399,7 @@ def wind_story_forces(cfg, direction, detail=False):
                       "level with z from grade (base +%.1f ft), leeward qh*G*%.2f at h = %.1f "
                       "ft, %s; 27.1.5 16-psf wall minimum%s; Kd=%.2f at Eq. 27.3-1. Case 2 "
                       "(Fig. 27.3-8, 0.75 x Case 1 with e = 0.15B) is enveloped per line in "
-                      "wind_line_screen; agent verifies per ASCE 7 Ch. 27"
+                      "the per-line wind screen (ASCE 7-22 Ch. 27)"
                       % (Cp_ww, z0, abs(Cp_lw), h_mean, ginfo["note"],
                          " (governs stories %s)" % min_gov if min_gov else "", Kd))
     if detail:
@@ -905,7 +908,7 @@ def build_package(name, cfg, res):
                          "wind-vs-seismic comparison); NOT applied to drift (12.3.4.1 item "
                          "2), diaphragm Fpx (item 7), or Omega_0/expected-strength "
                          "capacity-design seeds (item 5)" % rho,
-               elf=dict(V_kip=round(e["V"], 1), Cs=round(e["Cs"], 4), W_kip=round(e["W"], 0),
+               elf=dict(V_kip=round(e["V"], 1), Cs=round(e["Cs"], 4), W_kip=round(e["W"], 1),
                         Ta_s=round(e["Ta"], 3),
                         note="pure ELF (no rho); per-slot seeds below already include rho"),
                diaphragm_basis=di,
@@ -1335,7 +1338,8 @@ def build_portal_package(name, cfg, res):
         note="Tier-1 effective-stiffness iterated on PER-PLY demands (S100 App. 1 EWM); "
              "direct analysis per AISI S100-16 C1.1 (0.90 EA/EI x tau_b, notional Ni = "
              "Yi/240 in the destabilising direction, P-Delta) on the strength combos; member "
-             "capacities incl. distortional/global + H1 are the AGENT's (K = 1, C1.1.2)")
+             "capacities (local, distortional and global buckling, H1 interaction; K = 1 per "
+             "C1.1.2) are given in the member schedule")
     for g, label in (("col", "columns (col_L, col_R%s)" % (", interior" if cfg.get("spans")
                                                            else "")),
                      ("raf", "rafters (raf_L, raf_R)")):
@@ -1479,7 +1483,7 @@ def build_portal_package(name, cfg, res):
                 limit=se["drift_limit"], ok=se["ok"],
                 basis="Delta = Cd delta_xe / Ie = %.2f x %.4f / %.2f (12.8.6, rho = 1); limit "
                       "%s" % (se["Cd"], se["delta_xe_in"], se["Ie"], se["drift_limit_basis"]),
-                criterion="ASCE 7-22 Table 12.12-1 (agent confirms the row)"))
+                criterion="ASCE 7-22 Table 12.12-1"))
             pkg["drift_table"].append(dict(
                 check="stability_theta", value=se["theta"], limit=se["theta_max"],
                 ok=se["theta"] <= se["theta_max"], basis=se["theta_basis"],

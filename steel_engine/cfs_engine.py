@@ -119,8 +119,19 @@ def _partition_psf(cfg):
     made (cfg['partition_psf'] given, or cfg['partitions']=True) the actual weight or 10 psf,
     whichever is greater. Returns (psf, note or None)."""
     p = cfg.get("partition_psf")
+    if cfg.get("partitions") is False:
+        return 0.0, None                                # explicitly no partitions
     if p is None and not cfg.get("partitions"):
         return 0.0, None
+    if isinstance(p, str):
+        try:
+            p = float(p)
+        except ValueError:                              # a stated basis, e.g. "none: storage platform"
+            low = p.strip().lower()
+            if low.startswith(("none", "n/a", "na ", "na:", "not applicable", "no partition", "0")):
+                return 0.0, None
+            raise ValueError("cfg['partition_psf'] = %r: give a number (psf) or a text basis starting "
+                             "with 'none' / 'not applicable'" % p)
     p = float(p or 0.0)
     if p < 10.0:
         return 10.0, ("partition weight raised to 10 psf (ASCE 7-22 12.7.2 item 2: actual "

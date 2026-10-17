@@ -48,6 +48,14 @@ SYSTEMS = {
     "not_detailed":    dict(R=3.0, Cd=3.0, Om0=3.0, hlim={"B": NL, "C": NL, "D": NP, "E": NP, "F": NP},
                             std="AISI S100 only (no S400)", s400=None, light_frame=False,
                             label="CFS system not specifically detailed"),
+    # -- cantilevered column systems, Table 12.2-1 row G.2 (ASCE 7-22 12.2.5.2; 14.1): not an S400
+    #    system -- AISI S100 members/connections; column axial in the seismic combinations
+    #    <= 15 % of the available axial strength; overturning elements designed with overstrength --
+    "steel_ordinary_cantilever_column_system": dict(
+        R=1.25, Cd=1.25, Om0=1.25, hlim={"B": 35, "C": 35, "D": NP, "E": NP, "F": NP},
+        std="AISI S100 (S400 does not cover cantilever column systems); ASCE 7-22 12.2.5.2",
+        s400=None, light_frame=False, cantilever_column=True,
+        label="steel ordinary cantilever column system (Table 12.2-1 row G.2)"),
     # (storage racks EXCLUDED from scope 2026-07-30 -- no rack systems in this table)
 }
 
@@ -120,7 +128,7 @@ def capacity_design_required(system_key, R=None, SDC=None):
     cat = (SDC or "").upper()
     if cat == "A":
         return False, ("SDC A: ASCE 7-22 11.7 / 1.4 minimum lateral force; S400 capacity "
-                       "design not triggered (agent confirms)")
+                       "design not triggered")
     if abs(R - 3.0) < 1e-9 and cat in ("B", "C"):
         return False, ("S400 A1.2.3: SDC %s with R = 3 -- members/connections need only be "
                        "designed to AISI S100/S240 (no capacity-design chain)" % cat)

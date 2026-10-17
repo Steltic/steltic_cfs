@@ -3846,7 +3846,10 @@ def _cfs_gravity_rows(cfg, pkg):
 
     def psf(k, label, ns="<b>not stated</b>"):
         v = cfg.get(k)
-        return [label, ("%s psf" % _cn(_fnum(v))) if _fnum(v) is not None else (_pt(v) if v else ns)]
+        txt = ("%s psf" % _cn(_fnum(v))) if _fnum(v) is not None else (_pt(v) if v else ns)
+        if cfg.get(k + "_basis"):                       # e.g. Lr_basis: 4.8.2 reduction of Lo
+            txt += " (%s)" % _pt(cfg[k + "_basis"])
+        return [label, txt]
     if portal:
         rows = [psf("D_roof", "Roof dead load (superimposed)"),
                 psf("collateral", "Collateral load"),
@@ -4215,6 +4218,25 @@ def _cfs_portal_loads(cfg, res, pkg):
     for case, d in (("+GC<sub>pi</sub>", wb), ("&minus;GC<sub>pi</sub>", wb.get("case_neg") or {})):
         if any(k in d for k in ("wall_wind", "wall_lee", "roof_wind", "roof_lee")):
             prow.append([case] + [_num_or(d.get(k), "%.2f") for k in ("wall_wind", "wall_lee", "roof_wind", "roof_lee")])
+    wcases = [c for c in (wb.get("cases") or []) if isinstance(c, dict)]
+    if wcases and (wb.get("source") == "user" or str(wb.get("enclosure") or "").lower() == "open"):
+        crow = []
+        for c in wcases:
+            w_ = c.get("walls") or {}
+            rf = c.get("roof")
+            if isinstance(rf, dict) and rf:
+                rtxt = "left %s / right %s" % (_num_or(rf.get("raf_L"), "%.2f"), _num_or(rf.get("raf_R"), "%.2f"))
+            elif isinstance(rf, (list, tuple)) and rf:
+                rtxt = "; ".join("%s&ndash;%s ft: %s" % (_cn(z[0]), _cn(z[1]), _num_or(z[2], "%.2f"))
+                                 for z in rf if isinstance(z, (list, tuple)) and len(z) == 3)
+            else:
+                rtxt = "&mdash;"
+            crow.append([_pt(c.get("name")), _pt(c.get("desc") or ""),
+                         _num_or(w_.get("col_L"), "%.2f") if w_ else "&mdash;",
+                         _num_or(w_.get("col_R"), "%.2f") if w_ else "&mdash;", rtxt])
+        h.append("<h4>MWFRS wind cases, psf (+ toward the surface; free-roof values are net pressures)</h4>"
+                 + _table(["Case", "Description", "Left wall / column", "Right wall / column", "Roof"], crow))
+        prow = []
     if prow:
         h.append("<h4>MWFRS surface pressures, psf (+ toward the surface)</h4>"
                  + _table(["Case", "Windward wall", "Leeward wall", "Windward roof", "Leeward roof"], prow))
@@ -4672,10 +4694,20 @@ def _cfs_capacity_chapter(cfg, pkg):
         if rows:
             h.append(_table(["Check", "Basis", "Where shown / result"], rows))
     elif R is not None and R <= 3.0 + 1e-9:
-        h.append("<p>R = %s: steel system not specifically detailed for seismic resistance%s. Members and "
-                 "connections are designed to AISI S100%s for the analysis forces; the AISI S400 capacity-design "
-                 "provisions do not apply (S400 A1.2.3).</p>" % (
-                     _cn(R), (", SDC %s" % sdc) if sdc else "", " / S240" if not _cfs_is_portal(cfg) else ""))
+        if (_cfs_sys_row(cfg, sysname) or {}).get("cantilever_column"):
+            h.append("<p>R = %s: %s%s. AISI S400 does not cover cantilever column systems: members and "
+                     "connections are designed to AISI S100 for the analysis forces. ASCE 7-22 &sect;12.2.5.2: the "
+                     "required axial strength of each cantilever column in the load combinations with seismic "
+                     "effects may not exceed 15 %% of its available axial strength, and the foundations and other "
+                     "elements that resist overturning at the column bases are designed for the seismic load "
+                     "effect including overstrength (&sect;12.4.3).</p>" % (
+                         _cn(R), _pt((_cfs_sys_row(cfg, sysname) or {}).get("label", "cantilever column system")),
+                         (", SDC %s" % sdc) if sdc else ""))
+        else:
+            h.append("<p>R = %s: steel system not specifically detailed for seismic resistance%s. Members and "
+                     "connections are designed to AISI S100%s for the analysis forces; the AISI S400 capacity-design "
+                     "provisions do not apply (S400 A1.2.3).</p>" % (
+                         _cn(R), (", SDC %s" % sdc) if sdc else "", " / S240" if not _cfs_is_portal(cfg) else ""))
         rows = []
         gh = pkg.get("governing_hazard")
         if gh:
@@ -4713,7 +4745,7 @@ def _cfs_capacity_chapter(cfg, pkg):
                  + _table(["Line", "&Omega;<sub>0</sub> (eff.)", "&Omega;<sub>E</sub>", "V<sub>n</sub> selected (kip)",
                            "T at &Omega;<sub>0</sub> (kip)", "T at &Omega;<sub>E</sub>V<sub>n</sub> (kip)",
                            "T<sub>cd</sub> (kip)", "0.9D relief available (kip)"], rows))
-    extra = {k: v for k, v in cd.items() if k not in ("basis", "note", "instruction", "seed_basis", "lines",
+    extra = {k: v for k, v in cd.items() if k not in ("basis", "note", "instruction", "seed_basis", "lines", "Ve_seed",
                                                       "Om0", "Om0_eff", "Om0_eff_basis", "Omega_E",
                                                       "Omega_E_basis", "Ry_by_Fy", "Rt_by_Fy", "strap_ductility")
              and v not in (None, "", [], {})}
