@@ -29,7 +29,7 @@ import cfs_systems as CS
 import cfs_engine as CE
 
 COMBOS_NOTE = ("ASCE 7-22 2.3 LRFD; seismic cases carry (1.2+0.2SDS)D and 0.9-0.2SDS "
-               "counteracting; NET-UPLIFT case 0.9D+1.0W is a REQUIRED anchorage case")
+               "counteracting; the net-uplift case 0.9D+1.0W is a required anchorage case")
 
 # S400-20 Table A3.2-1 expected-strength factors (sheet/strip; Fy < 37 ksi and Fy >= 50 ksi
 # bands -- cfs_systems.ry_rt covers every band)
@@ -392,7 +392,8 @@ def wind_story_forces(cfg, direction, detail=False):
         rows[k] = dict(z_ft=round(z, 2), qz_psf=round(qz, 2), p_net_psf=round(p, 2),
                        trib_ft=round(trib, 3), F_kip=round(forces[k], 3))
     basis = dict(V_mph=w["V"], exposure=exp, z_base_ft=z0, h_mean_ft=round(h_mean, 2),
-                 qh_psf=round(qh, 2), G=round(G, 4), gust=ginfo["note"], n1_basis=n1_note,
+                 qh_psf=round(qh / Kd, 2) if Kd else round(qh, 2), qh_Kd_psf=round(qh, 2), Kd=Kd,
+                 G=round(G, 4), gust=ginfo["note"], n1_basis=n1_note,
                  Cp_ww=Cp_ww, Cp_lw=round(Cp_lw, 3), Cp_lw_basis=lw_note,
                  min_16psf_governs_stories=min_gov,
                  note="SEED (ASCE 7-22 Ch. 27 directional): windward qz*G*%.2f stepped per "
@@ -1093,7 +1094,7 @@ def build_package(name, cfg, res):
                 T_cum_kip=round(T_seis, 1), device_class=dev,
                 k_kip_in=kdev, feasibility_note=note,
                 basis="cumulative overturning tension, top-down stack (includes rho=%.2f); "
-                      "sized for TENSION (never the shear force); rods computed PL/AE + "
+                      "sized for the overturning tension (not the shear force); rods computed PL/AE + "
                       "take-up" % rho_d,
                 limit_state=None, cited=None, capacity=None, DC=None)
             if Ca:
@@ -1242,7 +1243,7 @@ def write_package(name, cfg, res, outdir="."):
 PORTAL_COMBOS_NOTE = (
     "ASCE 7-22 2.3.1 LRFD: 1.4D; 1.2D+1.6L+(0.5Lr or 0.3S) [crane/point L]; "
     "1.2D+(1.6Lr or 1.0S)+(L or 0.5W) -- BOTH branches (wind-free and every wind case); "
-    "1.2D+1.0W+L+(0.5Lr or 0.3S); 0.9D+1.0W (NET UPLIFT, a REQUIRED anchorage case); 2.3.6 "
+    "1.2D+1.0W+L+(0.5Lr or 0.3S); 0.9D+1.0W (net uplift, a required anchorage case); 2.3.6 "
     "(1.2+0.2SDS)D+rho*E+L+0.15S and (0.9-0.2SDS)D+rho*E for +/-E, plus the Omega_0 pair "
     "(role 'overstrength'). Wind: both directions, both internal-pressure signs, both "
     "windward-roof Cp branches and the along-ridge case. Analysis: AISI S100-16 C1.1 direct "

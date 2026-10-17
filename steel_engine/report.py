@@ -1431,7 +1431,7 @@ _S400_CHECKS = {
          "uniform-height rule (split stepped lines)"),
         ("Chord studs &amp; anchorage", "capacity design from the EXPECTED wall strength, not ELF force"),
         ("Collectors / story below", "expected wall strength propagated (&Omega;<sub>0</sub> where applicable)"),
-        ("Hold-down / rod chain", "cumulative overturning TENSION per line; rod elongation in drift")]),
+        ("Hold-down / rod chain", "cumulative overturning tension per line; rod elongation in drift")]),
     "steelsheet_wall": ("CFS shear wall, steel sheet (S400 E2)", [
         ("Wall shear capacity", "S400 E2 (seismic; table or effective strip method) + aspect-ratio reduction. WIND design: S240 B5.2.2.3 (Table B5.2.2.3-1 / B5.2.2.3.2.1), &phi;<sub>v</sub> = 0.65 (B5.2.3)"),
         ("Chord studs &amp; anchorage", "capacity design from the EXPECTED wall strength"),
@@ -1545,6 +1545,9 @@ _PUB_SUBS = [(re.compile(p, f), r) for p, f, r in (
     (r"(?:design/)?calc_package(?:_cfs)?\.json", 0, "the calculation package"),
     (r"\s*\(?\bISSUES\.md\b\)?", 0, ""),
     (r"\bfill_package\.py\b", 0, ""),
+    # capitals used for emphasis read as shouting in a calculation package (acronyms are untouched)
+    (r"\b(BOTH|TENSION|COMPRESSION|REQUIRED|NEVER|ONLY|EVERY|ALSO|MIRRORED|ALWAYS|MUST|WITHOUT|OVERTURNING|"
+     r"EXPECTED|SELECTED|EACH|BOTTOM|TOP)\b(?![-/]?[A-Z0-9])", 0, lambda m: m.group(1).lower()),
 )]
 _CFG_KEY_RX = re.compile(r"(?:cfg|pkg|calc_package_cfs|calc_package)\[['\"]([A-Za-z0-9_]+)['\"]\](?:\[['\"]([A-Za-z0-9_]+)['\"]\])?")
 
@@ -2224,11 +2227,11 @@ def _cfs_collector_schedule(pkg):
                                                           else "<b>PENDING</b>"),
                      _num_or(cap) if _fnum(cap) is not None else (_pt(cap) or "&mdash;"),
                      _cdc_e(c), refs.ref(c.get("cited"))])
-    return ("<h3>Collector schedule</h3><p>Framework force = the diaphragm design force carried "
+    return ("<h3>Collector schedule</h3><p>Analysis force = the diaphragm design force carried "
             "along the collector run (ASCE 7-22 &sect;12.10.1.1, with &Omega;<sub>0</sub> per "
             "&sect;12.10.2.1 in SDC C&ndash;F); the <i>design force</i> is the force the D/C is "
             "computed on and its basis is stated per row.</p>"
-            + _ref_table(["ID", "Line", "Framework force (kip)", "Design force (kip)",
+            + _ref_table(["ID", "Line", "Analysis force (kip)", "Design force (kip)",
                           "Design basis", "Selection", "Design strength", "D/C", "Ref."],
                          rows, refs))
 
@@ -3808,8 +3811,13 @@ def _cfs_wind_rows(cfg, pkg):
             ["Internal pressure coefficient GC<sub>pi</sub> (Table 26.13-1)",
              ("&plusmn;%s" % _cn(gcpi)) if gcpi else ("0 (open building)" if encl == "open" else "not stated")]]
     if wb.get("qh_psf") is not None:
-        rows.append(["Velocity pressure q<sub>h</sub> (Eq. 26.10-1)", "%s psf%s" % (
-            _cn(_fnum(wb.get("qh_psf"))), (" at h = %s" % _ft(wb.get("h_mean_ft"))) if wb.get("h_mean_ft") else "")])
+        _at = (" at h = %s" % _ft(wb.get("h_mean_ft"))) if wb.get("h_mean_ft") else ""
+        if wb.get("qh_Kd_psf") is not None and wb.get("Kd") is not None:
+            rows.append(["Velocity pressure q<sub>h</sub> (Eq. 26.10-1)", "%s psf%s; K<sub>d</sub>q<sub>h</sub> = %s psf "
+                         "in the pressure equations (K<sub>d</sub> = %s)" % (
+                             _cn(_fnum(wb.get("qh_psf"))), _at, _cn(_fnum(wb.get("qh_Kd_psf"))), _cn(_fnum(wb.get("Kd"))))])
+        else:
+            rows.append(["Velocity pressure q<sub>h</sub> (Eq. 26.10-1)", "%s psf%s" % (_cn(_fnum(wb.get("qh_psf"))), _at)])
     return rows
 
 

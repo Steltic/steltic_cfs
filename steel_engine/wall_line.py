@@ -517,7 +517,7 @@ def pick_holddown(T_kip):
         if T_kip <= cap:
             return dev, k, None
     return "rod", None, ("cumulative tension %.1f kip exceeds the discrete hold-down envelope "
-                         "(~%.0f kip) -- continuous rod system REQUIRED" %
+                         "(~%.0f kip) -- continuous rod system required" %
                          (T_kip, HOLDDOWN_BANDS["bolted"][0]))
 
 
