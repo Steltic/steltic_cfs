@@ -5002,7 +5002,7 @@ def _cfs_qa_section(name, root, cfg, res, pkg, annex=None, num=7):
                                                               for k, i, d, j in wng)])
     pw = pkg.get("preflight_warnings") or []
     if pw:
-        mv.append(["Framework screening notes", "%d note(s), listed in the QA annex" % len(pw)])
+        mv.append(["Analysis screening notes", "%d note(s), listed in the QA annex" % len(pw)])
     if mv:
         h.append("<h3>%d.2 Analysis and design module verdicts</h3>" % num + _table(["Module", "Verdict"], mv))
     if issues:
@@ -5042,7 +5042,7 @@ def _cfs_write_qa_annex(name, cfg, res, pkg, root, qa_num=7):
     for dd in ((res or {}).get("directions") or {}).values():
         notes += ["gate: %s" % f for f in dd.get("gate_flags", [])]
     if notes:
-        parts.append("<h2>Framework screening notes</h2><ul>%s</ul>" % "".join(
+        parts.append("<h2>Analysis screening notes</h2><ul>%s</ul>" % "".join(
             "<li>%s</li>" % _html.escape(str(n)) for n in dict.fromkeys(map(str, notes))))
     try:
         parts.append(_activity_section(name))
