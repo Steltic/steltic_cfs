@@ -3651,8 +3651,16 @@ def _cfs_basis_rows(cfg, res, pkg):
         rows.append(["ELF (&sect;12.8)", "V = %s kip, W = %s kip, C<sub>s</sub> = %s, T<sub>a</sub> = %s s"
                      % (_cn(_fnum(elf.get("V_kip"))), _cn(_fnum(elf.get("W_kip"))),
                         _cn(_fnum(elf.get("Cs"))), _cn(_fnum(elf.get("Ta_s"))))])
-    elif portal and s.get("W_frame_kip") is not None:
-        rows.append(["Seismic weight per frame", "%s kip" % _cn(_fnum(s.get("W_frame_kip")))])
+    elif portal and (s.get("W_frame_kip") is not None or
+                     _cfs_portal_seis(pkg, res).get("W_frame_kip") is not None):
+        se_ = _cfs_portal_seis(pkg, res)
+        Wf = _fnum(se_.get("W_frame_kip") if se_.get("W_frame_kip") is not None else s.get("W_frame_kip"))
+        rows.append(["Seismic weight per frame (&sect;12.7.2)", "W = %s kip%s" % (
+            _cn(Wf), ("<br>%s" % _pt(se_["W_frame_basis"])) if se_.get("W_frame_basis") else "")])
+        if se_.get("V_kip") is not None and se_.get("Cs") is not None:
+            rows.append(["ELF (&sect;12.8), per frame", "V = C<sub>s</sub>W = %s &times; %s = %s kip%s" % (
+                _cn(_fnum(se_["Cs"]), 4), _cn(Wf), _cn(_fnum(se_["V_kip"])),
+                ("; T = %s s" % _cn(_fnum(se_["T_s"]), 3)) if _fnum(se_.get("T_s")) else "")])
     elif portal and sdc not in (None, "A") and not (pkg.get("seismic") or (res or {}).get("seismic")):
         rows.append(["Seismic load on the frames", "<b>not evaluated by the frame analysis</b> (seismic weight "
                      "per frame not stated); the governing-hazard statement covers the comparison"])
@@ -3745,6 +3753,12 @@ def _cfs_basis_rows(cfg, res, pkg):
             + "; reaction amplification %s" % _cn(_fnum(ts.get("amplification")))])
     rows.append(["governing lateral hazard", _cfs_governing_hazard(pkg)])
     return rows
+
+
+def _cfs_portal_seis(pkg, res):
+    """The portal frame's seismic block (W per frame and its 12.7.2 basis, V, Cs, drift)."""
+    se = (pkg or {}).get("seismic") or (res or {}).get("seismic") or {}
+    return se if isinstance(se, dict) else {}
 
 
 def _drift_basis_clean(s):
@@ -4177,8 +4191,9 @@ def _cfs_portal_loads(cfg, res, pkg):
     if s.get("W_frame_kip") is not None or se:
         R, Cd, Om0, note = _cfs_factors(cfg)
         sdc, _t = _cfs_sdc_detail(cfg)
+        Wf = se.get("W_frame_kip") or s.get("W_frame_kip") or se.get("W_kip")
         rows.append(["Seismic (per frame)", "%sR = %s, C<sub>d</sub> = %s, &Omega;<sub>0</sub> = %s, S<sub>DS</sub> = %s%s" % (
-            ("W<sub>frame</sub> = %s kip; " % _cn(_fnum(s.get("W_frame_kip") or se.get("W_kip")))) if (s.get("W_frame_kip") or se.get("W_kip")) else "",
+            ("W<sub>frame</sub> = %s kip (&sect;12.7.2); " % _cn(_fnum(Wf))) if Wf else "",
             _cn(R) if R is not None else "<b>not stated</b>", _cn(Cd) if Cd is not None else "<b>not stated</b>",
             _cn(Om0) if Om0 is not None else "<b>not stated</b>", _cn(_fnum(s.get("SDS"))),
             (", SDC %s" % sdc) if sdc else "")])

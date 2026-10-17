@@ -239,6 +239,18 @@ def test_portal_r3_has_no_wall_boilerplate():
     assert "four-term" not in serv and "Serviceability" in serv
 
 
+def test_portal_basis_prints_the_12_7_2_frame_weight():
+    pcfg = dict(CF._demo_cfg(), system="not_detailed", collateral=3.0, clad=2.5,
+                seis=dict(SDS=0.30, SD1=0.12, S1=0.08, R=3.0, Cd=3.0, Om0=3.0, Ie=1.0, W_frame_kip=None))
+    res = CF.run(pcfg)
+    pkg = CP.build_portal_package("p", pcfg, res)
+    rows = RPT._cfs_basis_rows(pcfg, res, pkg)
+    lab = {r[0]: r[1] for r in rows}
+    w = lab["Seismic weight per frame (&sect;12.7.2)"]
+    assert ("W = %s kip" % RPT._cn(res["seismic"]["W_frame_kip"])) in w and "roof dead" in w and "collateral" in w
+    assert "V = C<sub>s</sub>W" in lab["ELF (&sect;12.8), per frame"]
+
+
 # ---------------- custom / hand-model portal ----------------
 
 def test_custom_model_portal_does_not_print_engine_skeleton(tmp_path):
