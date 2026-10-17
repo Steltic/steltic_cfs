@@ -204,7 +204,7 @@ def test_anchorage_slot_shear_checked_against_its_own_line(ref_pkg):
     a = next(x for x in slots if x["id"] == "anch-X-A")
     a["v_design_plf"] = a["v_elf_plf"]                        # designed at rho-ELF
     iss = CC._anchorage_shear_cd_issues(cfg, dict(pkg, anchorage=slots))
-    assert len(iss) == 1 and "[anchorage anch-X-A]" in iss[0] and "v_cd_seed_plf" in iss[0]
+    assert len(iss) == 1 and "[anchorage anch-X-A]" in iss[0] and "capacity-design unit shear v_cd" in iss[0]
     # its own Omega_E*Vn (numbers) is an accepted basis
     a["design_basis"] = "own expected strength: Omega_E*Vn = 1.0 x 1160 plf x 48 ft = 55.7 kip (Omega_E = 1.0)"
     assert CC._anchorage_shear_cd_issues(cfg, dict(pkg, anchorage=slots)) == []

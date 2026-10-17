@@ -1850,7 +1850,7 @@ def _anchorage_shear_cd_issues(cfg, pkg):
         own = re.search(r"omega_?e\s*\*?\s*v_?n|expected strength.{0,40}\d", txt, re.I)
         if dem < 0.99 * _num(a["v_cd_seed_plf"]) and not own:
             out.append("[anchorage %s] shear anchorage designed for %.0f plf, below the line's "
-                       "capacity-design unit shear v_cd_seed_plf = %.0f plf (rho-ELF %.0f plf; S400 B3.4) "
+                       "capacity-design unit shear v_cd = %.0f plf (rho-ELF %.0f plf; S400 B3.4) "
                        "-- design for it, or record the line's own expected-strength Omega_E*Vn (numbers)"
                        % (a.get("id"), dem, _num(a["v_cd_seed_plf"]), _num(a.get("v_elf_plf")) or 0.0))
     for c in pkg.get("connections") or []:
