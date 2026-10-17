@@ -5150,8 +5150,9 @@ def build_report_cfs(name, cfg, res, pkg, root, pkg_name="calc_package_cfs.json"
     try:
         import cfs_viewer3d as _V3
         parts.append(_V3.report_section(cfg, name, res, pkg, root).replace("package D&#8725;C", "D&#8725;C"))
-    except Exception as _vex:
-        parts.append("<p class='note'>[3D viewer unavailable: %s]</p>" % _html.escape(str(_vex)))
+    except Exception as _vex:                  # publication: no tool error in the body
+        if not _CFS_PUB[0]:
+            parts.append("<p class='note'>[3D viewer unavailable: %s]</p>" % _html.escape(str(_vex)))
     _chapter_guard(parts, "design basis", _cfs_design_basis, cfg, res, pkg)
     _chapter_guard(parts, "model key figure", _cfs_iso_figure, cfg, name, res, pkg)
     _chapter_guard(parts, "load combinations", _cfs_combos_section, cfg, res, pkg)
