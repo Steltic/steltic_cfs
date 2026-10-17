@@ -535,9 +535,14 @@ def enumerate_combos(cfg):
     Ls = "%.1fL" % fL
     # 7-22 2.3.1: S principal carries 1.0 (was 1.6); companion S is 0.3 (was 0.5).
     # Lr KEEPS 1.6 principal / 0.5 companion -- the 7-22 factor change is snow-only.
+    # ASCE 7-22 2.3.1 lists the rain load R beside Lr and S (2a / 3a / 4a) and combination 3a has the
+    # (L or 0.5W) alternative
     out = [dict(label="1.4D", D=1.4),
-           dict(label="1.2D+1.6L+(0.5Lr or 0.3S)", D=1.2, L=1.6, Lr=0.5, S=0.3),
-           dict(label="1.2D+(1.6Lr or 1.0S)+%s" % Ls, D=1.2, L=fL, Lr=1.6, S=1.0)]
+           dict(label="1.2D+1.6L+(0.5Lr or 0.3S or 0.5R)", D=1.2, L=1.6, Lr=0.5, S=0.3, R=0.5),
+           dict(label="1.2D+(1.6Lr or 1.0S or 1.6R)+%s" % Ls, D=1.2, L=fL, Lr=1.6, S=1.0, R=1.6)]
+    if cfg.get("wind"):
+        out.append(dict(label="1.2D+(1.6Lr or 1.0S or 1.6R)+0.5W (each direction and sense)", D=1.2, Lr=1.6, S=1.0,
+                        R=1.6, W=0.5))
     for dirn in ("X", "Y"):
         SDS = _seis(cfg, dirn)["SDS"]
         rho = _rho_seismic(cfg, dirn)    # 12.3.4 via canonical SDC; cfg['rho'] overrides
@@ -551,8 +556,8 @@ def enumerate_combos(cfg):
     if cfg.get("wind"):
         for dirn in ("X", "Y"):
             for sgn in ("+", "-"):
-                out.append(dict(label="1.2D+1.0W%s%s+%s+(0.5Lr or 0.3S)" % (dirn, sgn, Ls),
-                                D=1.2, L=fL, Lr=0.5, S=0.3, W=1.0, dir=dirn, sign=sgn))
+                out.append(dict(label="1.2D+1.0W%s%s+%s+(0.5Lr or 0.3S or 0.5R)" % (dirn, sgn, Ls),
+                                D=1.2, L=fL, Lr=0.5, S=0.3, R=0.5, W=1.0, dir=dirn, sign=sgn))
                 out.append(dict(label="0.9D+1.0W%s%s" % (dirn, sgn), D=0.9, W=1.0,
                                 dir=dirn, sign=sgn, role="NET UPLIFT anchorage case"))
     # 2.3.6 overstrength pair (combos 6 & 7 with Emh): BOTH the additive and the
@@ -1254,7 +1259,8 @@ PORTAL_COMBOS_NOTE = (
     "1.2D+1.0W+L+(0.5Lr or 0.3S); 0.9D+1.0W (net uplift, a required anchorage case); 2.3.6 "
     "(1.2+0.2SDS)D+rho*E+L+0.15S and (0.9-0.2SDS)D+rho*E for +/-E, plus the Omega_0 pair "
     "(role 'overstrength'). The minimum-dead combinations (0.9D, (0.9-0.2SDS)D) leave out the collateral "
-    "load, which may be absent. Wind: both directions, both internal-pressure signs, both "
+    "load, which may be absent. The rain load R takes the factors of Lr in 2.3.1, so the Lr cases cover it where "
+    "R <= Lr (rain basis in the loads table). Wind: both directions, both internal-pressure signs, both "
     "windward-roof Cp branches and the along-ridge case. Analysis: AISI S100-16 C1.1 direct "
     "analysis (0.90 EA/EI x tau_b, notional Ni = Yi/240, P-Delta).")
 

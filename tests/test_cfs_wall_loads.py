@@ -88,6 +88,8 @@ def test_cfs40_live_factor_in_seismic_and_wind_combos():
     combos = CP.enumerate_combos(mezz(wind=dict(V=115.0, exposure="C")))
     for c in combos:
         if c.get("E") or c.get("W"):
+            if c.get("W") == 0.5:              # 2.3.1 3a: (L or 0.5W) -- the 0.5W branch replaces L
+                continue
             if c["D"] >= 1.0:                  # additive combos carry L
                 assert c.get("L") == 1.0, c["label"]
     assert any(c["label"].startswith("overstrength") and c.get("L") == 1.0 for c in combos)
