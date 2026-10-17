@@ -1253,7 +1253,8 @@ PORTAL_COMBOS_NOTE = (
     "1.2D+(1.6Lr or 1.0S)+(L or 0.5W) -- BOTH branches (wind-free and every wind case); "
     "1.2D+1.0W+L+(0.5Lr or 0.3S); 0.9D+1.0W (net uplift, a required anchorage case); 2.3.6 "
     "(1.2+0.2SDS)D+rho*E+L+0.15S and (0.9-0.2SDS)D+rho*E for +/-E, plus the Omega_0 pair "
-    "(role 'overstrength'). Wind: both directions, both internal-pressure signs, both "
+    "(role 'overstrength'). The minimum-dead combinations (0.9D, (0.9-0.2SDS)D) leave out the collateral "
+    "load, which may be absent. Wind: both directions, both internal-pressure signs, both "
     "windward-roof Cp branches and the along-ridge case. Analysis: AISI S100-16 C1.1 direct "
     "analysis (0.90 EA/EI x tau_b, notional Ni = Yi/240, P-Delta).")
 

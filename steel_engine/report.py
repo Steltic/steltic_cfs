@@ -1620,7 +1620,7 @@ def _pt(x):
     s = _html.escape(_pub_scrub(s))
     # engineering symbols for the framework / designer shorthand
     s = s.replace("&gt;=", "&ge;").replace("&lt;=", "&le;").replace(" -&gt; ", " &rarr; ")
-    s = re.sub(r"(?<=\S) x (?=[\d(])", " &times; ", s)          # '4.5 psf x 15.0 ft' products
+    s = re.sub(r"(?<=\S) x (?=\d|\(\s*[\d.])", " &times; ", s)   # '4.5 psf x 15.0 ft' products ('x (east)' is prose)
     s = re.sub(r"\bOm0_eff\b", "&Omega;<sub>0,eff</sub>", s)
     s = re.sub(r"\bOm(?:ega_?)?0\b", "&Omega;<sub>0</sub>", s)
     s = re.sub(r"\bOmega_E\b", "&Omega;<sub>E</sub>", s)
@@ -2246,6 +2246,9 @@ def _cfs_collector_schedule(pkg):
     rows = []
     for c in colls:
         fw = _collector_framework_force(c)
+        if fw is not None and not (isinstance(c.get("demand_kip_by_level"), dict) and c.get("demand_kip_by_level")):
+            # only the whole-diaphragm level force is known (no tributary fraction): say so, it is not the run force
+            fw = "%s (whole level)" % _num_or(fw)
         if c.get("waived"):
             rows.append([_pt(c.get("id")), _pt(c.get("line")), _num_or(fw), "", _waived_cell(c),
                          "", "", "", refs.ref(c.get("cited"))])
@@ -5088,7 +5091,7 @@ def _cfs_qa_section(name, root, cfg, res, pkg, annex=None, num=7):
                  "listed in %d.1 passed for this package.</p>" % (num, num))
     if annex:
         h.append("<p class='tnote'>Design-process records (source verification of the cited standards, "
-                 "engine screening notes and the design log) are in the QA annex: "
+                 "analysis screening notes and the design log) are in the QA annex: "
                  "<a href='%s'>%s</a>.</p>" % (annex, annex))
     return "".join(h)
 
@@ -5115,7 +5118,8 @@ def _cfs_write_qa_annex(name, cfg, res, pkg, root, qa_num=7):
     notes = list((pkg or {}).get("preflight_warnings") or []) + list((res or {}).get("preflight_warnings") or [])
     gate = []
     for dd in ((res or {}).get("directions") or {}).values():
-        gate += ["model vs tributary distribution: %s" % f for f in dd.get("gate_flags", [])]
+        gate += ["model vs tributary distribution: %s" % re.sub(r"\s*--\s*justify\b.*$", "", str(f))
+                 for f in dd.get("gate_flags", [])]
     if notes or gate:
         parts.append("<h2>Analysis screening notes</h2><p>Screens the analysis raises for the engineer to evaluate; "
                      "the evaluation recorded in the calculation package follows each group.</p>")

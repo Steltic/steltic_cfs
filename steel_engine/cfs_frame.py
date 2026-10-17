@@ -1101,8 +1101,10 @@ def wind_cases(cfg):
             warns.append("supplied wind_pressures_psf are applied from the LEFT and MIRRORED "
                          "(W_R/W2_R); set cfg['wind_mirror']=False only when the supplied "
                          "cases are already the complete directional set")
+        _b = str(wp.get("basis") or cfg.get("wind_basis") or "").strip()
         return dict(cases=cases, qh_psf=wp.get("qh_psf"), source="user",
-                    basis="user-supplied wind cases (listed with the frame loads)", warnings=warns,
+                    basis=(_b or "wind pressures specified for this frame (each case is listed with its "
+                           "description in the frame loads)"), warnings=warns,
                     enclosure=(enclosure_of(cfg)[0] if cfg.get("wind") else None))
     w = cfg.get("wind")
     if not w:
@@ -1414,6 +1416,9 @@ def _case_loads(fr, members, meta, cfg, case):
                     else:
                         out.append(("m", idx, (-wsw * s, -wsw * c)))
         point_loads(("D",))
+    elif case == "Dc":                                  # collateral alone: taken back out of the 0.9D combinations
+        col = float(cfg.get("collateral", 0.0) or 0.0)
+        gravity_on_rafters(lambda x: col, "length")
     elif case == "Lr":
         gravity_on_rafters(lambda x: cfg["Lr"], "projection")
         point_loads(("Lr",))
@@ -1652,7 +1657,7 @@ def seismic_base_shear(cfg):
 
 # ---------------- LRFD combinations (ASCE 7-22 2.3.1 / 2.3.6) ----------------
 
-GRAVITY_CASES = ("D", "Lr", "L", "S_bal", "S_min", "S_unb_L", "S_unb_R")
+GRAVITY_CASES = ("D", "Dc", "Lr", "L", "S_bal", "S_min", "S_unb_L", "S_unb_R")
 
 
 def _is_gravity(case):
@@ -1714,8 +1719,14 @@ def lrfd_combos(cfg, wind=None):
             for ln, lv in lvars:
                 nm = "1.2D+1.0%s%s+%s" % (w, ("+" + ln) if ln else "", cn)
                 combos.append((nm, addL(dict({"D": 1.2, w: 1.0}, **cc), lv, 1.0)))
+    # collateral (sprinklers, ceilings, ducts) may be absent: it is not counted on to resist uplift or overturning,
+    # so the minimum-dead combinations take it back out ("Dc" = collateral alone)
+    col = float(cfg.get("collateral", 0.0) or 0.0) > 0.0
+
+    def dmin(f):
+        return {"D": f, "Dc": -f} if col else {"D": f}
     for w in Wn:                                                 # 5a NET UPLIFT
-        combos.append(("0.9D+1.0%s" % w, {"D": 0.9, w: 1.0}))
+        combos.append(("0.9D+1.0%s" % w, dict(dmin(0.9), **{w: 1.0})))
     sh = seismic_base_shear(cfg)
     if sh:
         sds = float(cfg["seis"]["SDS"])
@@ -1727,13 +1738,13 @@ def lrfd_combos(cfg, wind=None):
                 c6 = addL(dict({"D": 1.2 + 0.2 * sds, e: rho}, **Sc), lv, 1.0)
                 combos.append(("(1.2+0.2SDS)D+%.2f%s%s%s" % (rho, e, ("+" + ln) if ln else "",
                                                           "+0.15S" if Sc else ""), c6))
-            combos.append(("(0.9-0.2SDS)D+%.2f%s" % (rho, e), {"D": 0.9 - 0.2 * sds, e: rho}))
+            combos.append(("(0.9-0.2SDS)D+%.2f%s" % (rho, e), dict(dmin(0.9 - 0.2 * sds), **{e: rho})))
             if om0:
                 for ln, lv in lvars:
                     c6 = addL(dict({"D": 1.2 + 0.2 * sds, e: om0}, **Sc), lv, 1.0)
                     combos.append(("(1.2+0.2SDS)D+Om0%s%s%s" % (e, ("+" + ln) if ln else "",
                                                               "+0.15S" if Sc else ""), c6))
-                combos.append(("(0.9-0.2SDS)D+Om0%s" % e, {"D": 0.9 - 0.2 * sds, e: om0}))
+                combos.append(("(0.9-0.2SDS)D+Om0%s" % e, dict(dmin(0.9 - 0.2 * sds), **{e: om0})))
     return combos
 
 
@@ -2154,7 +2165,7 @@ def run(cfg):
             res["notes"].append("wind: " + wmsg)
     snow_names, snow_notes = snow_case_names(cfg)
     res["notes"] += snow_notes
-    names = ["D", "Lr"] + snow_names
+    names = ["D", "Lr"] + snow_names + (["Dc"] if float(cfg.get("collateral", 0.0) or 0.0) > 0.0 else [])
     if _has_L(cfg):
         names.append("L")
         if _has_LH(cfg):
