@@ -556,7 +556,10 @@ rebuilt on a different edition, **re-verify each one before reusing it**.
 - **Keys the report prints as written** (anything missing prints as "not stated"):
   - *cfg:* `occupancy`, `risk_cat`, `site_class`, `seis` (SS, S1, SDS, SD1, Ie); `wind` V, exposure,
     `Kd`, `Kzt`, `Ke`, `enclosure`; `snow_pg`, `snow_ce`, `snow_ct` (wall path: `snow` = the pf
-    used); `collateral`, `Lr`; portal `clad` (wall cladding in W); `materials` (cfg or package):
+    used); `collateral`, `Lr`; portal `clad` (wall cladding in W); `wind_basis` (text, when there is
+    no wind load, e.g. an interior mezzanine enclosed by an existing building); a key that does not apply
+    may be given as text instead of a number (e.g. `partition_psf="none: storage platform"`);
+    `materials` (cfg or package):
     `{framing, framing_strength, straps, sheathing, steel_sheet, gypsum, screws, screws_strength,
     rods, bolts, anchor_rods, welds}` or a list of `{item, spec, strength, used}`.
   - *package:* `rho_justification` (the 12.3.4.2 (a)/(b) showing with numbers);

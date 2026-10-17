@@ -3783,6 +3783,8 @@ def _drift_basis_clean(s):
 def _cfs_wind_rows(cfg, pkg):
     w = cfg.get("wind") or {}
     if not w:
+        if isinstance(cfg.get("wind_basis"), str) and cfg["wind_basis"].strip():   # e.g. interior structure
+            return [["Wind", _pt(cfg["wind_basis"])]]
         return [["Wind", "<b>not stated</b> (no wind parameters; wind not analysed)"]]
     wb = pkg.get("wind_basis") or {}
     try:
@@ -4848,7 +4850,7 @@ _QA_CATS = (
      r"class envelope|NET-UPLIFT|uplift path"),
     ("Code basis", "screw &phi; = 0.50 / &Omega; = 3.00 and the screw's own shear strength (S100-16 w/S2-20 J4); "
                    "ASTM A449 rod strength by diameter; interaction &ge; its axial term (H1-1b aware); "
-                   "ASCE 7-22 snow factors; no framework labels as design basis",
+                   "ASCE 7-22 snow factors; no preliminary (unchecked) values used as the design basis",
      r"screw|A449|interaction|H1-1b|H1\.1|snow factor|snow drift|rain-on-snow|seed label|placeholder label|rod strength"),
     ("Drift and stability", "every drift row within its Table 12.12-1 limit; &theta; &le; &theta;<sub>max</sub>",
      r"\[drift|theta|stability"),
