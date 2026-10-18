@@ -1413,9 +1413,9 @@ def _case_loads(fr, members, meta, cfg, case):
                     if len(el) > 5 and el[5]:           # truss strut: lump to its ends
                         out.append(("n", el[0], (0.0, -wsw * L / 2.0, 0.0)))
                         out.append(("n", el[1], (0.0, -wsw * L / 2.0, 0.0)))
-                    elif lab.startswith("raf"):
-                        put_rafter(idx, -wsw * s, -wsw * c)
                     else:
+                        # the frame member carries its own weight in bending -- also the level SBMF beam of a
+                        # truss_roof frame, whose ROOF loads (not its self-weight) go to the eaves as truss reactions
                         out.append(("m", idx, (-wsw * s, -wsw * c)))
         point_loads(("D",))
     elif case == "Dc":                                  # collateral alone: taken back out of the 0.9D combinations
