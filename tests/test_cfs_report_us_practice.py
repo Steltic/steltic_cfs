@@ -288,7 +288,7 @@ def test_custom_model_portal_does_not_print_engine_skeleton(tmp_path):
     assert "n.r." in anch and ("%.1f" % up_eng) not in anch.split("Limit state")[0]
     assert "outline frame of the 3D view, not used for design" in html      # eave sway left at the seed
     appx = RPT._cfs_appendix_calcs(pkg, pcfg, res, "p")
-    assert "outline frame of the 3D view, not used for design" in appx
+    assert "outline frame of the 3D view, not used for design" not in appx    # unused outline values are left out
 
 
 def test_custom_model_detection():
