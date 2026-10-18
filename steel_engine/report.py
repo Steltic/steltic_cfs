@@ -2678,7 +2678,7 @@ def _grounding_check(cfg, name, pkg):
         _sdc_g = "D"
     # S400 A1.2.3: R = 3 in SDC B/C -> S100/S240 only; otherwise an S400 system needs S400
     needs_s400 = (sysname in _WALL_SYSTEMS or sysname == "sbmf") and \
-        not (float(R or 3) <= 3.0 + 1e-9 and _sdc_g in ("A", "B", "C"))
+        not (abs(float(R or 3) - 3.0) <= 1e-9 and _sdc_g in ("B", "C")) and _sdc_g != "A"   # A1.2.3: R = 3 only
     has_conn = bool((pkg or {}).get("connections"))
     wall_sched = any(w.get("fastener_schedule") for w in ((pkg or {}).get("wall_lines") or [])
                      if isinstance(w, dict))
