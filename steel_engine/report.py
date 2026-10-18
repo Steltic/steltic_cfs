@@ -704,7 +704,7 @@ def _load_activity(name):
 
 _LOG_NAME = {"search_engineering_standards": "code provision look-up", "run_python": "analysis / check run",
              "new_activity_log": "design started"}
-_LOG_STD = {"engineering_standards_S100": "AISI S100-16 (2020)", "engineering_standards_S240": "AISI S240-20",
+_LOG_STD = {"engineering_standards_S100": "AISI S100-16 (R2020), library copy with Supplement 3-22", "engineering_standards_S240": "AISI S240-20",
             "engineering_standards_S400": "AISI S400-20", "engineering_standards_ASCE7": "ASCE 7-22",
             "engineering_standards_A360": "AISC 360-22", "engineering_standards_A341": "AISC 341-22"}
 
@@ -2021,8 +2021,9 @@ def _cfs_wall_schedule(pkg, cfg=None):
             head = ["Wall", "Story", "Seismic &rho;E (plf)", "Wind 1.0W (plf)",
                     "Design demand (plf)", "Demand basis", "Sheathing", "Fasteners (edge / field)",
                     "&phi;v<sub>n</sub> (plf)", "D/C", "Ref."]
-        out.append("<h3>%s</h3><p>Seismic demand = tributary unit shear with the 5%% accidental "
-                   "shift and &rho; (Section 3); wind demand = the 1.0W MWFRS unit shear. The "
+        out.append("<h3>%s</h3><p>Seismic demand = the wall-line unit shear of the diaphragm analysis adopted "
+                   "(Section 3: tributary for flexible floors, the rigid / semi-rigid model otherwise), with accidental "
+                   "torsion and &rho;; wind demand = the 1.0W MWFRS unit shear. The "
                    "<i>design demand</i> is the value the D/C is computed on, and its basis is "
                    "stated per row.</p>" % title + _ref_table(head, rows, refs))
     return "".join(out)
