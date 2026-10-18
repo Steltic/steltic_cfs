@@ -4836,9 +4836,12 @@ def _cfs_capacity_chapter(cfg, pkg):
                          vn, _num_or(ln.get("T_Om0_stack_kip")),
                          _num_or(ln.get("T_OmegaE_Vn_stack_kip")), "<b>%s</b>" % _num_or(ln.get("T_cd_bay_seed_kip", ln.get("T_cd_seed_kip"))),
                          _num_or(ln.get("dead_relief_kip_available"))])
-        h.append("<h3>Capacity-design tension by line (S400 B3.4)</h3><p class='tnote'>T<sub>cd</sub> = min(tension "
-                 "at the &Omega;<sub>0</sub> level, tension at the expected strength &Omega;<sub>E</sub>V<sub>n</sub> of "
-                 "the selected assembly); strap lines are per bay. %s %s</p>" % (
+        h.append("<h3>Capacity-design tension by line (S400 B3.4)</h3><p class='tnote'>T<sub>cd</sub> is the "
+                 "tension at the expected strength &Omega;<sub>E</sub>V<sub>n</sub> of the selected assembly, not above "
+                 "the &Omega;<sub>0</sub>-level effect. Where the line is chained story by story, T<sub>cd</sub> = "
+                 "&Sigma;<sub>i</sub> min(&Omega;<sub>E</sub>V<sub>n,i</sub>, &Omega;<sub>0</sub>V<sub>i</sub>) h<sub>i</sub> / L, "
+                 "which can be below both stack values; otherwise it is the smaller of the two stacks. Strap lines are "
+                 "per bay. %s %s</p>" % (
                      _pt(_drift_basis_clean(cd.get("Om0_eff_basis", ""))), _pt(cd.get("Omega_E_basis", "")))
                  + _table(["Line", "&Omega;<sub>0</sub> (eff.)", "&Omega;<sub>E</sub>", "V<sub>n</sub> selected (kip)",
                            "T at &Omega;<sub>0</sub> (kip)", "T at &Omega;<sub>E</sub>V<sub>n</sub> (kip)",

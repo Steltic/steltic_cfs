@@ -21,7 +21,7 @@ PER-STORY LINE PRESENCE (CFS-09): a line is PRESENT at a story when it has sheat
 there. distribute() resolves each story's shear onto the lines present at that story only: a
 line that stops (breezeway, split level, discontinued wall) hands its shear from above to the
 neighbouring present lines through the diaphragm at that level (flexible diaphragm = simple
-span -> lever rule), recorded as a TRANSFER (ASCE 7-22 12.3.3.4 / Table 12.3-2 Type 4: the
+span -> lever rule), recorded as a TRANSFER (ASCE 7-22 12.3.3.4 / Table 12.3-1 Type 4 out-of-plane offset: the
 elements supporting a discontinuous wall are designed for Omega_0). A line whose lower stories
 are absent because it bears on a stepped foundation declares WallLine(base_story=k) and its
 shear goes to that foundation instead. No line ever divides by a zero wall length.
