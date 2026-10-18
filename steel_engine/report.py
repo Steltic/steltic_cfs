@@ -4373,12 +4373,10 @@ def _cfs_portal_design_section(pkg, cfg=None, res=None, name=None):
     seeda = {a.get("id"): a for a in seeds.get("anchorage") or []}
     seedd = {d.get("check"): d for d in seeds.get("drift_table") or [] if isinstance(d, dict)}
     h = ["<h2>4. Frame design</h2>"]
+    _legend_at = None
     if custom:
-        h.append("<p><b>Design model:</b> %s. Member, connection and base demands below are the design "
-                 "model's values. The outline frame (used for the 3D model view and load bookkeeping) is "
-                 "not used for design; its values are not reported here (n.r. = not reported by the design "
-                 "model).</p>"
-                 % (_pt(cdesc) or "custom frame model"))
+        _legend_at = len(h)
+        h.append("")                       # the design-model paragraph, written once the section is built
     h.append(_cfs_sample_calcs(pkg))
     mems = [m for m in pkg.get("members") or [] if isinstance(m, dict)]
     if mems:
@@ -4451,6 +4449,15 @@ def _cfs_portal_design_section(pkg, cfg=None, res=None, name=None):
             continue
         h.append(_cfs_schedule_table(s))
     h.append(_cfs_serviceability_table(pkg, custom, seedd))
+    if _legend_at is not None:
+        # the n.r. legend only where an n.r. cell is printed in this section
+        _nr = any(re.search(r">\s*n\.r\.\s*<", x or "") for x in h)
+        h[_legend_at] = ("<p><b>Design model:</b> %s. Member, connection and base demands below are the design "
+                         "model's values. The outline frame (used for the 3D model view and load bookkeeping) is "
+                         "not used for design%s.</p>"
+                         % (_pt(cdesc) or "custom frame model",
+                            "; its values are not reported here (n.r. = not reported by the design model)" if _nr
+                            else " and its values are not printed"))
     return "".join(x for x in h if x)
 
 
