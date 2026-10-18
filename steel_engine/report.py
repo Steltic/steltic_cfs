@@ -5229,7 +5229,7 @@ def _cfs_appendix_calcs(pkg, cfg=None, res=None, name=None):
                     sv = "not reported"
                 se = seed_by.get((key, it.get("id")))
                 if se and k in se and _fnum(v) is not None and _same(v, se.get(k)):
-                    sv += " <i>(outline frame of the 3D view, not used for design)</i>"
+                    continue        # an outline-frame (3D view) value the design model did not use: not printed
                 rows.append(["line shear, &rho;E (kip)" if (key == "wall_lines" and k == "V_kip") else _hk(k), sv])
             card = "<h4>%s</h4>" % _pt(cid) + _table(["Field", "Value"], rows)
             checks = [c for c in it.get("checks") or [] if isinstance(c, dict)]
