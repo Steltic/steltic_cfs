@@ -109,7 +109,8 @@ def diaphragm_idealization(cfg, res=None):
     thickness). A concrete slab or topping > 1.5 in. declared 'flexible' WITHOUT the 12.3.1.3
     ratio is NOT accepted: the Omega_0 reduction is withheld and a warning raised."""
     decl = str(cfg.get("diaphragm", "flexible")).lower()
-    mat = str(cfg.get("diaphragm_material", "") or "").lower()
+    mat_txt = str(cfg.get("diaphragm_material", "") or "").strip()   # quoted as written
+    mat = mat_txt.lower()                                              # keyword screens only
     top = cfg.get("diaphragm_topping_in")
     top = float(top) if isinstance(top, (int, float)) else 0.0
     warns = []
@@ -129,7 +130,7 @@ def diaphragm_idealization(cfg, res=None):
                      "be RIGID). Model semi-rigid (12.3.1) or show 12.3.1.3 "
                      "(delta_MDD/Delta_ADVE > 2); the footnote-b Omega_0 reduction is "
                      "WITHHELD" % ("topping %.2f in." % top if top > 1.5 else
-                                   "material %s" % mat))
+                                   "material %s" % mat_txt))
         return dict(declared=decl, flexible_ok=False, warnings=warns,
                     note="flexible idealization NOT supported by 12.3.1.1 (concrete topping)")
     if calc_ok:
@@ -147,8 +148,8 @@ def diaphragm_idealization(cfg, res=None):
                     note="flexible idealization pending drift compliance (12.3.1.1(3)(b))")
     return dict(declared=decl, flexible_ok=True, warnings=warns,
                 note="flexible per 12.3.1.1 (%s; topping %.2f in. <= 1.5 in.; lines meet "
-                     "Table 12.12-1)" % (mat or "material not stated: untopped wood structural "
-                                         "panels / steel deck assumed", top))
+                     "Table 12.12-1)" % (mat_txt or "material not stated: untopped wood structural "
+                                             "panels / steel deck assumed", top))
 
 
 def _om0_eff(cfg, dirn=None, res=None):
@@ -1263,6 +1264,19 @@ PORTAL_COMBOS_NOTE = (
     "R <= Lr (rain basis in the loads table). Wind: both directions, both internal-pressure signs, both "
     "windward-roof Cp branches and the along-ridge case. Analysis: AISI S100-16 C1.1 direct "
     "analysis (0.90 EA/EI x tau_b, notional Ni = Yi/240, P-Delta).")
+RAIN_BASIS_REF = " (rain basis in the loads table)"
+
+
+def has_rain_basis(cfg):
+    """True where the design-basis loads table prints a rain load (cfg['rain'] or cfg['rain_basis'])."""
+    cfg = cfg or {}
+    return cfg.get("rain") is not None or bool(cfg.get("rain_basis"))
+
+
+def portal_combos_note(cfg):
+    """The portal combinations note of this job: it points to the rain basis of the loads table only
+    where that table has one."""
+    return PORTAL_COMBOS_NOTE if has_rain_basis(cfg) else PORTAL_COMBOS_NOTE.replace(RAIN_BASIS_REF, "")
 
 
 def _pair_rows(env):
@@ -1335,7 +1349,7 @@ def build_portal_package(name, cfg, res):
     pkg = dict(building=name, code="AISI S100-16 (2020) w/S2-20 (AISI S400-20 where it applies) -- "
                                    "LRFD; ASCE 7-22",
                kind="cfs_portal", system=cfg.get("system") or "portal frame",
-               structure_kind=res["structure_kind"], combos_note=PORTAL_COMBOS_NOTE,
+               structure_kind=res["structure_kind"], combos_note=portal_combos_note(cfg),
                combos=[dict(label=n, role=c.get("role", "strength"))
                        for n, c in res["combos"].items()],
                sections=res["sections"], members=[], connections=[], anchorage=[],

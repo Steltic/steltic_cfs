@@ -695,6 +695,17 @@ def _kzf(z_ft, exposure="C"):
 GCPI_BY_ENCLOSURE = {"enclosed": 0.18, "partially_enclosed": 0.55,
                      "partially_open": 0.18, "open": 0.00}
 
+
+def enclosure_phrase(enc, gcpi=None):
+    """Plain-language enclosure statement of the MWFRS basis, the same for every Table 26.13-1
+    class: 'partially enclosed building (Table 26.13-1 GCpi = ±0.55)'; an open building has
+    GCpi = 0 (no sign). gcpi defaults to the table value of the class."""
+    e = str(enc or "enclosed").strip().lower().replace("-", "_").replace(" ", "_")
+    g = abs(float(gcpi)) if gcpi is not None else GCPI_BY_ENCLOSURE.get(e, 0.18)
+    return "%s building (Table 26.13-1 GCpi = %s)" % (
+        e.replace("_", " "), "0" if g == 0.0 else "±%.2f" % g)
+
+
 # Fig. 27.3-1 roof Cp, wind NORMAL to ridge, theta >= 10 deg (printed ASCE 7-22 values; the
 # corpus figure is garbled -- values cross-checked against three agents' interpolations).
 # Windward: first (negative) and second (positive/less negative) values -- Note 3: where two
@@ -1130,11 +1141,11 @@ def wind_cases(cfg):
         cases = _closed_cases(cfg, enc, GCpi, qk, G, th, h, span_ft, xr, oh_in, warns)
     basis = ("ASCE 7-22 directional MWFRS. qh = 0.00256 Kz Kzt Ke V^2 = %.2f psf "
              "(Eq. 26.10-1 at h = %.1f ft, Exp %s, Kzt %.2f, Ke %.2f; Kd = %.2f applied in the "
-             "pressure equation, NOT in qh); G = %.2f; enclosure %s (Table 26.13-1 GCpi = "
-             "%.2f); theta = %.1f deg, h/L = %.2f; %s; %d cases: wind from BOTH sides, both "
+             "pressure equation, not in qh); G = %.2f; %s; theta = %.1f deg, h/L = %.2f; %s; "
+             "%d cases: wind from both sides, both "
              "internal-pressure signs, both windward-roof Cp branches (Fig. 27.3-1 note 3) "
              "and the along-ridge case (ASCE 7-22 Ch. 26/27)"
-             % (qh, h, exp, Kzt, Ke, Kd, G, enc, GCpi, th, h / span_ft,
+             % (qh, h, exp, Kzt, Ke, Kd, G, enclosure_phrase(enc, GCpi), th, h / span_ft,
                 "open-building free-roof CN (Figs. 27.3-4..7, Eq. 27.3-2)" if enc == "open"
                 else "Fig. 27.3-1 Cp(theta, h/L), walls +0.8 / Cp(L/B) / sidewalls -0.7",
                 len(cases)))
