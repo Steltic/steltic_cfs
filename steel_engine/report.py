@@ -1588,7 +1588,7 @@ _PUB_SUBS = [(re.compile(p, f), r) for p, f, r in (
     (r"\bfill_package\.py\b", 0, ""),
     # capitals used for emphasis read as shouting in a calculation package (acronyms are untouched)
     (r"\b(BOTH|TENSION|COMPRESSION|REQUIRED|NEVER|ONLY|EVERY|ALSO|MIRRORED|ALWAYS|MUST|WITHOUT|OVERTURNING|"
-     r"EXPECTED|SELECTED|EACH|BOTTOM|TOP)\b(?![-/]?[A-Z0-9])", 0, lambda m: m.group(1).lower()),
+     r"EXPECTED|SELECTED|EACH|BOTTOM|TOP|FLOOR|ROOF)\b(?![-/]?[A-Z0-9])", 0, lambda m: m.group(1).lower()),
 )]
 _CFG_KEY_RX = re.compile(r"(?:cfg|pkg|calc_package_cfs|calc_package)\[['\"]([A-Za-z0-9_]+)['\"]\](?:\[['\"]([A-Za-z0-9_]+)['\"]\])?")
 
@@ -1724,11 +1724,32 @@ _HK = {"DC": "D/C", "v_unit_plf": "seismic unit shear, &rho;E (plf)",
        "v_cd_seed_plf": "capacity-design unit shear v<sub>cd</sub> (plf)",
        "v_cd_by_story_plf": "capacity-design unit shear by story (plf)",
        "v_design_plf": "design unit shear (plf)", "v_design_klf": "design unit shear (klf)",
-       "design_basis": "basis of the design demand"}
-_HK_UNITS = (("_kip_in", "kip-in."), ("_kipin", "kip-in."), ("_kip_ft", "kip-ft"),
-             ("_kipft", "kip-ft"), ("_klf", "klf"), ("_plf", "plf"), ("_psf", "psf"),
+       "design_basis": "basis of the design demand",
+       # record titles whose acronyms a plain key cannot carry (Section 6 / QA annex headings)
+       "wind_cc": "wind C&amp;C", "wind_mwfrs": "wind MWFRS", "cc_zone_table": "C&amp;C zone table",
+       "cc_wind_basis": "C&amp;C wind basis", "cc_wind_pressures": "C&amp;C wind pressures",
+       "sdc_determination": "SDC determination", "elf_spot_check": "ELF spot check",
+       "elf_self_check": "ELF self-check", "type_ii_basis": "Type II basis",
+       "type_ii_limitations": "Type II limitations", "type_ii_Ca_table": "Type II C<sub>a</sub> table",
+       "purlin_girt_I621_conditions": "purlin and girt conditions of AISI S100 I6.2.1",
+       "rho_by_dir": "redundancy factor &rho; by direction", "two_stage_note": "two-stage procedure note"}
+_HK_UNITS = (("_kipin_per_rad", "kip-in./rad"), ("_kipin_rad", "kip-in./rad"),
+             ("_kip_per_in", "kip/in."), ("_kip_per_ft", "kip/ft"),
+             ("_kip_in", "kip-in."), ("_kipin", "kip-in."), ("_kip_ft", "kip-ft"),
+             ("_kipft", "kip-ft"), ("_klf", "klf"), ("_plf", "plf"), ("_psf", "psf"), ("_pcf", "pcf"),
              ("_ksi", "ksi"), ("_kips", "kip"), ("_kip", "kip"), ("_in2", "in.&sup2;"),
-             ("_in4", "in.<sup>4</sup>"), ("_in", "in."), ("_ft", "ft"), ("_hz", "Hz"))
+             ("_in4", "in.<sup>4</sup>"), ("_in", "in."), ("_ft", "ft"), ("_hz", "Hz"),
+             ("_sf", "sf"), ("_s", "s"), ("_pct", "%"), ("_mph", "mph"), ("_mil", "mil"),
+             ("_rad", "rad"))
+
+
+def _hk_unit(k):
+    """(key without its unit suffix, unit) -- unit '' when the key carries none."""
+    k = str(k)
+    for suf, u in _HK_UNITS:
+        if k.lower().endswith(suf) and len(k) > len(suf):
+            return k[:-len(suf)], u
+    return k, ""
 
 
 def _hk(k):
@@ -1736,10 +1757,16 @@ def _hk(k):
     k = str(k)
     if k in _HK:
         return _HK[k]
-    for suf, u in _HK_UNITS:
-        if k.lower().endswith(suf) and len(k) > len(suf):
-            return "%s (%s)" % (_html.escape(k[:-len(suf)].replace("_", " ")), u)
+    base, u = _hk_unit(k)
+    if u:
+        return "%s (%s)" % (_html.escape(base.replace("_", " ")), u)
     return _html.escape(k.replace("_", " "))
+
+
+def _cap1(s):
+    """Capital first letter only -- str.capitalize() lowercases the rest ('Wind cc', 'Sdc')."""
+    s = str(s)
+    return s[:1].upper() + s[1:]
 
 
 def _cdc(v):
@@ -2287,6 +2314,39 @@ def _cfs_collector_schedule(pkg):
                          rows, refs))
 
 
+def _gravity_basis_note(gf):
+    """The load basis of EVERY gravity-framing row: one note where the rows share a basis (or one row's
+    basis already covers the others'), else one line per basis naming its rows."""
+    groups = []                                     # [[basis, [ids]], ...] in row order
+    for g in gf:
+        if not isinstance(g, dict):
+            continue
+        b = str(g.get("basis") or "").strip()
+        if not b:
+            continue
+        hit = next((x for x in groups if b == x[0]), None)
+        if hit is None:
+            groups.append([b, []])
+            hit = groups[-1]
+        hit[1].append(str(g.get("id") or g.get("member") or ""))
+    # a basis already written out inside another row's basis is not printed twice (its rows are
+    # named with the basis that contains it)
+    keep = []
+    for x in groups:
+        outer = [y for y in groups if y is not x and x[0] in y[0]]
+        if outer:
+            max(outer, key=lambda y: len(y[0]))[1].extend(x[1])     # the outermost basis has it
+        else:
+            keep.append(x)
+    groups = keep
+    if not groups:
+        return ""
+    if len(groups) == 1:
+        return "<p class='tnote'>%s</p>" % _pt(groups[0][0])
+    return "<ul class='tnote'>%s</ul>" % "".join(
+        "<li><b>%s:</b> %s</li>" % (_pt(", ".join(i for i in ids if i)), _pt(b)) for b, ids in groups)
+
+
 def _cfs_seed_blocks(pkg):
     """Framework demand blocks the designer works from: gravity framing, collector design levels
     per direction and SDC, Type II Ca / uniform uplift, strap ductility, discontinuity
@@ -2302,7 +2362,7 @@ def _cfs_seed_blocks(pkg):
                  _cdc_e(g) if g.get("DC") is not None else
                  (_waived_cell(g) if g.get("waived") else "<b>PENDING</b>")] for g in gf if isinstance(g, dict)]
         h.append("<h3>Gravity framing (platform / floor members)</h3>"
-                 + "<p class='tnote'>%s</p>" % _pt((gf[0] or {}).get("basis", ""))
+                 + _gravity_basis_note(gf)
                  + _table(["ID", "Member", "Span (ft)", "w<sub>u</sub> (klf)", "P<sub>u</sub> (kip)",
                            "M<sub>u</sub> (kip-ft)", "V<sub>u</sub> (kip)", "I<sub>req</sub> (in<sup>4</sup>)",
                            "Section", "D/C"], rows))
@@ -2708,9 +2768,10 @@ def _grounding_check(cfg, name, pkg):
     flags = []
     # AISC 341 / 358 never apply to CFS members; AISC 360 is correct for threaded rods, anchor rods, base plates,
     # hot-rolled members and their bolts / welds -- flagged only where it is cited without such a context
-    _hot = [m for m in _re.finditer(r"aisc\s*3(41|60|58)", _ct, _re.I)]
     _cfs_mem = _re.compile(r"\b\d{3,4}[STUFstuf]\d{2,3}-\d{2,3}\b")          # a CFS designator, e.g. 600S162-54
-    if any(m.group(1) in ("41", "58") or _cfs_mem.search(_ct[max(0, m.start() - 80):m.end() + 80]) for m in _hot):
+    # each citation on its own: joined citations of different items must not borrow each other's context
+    _hot = [(c, m) for c in _cited(pkg or {}) for m in _re.finditer(r"aisc\s*3(41|60|58)", c, _re.I)]
+    if any(m.group(1) in ("41", "58") or _cfs_mem.search(c[max(0, m.start() - 80):m.end() + 80]) for c, m in _hot):
         flags.append("cites AISC 341/360/358 for CFS members or systems — check that the AISI standards govern")
     if _re.search(r"\bs\s*(110|213|214)\b", _ct, _re.I):
         flags.append("cites retired S110/S213/S214 (merged into S400/S240) — staleness tell")
@@ -3552,8 +3613,9 @@ def _cfs_building_rows(cfg, res, pkg):
             _ft(cfg.get("spacing_ft")), _ft(cfg.get("length_ft")) if cfg.get("length_ft") else "not stated")])
         rows.append(["Base fixity", _pt(cfg.get("base", "pinned"))])
         if str(cfg.get("structure_kind", "")).lower() in ("purlin", "component"):
-            rows.append(["Frame members", "existing frames, not in the scope of this design (the analysis outline uses a "
-                                          "stiffness stand-in for them)"])
+            rows.append(["Frame members", "existing frames, not in the scope of this design (not analysed here; the "
+                                          "purlin and girt reactions are handed to the engineer of record of the "
+                                          "frames)"])
         else:
             rows.append(["Frame members", "columns %s; rafters %s" % (_pt(cfg.get("col_section")),
                                                                      _pt(cfg.get("raf_section")))])
@@ -3673,6 +3735,17 @@ def _cfs_governing_hazard(pkg):
                      for d, c in sorted(cnt.items()))
 
 
+# seismic-weight items of cfs_engine.story_weight (ASCE 7-22 12.7.2) as printed by level
+_W_ITEM_LABEL = {"dead": "dead", "partitions": "partitions", "cladding": "cladding", "snow": "roof snow",
+                 "storage": "storage", "equipment_bulk": "rooftop and suspended equipment"}
+
+
+def _w_item_label(t):
+    """Readable name of a seismic-weight breakdown item; a key the engine does not know is spelled
+    out with spaces for underscores."""
+    return _W_ITEM_LABEL.get(str(t)) or _html.escape(str(t).replace("_", " "))
+
+
 def _cfs_basis_rows(cfg, res, pkg):
     """Seismic design and analysis basis: Ie, site class, S_DS/S_D1, SDC (Tables 11.6-1/-2), the
     SFRS R/Cd/Omega0 (portal frames too), rho, height limit, ELF, seismic weight by level,
@@ -3747,7 +3820,7 @@ def _cfs_basis_rows(cfg, res, pkg):
         for k, bd in sorted(wbl.items(), key=lambda kv: int(kv[0])):
             if not isinstance(bd, dict):
                 continue
-            items = ", ".join("%s %s" % (_html.escape(str(t)), _num_or(v, "%.1f")) for t, v in bd.items()
+            items = ", ".join("%s %s" % (_w_item_label(t), _num_or(v, "%.1f")) for t, v in bd.items()
                               if t not in ("items_1_3_5_6_share", "exception_a_applied"))
             extra = ""
             if bd.get("items_1_3_5_6_share"):
@@ -3760,7 +3833,8 @@ def _cfs_basis_rows(cfg, res, pkg):
     if isinstance(ebd, dict) and ebd:
         rows.append(["ELF per direction (&sect;12.2.2)", "; ".join(
             "%s: %s, V = %s kip, R/C<sub>d</sub>/&Omega;<sub>0</sub> = %s/%s/%s" % (
-                _html.escape(str(d)), _pt(v.get("system", "")), _num_or(v.get("V_kip", v.get("V")), "%.1f"),
+                _html.escape(str(d)), _pt(_SYS_SHORT.get(v.get("system"), v.get("system", ""))),
+                _num_or(v.get("V_kip", v.get("V")), "%.1f"),
                 _cn(v.get("R")), _cn(v.get("Cd")), _cn(v.get("Om0"))) for d, v in ebd.items()
             if isinstance(v, dict))])
     if pkg.get("L_factor_basis"):
@@ -3804,10 +3878,11 @@ def _cfs_basis_rows(cfg, res, pkg):
                      "where 0.10 &lt; &theta; &le; &theta;<sub>max</sub> (&sect;12.8.7)" % " / ".join(meth)])
     th = _find_theta(pkg)
     if th:
+        _tw = _theta_where(th[2])
         rows.append(["P-&Delta; stability coefficient &theta; (&sect;12.8.7)",
-                     "&theta;<sub>max,found</sub> = %.3f%s (%s)" % (
+                     "&theta;<sub>max,found</sub> = %.3f%s%s" % (
                          th[0], (" vs &theta;<sub>max</sub> = %s" % _cn(_fnum(th[1]))) if th[1] is not None else "",
-                         _pt(th[2]))])
+                         (" (%s)" % _pt(_tw)) if _tw else "")])
     ca = _find_key(pkg, ("Ca", "Ca_effective", "type_II_adjustment"))
     if ca is not None:
         rows.append(["Type II adjustment C<sub>a</sub>", _cn(ca) if not isinstance(ca, str) else _pt(ca)])
@@ -3920,7 +3995,9 @@ def _cfs_snow_rows(cfg, pkg):
 
 
 def _cfs_gravity_rows(cfg, pkg):
+    import cfs_pipeline as _CP
     portal = _cfs_is_portal(cfg)
+    rain = _CP.has_rain_basis(cfg)            # the same test decides the combinations-note pointer
 
     def psf(k, label, ns="<b>not stated</b>"):
         v = cfg.get(k)
@@ -3939,17 +4016,17 @@ def _cfs_gravity_rows(cfg, pkg):
             rows.append(["Frame self-weight", "%s kip per frame (included by the analysis)" % _cn(_fnum(fw))])
         if cfg.get("point_loads") or cfg.get("crane"):
             rows.append(["Point / crane loads", "as declared (Section 3)"])
-        if cfg.get("rain") is not None or cfg.get("rain_basis"):
+        if rain:
             rows.append(psf("rain", "Rain load R (ASCE 7-22 &sect;8.2, Eq. 8.2-1)", ns="see basis") if cfg.get("rain") is not None
                         else ["Rain load R (ASCE 7-22 &sect;8.2, Eq. 8.2-1)", _pt(cfg["rain_basis"])])
         return rows
     rows = [psf("D_floor", "Floor dead load"), psf("D_roof", "Roof dead load"),
-            psf("clad", "Exterior cladding (per unit wall area)"),
+            psf("clad", cfg.get("clad_label") or "Exterior cladding (per unit wall area)"),
             psf("partition_psf", "Partitions (&sect;4.3.2, live load in Ch. 4; in W per &sect;12.7.2)"),
             psf("L_floor", "Floor live load L<sub>o</sub> (Table 4.3-1)"),
             psf("Lr", "Roof live load L<sub>r</sub> (Table 4.3-1)")]
     rows.append(psf("collateral", "Collateral load"))
-    if cfg.get("rain") is not None or cfg.get("rain_basis"):
+    if rain:
         rows.append(psf("rain", "Rain load R (ASCE 7-22 &sect;8.2, Eq. 8.2-1)", ns="see basis") if cfg.get("rain") is not None
                     else ["Rain load R (ASCE 7-22 &sect;8.2, Eq. 8.2-1)", _pt(cfg["rain_basis"])])
     if cfg.get("storage_levels") or cfg.get("storage"):
@@ -4129,8 +4206,12 @@ def _cfs_combos_section(cfg, res, pkg):
     if combos:
         h += _table(["Combination", "Use"], [[_pt(c.get("label")), _pt(c.get("role") or "strength")]
                                              for c in combos])
-    if pkg.get("combos_note"):
-        h += "<p class='tnote'>%s</p>" % _pt(pkg.get("combos_note"))
+    note = pkg.get("combos_note")
+    if note:
+        import cfs_pipeline as _CP
+        if isinstance(note, str) and not _CP.has_rain_basis(cfg):   # no rain row in the loads table
+            note = note.replace(_CP.RAIN_BASIS_REF, "")
+        h += "<p class='tnote'>%s</p>" % _pt(note)
     return h
 
 
@@ -4244,8 +4325,8 @@ def _cfs_custom_model(cfg, pkg):
     (pkg['design_model'] = {'type': 'custom'|'hand', 'description': ...}, or custom_model /
     hand_model / analysis_basis.custom_model)."""
     if str((cfg or {}).get("structure_kind")) == "component" or (pkg or {}).get("component_mode"):
-        return True, ("existing frame: the frame shown is an outline of the existing shell for the figures "
-                      "only; the new components are designed from the schedules below")
+        return True, ("existing frames, not analysed here: the new components are designed from the "
+                      "schedules below")
     for k in ("design_model", "custom_model", "hand_model", "analysis_model"):
         v = (pkg or {}).get(k)
         if isinstance(v, dict):
@@ -4284,6 +4365,21 @@ def _same(a, b, tol=0.02):
     return abs(a - b) <= max(1e-9, tol * max(abs(a), abs(b)))
 
 
+_LEGACY_ENCLOSURE_RX = re.compile(r"\benclosure (enclosed|partially_enclosed|partially_open|open) "
+                                  r"\(Table 26\.13-1 GCpi = (\d+(?:\.\d+)?)\)")
+
+
+def _wind_basis_text(s):
+    """The frame analysis' MWFRS basis sentence; a package written before the enclosure wording was
+    made generic ('enclosure partially_enclosed (Table 26.13-1 GCpi = 0.55)', 'NOT in qh') prints
+    as the analysis writes it now ('partially enclosed building (Table 26.13-1 GCpi = ±0.55)')."""
+    if not isinstance(s, str):
+        return s
+    import cfs_frame as _CF
+    s = _LEGACY_ENCLOSURE_RX.sub(lambda m: _CF.enclosure_phrase(m.group(1), float(m.group(2))), s)
+    return s.replace("pressure equation, NOT in qh", "pressure equation, not in qh")
+
+
 def _cfs_portal_loads(cfg, res, pkg):
     """Section 3 of the portal report: the frame loads (wind pressures for both internal-pressure
     cases, seismic per frame, load cases); load values are in the design basis."""
@@ -4292,8 +4388,8 @@ def _cfs_portal_loads(cfg, res, pkg):
     rows = [["Frame tributary width", _ft(cfg.get("spacing_ft"))]]
     wb = pkg.get("wind_basis") or res.get("wind_basis") or {}
     if wb.get("basis"):
-        rows.append(["MWFRS wind basis", _pt(wb.get("basis")) + (" (q<sub>h</sub> = %s psf)" % _cn(_fnum(wb.get("qh_psf")))
-                                                                  if wb.get("qh_psf") is not None else "")])
+        rows.append(["MWFRS wind basis", _pt(_wind_basis_text(wb.get("basis")))
+                     + (" (q<sub>h</sub> = %s psf)" % _cn(_fnum(wb.get("qh_psf"))) if wb.get("qh_psf") is not None else "")])
     se = pkg.get("seismic") or res.get("seismic") or {}
     if s.get("W_frame_kip") is not None or se:
         R, Cd, Om0, note = _cfs_factors(cfg)
@@ -4453,8 +4549,7 @@ def _cfs_portal_design_section(pkg, cfg=None, res=None, name=None):
         # the n.r. legend only where an n.r. cell is printed in this section
         _nr = any(re.search(r">\s*n\.r\.\s*<", x or "") for x in h)
         h[_legend_at] = ("<p><b>Design model:</b> %s. Member, connection and base demands below are the design "
-                         "model's values. The outline frame (used for the 3D model view and load bookkeeping) is "
-                         "not used for design%s.</p>"
+                         "model's values. The frame drawn in the 3D model view is not used for design%s.</p>"
                          % (_pt(cdesc) or "custom frame model",
                             "; its values are not reported here (n.r. = not reported by the design model)" if _nr
                             else " and its values are not printed"))
@@ -4463,7 +4558,7 @@ def _cfs_portal_design_section(pkg, cfg=None, res=None, name=None):
 
 def _cfs_schedule_table(s):
     rows = s.get("rows") or []
-    title = str(s.get("schedule") or s.get("id", "")).replace("sched-", "").replace("_", " ").capitalize()
+    title = _cap1(str(s.get("schedule") or s.get("id", "")).replace("sched-", "").replace("_", " "))
     h = ["<h3>%s schedule</h3>" % _pt(title)]
     if s.get("waived"):
         h.append("<p>%s</p>" % _waived_cell(s))
@@ -4496,6 +4591,27 @@ def _cfs_schedule_table(s):
     return "".join(h) if (rows or meta or s.get("waived")) else ""
 
 
+# readable names of the drift-table checks the frame analysis writes (the package keeps the key)
+_DRIFT_CHECK_LABEL = {"stability_theta": "Stability coefficient &theta; (&sect;12.8.7)"}
+
+
+def _drift_check_label(name):
+    """Row label of a drift-table check: 'stability_theta' -> 'Stability coefficient θ (§12.8.7)',
+    any other name with its underscores spelled as spaces, first letter capitalised."""
+    s = str(name or "")
+    return _DRIFT_CHECK_LABEL.get(s) or _cap1(_pt(s.replace("_", " ")))
+
+
+def _theta_where(where):
+    """Location of the largest theta for the design-basis row, without repeating the row label
+    (the stability_theta check itself, or a check named 'stability coefficient theta, ...')."""
+    s = str(where or "").strip()
+    if s in _DRIFT_CHECK_LABEL:
+        return ""
+    return re.sub(r"^(?:P-?Delta\s+)?stability\s+coefficient(?:\s+(?:theta|θ))?\s*[,;:]?\s*", "", s,
+                  flags=re.I).strip()
+
+
 def _cfs_serviceability_table(pkg, custom=False, seedd=None):
     dt = [d for d in pkg.get("drift_table") or [] if isinstance(d, dict) and d.get("check")]
     if not dt:
@@ -4506,8 +4622,8 @@ def _cfs_serviceability_table(pkg, custom=False, seedd=None):
         sd = (seedd or {}).get(d.get("check")) or {}
         v = d.get("value_in", d.get("value"))
         if custom and sd and _same(v, sd.get("value_in", sd.get("value"))):
-            r[1] = "%s <i>(outline frame of the 3D view, not used for design)</i>" % r[1]
-        r[0] = _pt(str(d.get("check")).replace("_", " "))
+            r[1] = "%s <i>(frame drawn in the 3D model view, not used for design)</i>" % r[1]
+        r[0] = _drift_check_label(d.get("check"))
         rows.append(r)
     return ("<h3>Serviceability and seismic drift</h3>"
             + _table(["Check", "Value", "Criterion / limit", "D/C", "Status"], rows))
@@ -4667,29 +4783,108 @@ _SYM = {"pu": "P<sub>u</sub>", "pr": "P<sub>r</sub>", "mu": "M<sub>u</sub>", "mr
         "phivn": "&phi;V<sub>n</sub>", "phitn": "&phi;T<sub>n</sub>", "phirn": "&phi;R<sub>n</sub>",
         "phipne": "&phi;P<sub>ne</sub>", "phipnd": "&phi;P<sub>nd</sub>", "phipnl": "&phi;P<sub>nl</sub>",
         "phimnd": "&phi;M<sub>nd</sub>", "phimne": "&phi;M<sub>ne</sub>", "phimnl": "&phi;M<sub>nl</sub>",
-        "pc": "P<sub>c</sub>"}
+        "pc": "P<sub>c</sub>", "ru": "R<sub>u</sub>",
+        # anchors and concrete (ACI 318-19 Ch. 17 / 22.8), H2 / H3 strengths, expected strengths
+        "phivsa": "&phi;V<sub>sa</sub>", "phivcb": "&phi;V<sub>cb</sub>", "phivcbg": "&phi;V<sub>cbg</sub>",
+        "phivcp": "&phi;V<sub>cp</sub>", "phivcpg": "&phi;V<sub>cpg</sub>", "phinsa": "&phi;N<sub>sa</sub>",
+        "phincb": "&phi;N<sub>cb</sub>", "phincbg": "&phi;N<sub>cbg</sub>", "phinpn": "&phi;N<sub>pn</sub>",
+        "phinn": "&phi;N<sub>n</sub>", "phipp": "&phi;P<sub>p</sub>", "phibn": "&phi;B<sub>n</sub>",
+        "phimnlo": "&phi;M<sub>nlo</sub>", "phipnc": "&phi;P<sub>n</sub>", "phimnc": "&phi;M<sub>n</sub>",
+        "rtanfu": "R<sub>t</sub>A<sub>n</sub>F<sub>u</sub>", "ryagfy": "R<sub>y</sub>A<sub>g</sub>F<sub>y</sub>",
+        "pn": "P<sub>n</sub>", "ms": "M<sub>s</sub>", "phiv": "&phi;v<sub>n</sub>", "v": "v",
+        "interaction": "interaction", "limit": "limit", "theta": "&theta;", "thetamax": "&theta;<sub>max</sub>",
+        "defl": "&Delta;", "delta": "&Delta;", "hoverw": "h/w", "ratio": "ratio", "provided": "provided",
+        "required": "required"}
+# Demand / strength fields the report prints in addition to consistency.DEMAND_KEYS / CAPACITY_KEYS
+# (those exact sets drive the D/C reconciliation gate and stay as they are). Second tier: fields
+# printed only where a side has no first-tier field -- unitless pairs (interaction / limit,
+# theta / theta_max, deflection / limit, ratio / limit, provided / required), the nominal web
+# crippling P_n of an H3 interaction, the SBMF slip moment M_s and unit shears v / phi v_n.
+_CHK_DEMAND_X = frozenset(("ryagfy",))
+_CHK_CAPACITY_X = frozenset(("pc", "phivsa", "phivcb", "phivcbg", "phivcp", "phivcpg", "phinsa", "phincb",
+                             "phincbg", "phinpn", "phinn", "phipp", "phibn", "phimnlo", "phipnc", "phimnc",
+                             "rtanfu"))
+_CHK_DEMAND_2 = frozenset(("interaction", "theta", "defl", "delta", "hoverw", "ratio", "v"))
+_CHK_CAPACITY_2 = frozenset(("limit", "thetamax", "pn", "ms", "provided", "phiv"))
+_CHK_UNITLESS = frozenset(("interaction", "limit", "theta", "thetamax", "hoverw", "ratio", "provided", "required"))
+
+
+def _chk_norm(k):
+    """consistency._norm_key, plus the per-length unit suffixes (Pu_kip_per_ft -> pu)."""
+    import consistency as _CC
+    k = str(k)
+    for suf in ("_kip_per_ft", "_kip_per_in", "_kipin_per_rad", "_kipin_rad"):
+        if k.lower().endswith(suf) and len(k) > len(suf):
+            k = k[:-len(suf)]
+            break
+    return _CC._norm_key(k)
 
 
 def _check_dem_cap(c):
     """(demand cell, strength cell) of one limit-state check: its explicit demand / capacity
-    fields, else every demand-type and strength-type key it carries (P_u, phiP_n, ...)."""
+    fields, else every demand-type and strength-type key it carries (P_u, phiP_n, ...), each as
+    'symbol = value unit' (the unit once, from the key suffix; a strength key without a suffix
+    takes the unit of the demand of the same quantity, phiPn_c beside Pu_kip)."""
     import consistency as _CC
+    dem1, cap1 = _CC.DEMAND_KEYS | _CHK_DEMAND_X, _CC.CAPACITY_KEYS | _CHK_CAPACITY_X
+    every = dem1 | cap1 | _CHK_DEMAND_2 | _CHK_CAPACITY_2
+    items = [(k, _chk_norm(k), _fnum(v)) for k, v in c.items() if _fnum(v) is not None]
+
+    def fam(nk):                               # quantity letter: P, M, V, T, N, R (phi stripped)
+        f = nk[3:4] if nk.startswith("phi") else nk[:1]
+        return f if f and f in "pmvtnr" and nk not in _CHK_UNITLESS else ""
+    units = {}
+    for k, nk, _v in items:
+        u = _hk_unit(k)[1]
+        if u and nk in every and fam(nk):
+            units.setdefault(fam(nk), u)
 
     def coll(keys):
         out = []
-        for k, v in c.items():
-            nk = _CC._norm_key(k)
-            if nk in keys and _fnum(v) is not None:
-                unit = next((u for suf, u in _HK_UNITS if str(k).lower().endswith(suf)), "")
-                out.append("%s = %s%s" % (_SYM.get(nk, _hk(k)), _cn(_fnum(v)), (" " + unit) if unit else ""))
-        return "; ".join(out) or "&mdash;"
+        for k, nk, v in items:
+            if nk not in keys:
+                continue
+            base, unit = _hk_unit(k)
+            if not unit and fam(nk):
+                unit = units.get(fam(nk), "")
+            val = "%s%s" % (_cn(v), (" " + unit) if unit else "")
+            if nk in ("demand", "capacity"):
+                out.append((nk, v, val))            # the column says which it is
+            else:
+                out.append((nk, v, "%s = %s" % (_SYM.get(nk) or _html.escape(base.replace("_", " ")), val)))
+        return out
 
-    def cell(v, keys):
-        if v is None:
-            return coll(keys)
-        return _pt(v) if isinstance(v, str) else _cn(v)
-    return (cell(c.get("demand_kipin", c.get("demand_kip", c.get("demand"))), _CC.DEMAND_KEYS),
-            cell(c.get("capacity_kipin", c.get("capacity_kip", c.get("capacity"))), _CC.CAPACITY_KEYS | {"pc"}))
+    def side(v, keys, unit, keys2):
+        """[tier, entries, text]: tier 'x' = the explicit field, 1, 2, or None (nothing to print)."""
+        if v is not None:
+            if isinstance(v, str):
+                return ["x", [], _pt(v)]
+            return ["x", [], "%s%s" % (_cn(v), (" " + unit) if unit and _fnum(v) is not None else "")]
+        for tier, ks in ((1, keys), (2, keys2)):
+            got = coll(ks)
+            if got:
+                return [tier, got, "; ".join(x[2] for x in got)]
+        return [None, [], "&mdash;"]
+    dk = next((k for k in ("demand_kipin", "demand_kip", "demand") if c.get(k) is not None), None)
+    ck = next((k for k in ("capacity_kipin", "capacity_kip", "capacity") if c.get(k) is not None), None)
+    _u = {"demand_kipin": "kip-in.", "capacity_kipin": "kip-in.", "demand_kip": "kip", "capacity_kip": "kip"}
+    D = side(c.get(dk) if dk else None, dem1, _u.get(dk), _CHK_DEMAND_2)
+    S = side(c.get(ck) if ck else None, cap1, _u.get(ck), _CHK_CAPACITY_2)
+    # a unitless second-tier value (limit, theta_max, interaction) is printed against its unitless
+    # counterpart, never beside the forces of the other side
+    for a, b, keys2 in ((D, S, _CHK_DEMAND_2), (S, D, _CHK_CAPACITY_2)):
+        if a[0] == 1 and b[0] == 2 and all(x[0] in _CHK_UNITLESS for x in b[1]):
+            alt = coll(keys2)
+            if alt and all(x[0] in _CHK_UNITLESS for x in alt):
+                a[:] = [2, alt, "; ".join(x[2] for x in alt)]
+    # a second-tier pair of single values is printed the other way round when only that reading
+    # gives the reported D/C (ratio >= limit: D/C = limit / ratio)
+    dc = _fnum(c.get("DC"))
+    if D[0] == 2 and S[0] == 2 and len(D[1]) == 1 and len(S[1]) == 1 and dc:
+        a, b = D[1][0][1], S[1][0][1]
+        if a and b and abs(a / b - dc) > 0.02 * dc and abs(b / a - dc) <= 0.02 * dc:
+            D, S = S, D
+    return D[2], S[2]
 
 
 def _cfs_has_type_ii(cfg, pkg):
@@ -4893,7 +5088,8 @@ def _cfs_block_html(v, depth=0):
 
 
 # keys rendered by the chapters above (never repeated in the supplementary records)
-_CFS_PORTAL_SHOWN = {"members", "connections", "anchorage", "schedules", "drift_table",
+_CFS_PORTAL_SHOWN = {"members", "connections", "anchorage", "schedules", "drift_table", "analysis_screen_evaluation",
+                     "system_by_direction",
                      "torsion_companion", "sections", "wind_basis", "combos",
                      "combos_note", "preflight_warnings", "kind", "system",
                      "structure_kind", "analysis_basis", "building", "code", "notes",
@@ -4929,7 +5125,7 @@ def _cfs_extra_blocks(pkg, num=6):
     h = ["<h2>%d. Supplementary design records</h2>" % num]
     for k in keys:
         v = pkg[k]
-        h.append("<h3>%s</h3>" % _hk(k).capitalize())
+        h.append("<h3>%s</h3>" % _cap1(_hk(k)))
         h.append(_cfs_block_html(v) if isinstance(v, (dict, list)) else
                  "<p>%s</p>" % (_pt(v) if isinstance(v, str) else _cn(v)))
     return "".join(h)
@@ -5097,7 +5293,7 @@ def _cfs_qa_section(name, root, cfg, res, pkg, annex=None, num=7):
         if isinstance(v, dict) and k not in _CFS_HARNESS_KEYS:
             ver = v.get("verdict") or v.get("result")
             if isinstance(ver, str) and re.match(r"(pass|fail|ok|ng)\b", ver.strip(), re.I):
-                mv.append(["%s (module verdict)" % _hk(k).capitalize(), _pt(ver)])
+                mv.append(["%s (module verdict)" % _cap1(_hk(k)), _pt(ver)])
     try:
         wng = _CC.waived_ng_items(pkg)
     except Exception:
@@ -5141,7 +5337,7 @@ def _cfs_write_qa_annex(name, cfg, res, pkg, root, qa_num=7):
     if blocks:
         parts.append("<h2>Design-process records</h2>")
         for k, v in blocks.items():
-            parts.append("<h3>%s</h3>" % _html.escape(k.replace("_", " ").capitalize()))
+            parts.append("<h3>%s</h3>" % _cap1(_hk(k)))
             parts.append("<pre>%s</pre>" % _html.escape(v if isinstance(v, str) else json.dumps(v, indent=1)[:20000]))
     notes = list((pkg or {}).get("preflight_warnings") or []) + list((res or {}).get("preflight_warnings") or [])
     gate = []
@@ -5153,6 +5349,9 @@ def _cfs_write_qa_annex(name, cfg, res, pkg, root, qa_num=7):
                      "the evaluation recorded in the calculation package follows each group.</p>")
         if notes:
             parts.append("<ul>%s</ul>" % "".join("<li>%s</li>" % _html.escape(str(n)) for n in dict.fromkeys(map(str, notes))))
+            rsn = (pkg or {}).get("analysis_screen_evaluation")
+            if rsn:
+                parts.append("<p><b>Evaluation:</b> %s</p>" % _pt(rsn))
         if gate:
             parts.append("<h3>Wall-line forces: semi-rigid / rigid model vs tributary distribution</h3><ul>%s</ul>" % "".join(
                 "<li>%s</li>" % _html.escape(str(n)) for n in dict.fromkeys(map(str, gate))))
@@ -5230,6 +5429,8 @@ def _cfs_appendix_calcs(pkg, cfg=None, res=None, name=None):
                     continue                            # strap bay: no sheathing
                 if k == "DC" and _fnum(v) is not None:
                     sv = "<b>%.3f</b>" % float(v)
+                elif k == "system" and isinstance(v, str):
+                    sv = _pt(_SYS_SHORT.get(v, v))
                 elif isinstance(v, str):
                     sv = _pt(v)
                 elif isinstance(v, dict) and k.endswith(("_by_story", "_by_level", "_by_story_kip")):
@@ -5399,12 +5600,34 @@ def _chapter_guard(parts, label, fn, *a):
                      % (_html.escape(label), _html.escape(type(ex).__name__), _html.escape(str(ex))))
 
 
+def _cfs_quoted_as_written(pkg, cfg):
+    """A package written before the diaphragm note quoted the material as written carries the
+    cfg's diaphragm_material lowercased (12.3.1 idealization note, the Omega_0 basis built on it,
+    the screening warnings): the report prints it as the cfg writes it. Returns a copy with the
+    text restored, or the package itself where nothing is lowercased (the caller's package and the
+    file on disk are never changed)."""
+    mat = str((cfg or {}).get("diaphragm_material") or "").strip()
+    low = mat.lower()
+    if not mat or low == mat:
+        return pkg
+
+    def walk(o):
+        if isinstance(o, str):
+            return o.replace(low, mat) if low in o else o
+        if isinstance(o, dict):
+            return {k: walk(v) for k, v in o.items()}
+        if isinstance(o, list):
+            return [walk(v) for v in o]
+        return o
+    return walk(pkg)
+
+
 def build_report_cfs(name, cfg, res, pkg, root, pkg_name="calc_package_cfs.json"):
     """The CFS-path report (wall OR portal), pure python -- no openseespy needed. Renders the
     engine results and the package with the designed values; publication mode by default (the
     design-process records go to qa_annex.html). Re-render after filling with
     report.build_report(name)."""
-    pkg = pkg if isinstance(pkg, dict) else {}
+    pkg = _cfs_quoted_as_written(pkg if isinstance(pkg, dict) else {}, cfg)
     _CFS_PUB[0] = _cfs_publish(cfg, pkg)
     portal = _cfs_is_portal(cfg)
     os.makedirs(root, exist_ok=True)
