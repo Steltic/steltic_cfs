@@ -154,7 +154,7 @@ def test_the_load_case_legend_uses_the_notation_of_the_table():
     ("Omega0_V_ELF_kip", "&Omega;<sub>0</sub>V<sub>ELF</sub> (kip)"),
     ("Omega_E_range", "&Omega;<sub>E</sub> range"),
     ("Omega0", "&Omega;<sub>0</sub>"),
-    ("phiPn_c", "&phi;P<sub>n</sub>"),
+    ("phiPn_c", "&phi;P<sub>n</sub> (kip)"),
     ("beam_phiMn_kipin", "beam &phi;M<sub>n</sub> (kip-in.)"),
     ("phivn_plf", "&phi;v<sub>n</sub> (plf)"),
     ("RyFyAg_kip", "R<sub>y</sub>F<sub>y</sub>A<sub>g</sub> (kip)"),
@@ -345,3 +345,7 @@ def test_appendix_titles_portal_elements_and_the_viewer_lookup_is_unchanged():
     wpkg = CP.build_package("w", wcfg, CE.run(wcfg))
     wid = wpkg["wall_lines"][0]["id"]
     assert "<h4>%s</h4>" % wid in RPT._cfs_appendix_calcs(wpkg, wcfg, {}, "w")
+
+
+def test_stud_check_strength_labels_carry_units():
+    assert RPT._HK["phiPn_c"] == "&phi;P<sub>n</sub> (kip)" and RPT._HK["phiMn_c"] == "&phi;M<sub>n</sub> (kip-in.)"
