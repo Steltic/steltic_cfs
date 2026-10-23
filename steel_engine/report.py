@@ -2716,6 +2716,10 @@ def _grounding_check(cfg, name, pkg):
             mm = _re.search(r"\[([A-Za-z0-9_]+)\]", r.get("detail", ""))
             if mm: col[mm.group(1)] = col.get(mm.group(1), 0) + 1
     def n(c): return col.get(c, 0)
+
+    def nl(c):                                       # "1 provision look-up" / "3 provision look-ups"
+        k = n(c)
+        return "%d provision look-up%s" % (k, "" if k == 1 else "s")
     # ALSO credit grounding from the CITED CLAUSES in calc_package.json (not the activity log alone), so a
     # filled, RAG-grounded package is recognised even if the auto-logger did not record the queries (P5).
     def _cited(obj):
@@ -2752,14 +2756,14 @@ def _grounding_check(cfg, name, pkg):
                      ev, ("&mdash;" if not required else ("grounded" if ok else "<b>MISSING</b>"))])
     row("AISI S100 &mdash; member/connection limit states (EWM)", True,
         n("engineering_standards_S100") > 0 or cite_s100,
-        f"{n('engineering_standards_S100')} provision look-ups" + (" + cited in the calculation package" if cite_s100 else ""))
+        nl("engineering_standards_S100") + (" + cited in the calculation package" if cite_s100 else ""))
     row("AISI S240 &mdash; framing rules (studs/track/built-up/bracing/trusses)", is_wall,
         n("engineering_standards_S240") > 0 or cite_s240,
-        f"{n('engineering_standards_S240')} provision look-ups" + (" + cited in the calculation package" if cite_s240 else ""),
+        nl("engineering_standards_S240") + (" + cited in the calculation package" if cite_s240 else ""),
         na="n/a (no light-frame walls)")
     row("AISI S400 &mdash; seismic wall/strap/SBMF capacities + capacity design",
         needs_s400, n("engineering_standards_S400") > 0 or has_cap or cite_s400,
-        f"{n('engineering_standards_S400')} provision look-ups" + (" + capacity-design record" if has_cap else "")
+        nl("engineering_standards_S400") + (" + capacity-design record" if has_cap else "")
         + (" + cited in the calculation package" if cite_s400 else ""),
         na="n/a (no S400 seismic system, or R = 3 in SDC B/C per S400 A1.2.3)")
     row("Connections verified (S100 Ch. J / fastener schedules)", True, has_conn or wall_sched,
@@ -3567,7 +3571,12 @@ def _cfs_codes_rows(cfg, pkg):
     if not portal or pkg.get("studs") or pkg.get("wall_lines"):
         rows.append(["AISI S240-20", "cold-formed steel structural framing (studs, track, joists, "
                                      "headers, built-up members, bracing)"])
-    rows.append(["AISI S400-20", _cfs_s400_status(cfg, pkg)])
+    elif re.search(r"\bs\s*240\b", blob):           # a portal package that designs framing to S240 (trusses, studs)
+        rows.append(["AISI S240-20", "cold-formed steel structural framing designed in this package (studs, "
+                                     "track, trusses, bracing)"])
+    scope = (pkg or {}).get("s400_scope")           # the designer's statement of every S400 section used
+    rows.append(["AISI S400-20", _pt(scope) if isinstance(scope, str) and scope.strip()
+                 else _cfs_s400_status(cfg, pkg)])
     rows.append(["ACI 318-19 Ch. 17", "anchorage to concrete (anchor design forces handed to the "
                                       "foundation design)"])
     if re.search(r"\bweld", blob):
@@ -5141,7 +5150,7 @@ _CFS_PORTAL_SHOWN = {"members", "connections", "anchorage", "schedules", "drift_
                      "design_agent", "report_mode", "materials", "occupancy", "project_title",
                      "detailing", "seismic", "sbmf", "crane", "design_model", "custom_model",
                      "hand_model", "analysis_model", "component_mode", "elf_spot_check",
-                     "elf_self_check", "self_check"}
+                     "elf_self_check", "self_check", "s400_scope"}
 # design-process records: QA annex only (never the report body in publication mode)
 _CFS_HARNESS_KEYS = {"rag_grounding", "grounding", "corpus_defects", "rag_quality", "solution_notes",
                      "solution_note", "issues", "issues_log", "brief_notes", "brief", "citation_red_flags",
@@ -5183,7 +5192,7 @@ def _cfs_framework_checks_html(pkg):
                  "T<sub>upper</sub>; (d) upper-portion reactions amplified by "
                  "(R/&rho;)<sub>upper</sub>/(R/&rho;)<sub>lower</sub> &ge; 1.0 &mdash; %s</p>"
                  % _pt(ts.get("amplification_basis"))
-                 + _table(["Dir", "K<sub>upper</sub> (kip/in.)", "K<sub>lower</sub>", "ratio",
+                 + _table(["Dir", "K<sub>upper</sub> (kip/in.)", "K<sub>lower</sub> (kip/in.)", "ratio",
                            "T<sub>upper</sub> (s)", "T<sub>entire</sub> (s)", "T ratio", "Status",
                            "Notes"], rows))
         rx = ts.get("reactions_to_podium") or []
@@ -5355,10 +5364,26 @@ def _cfs_qa_section(name, root, cfg, res, pkg, annex=None, num=7):
         h.append("<h3>%d.3 Self-consistency result</h3><p><span class='pass'>PASS</span> &mdash; every check "
                  "listed in %d.1 passed for this package.</p>" % (num, num))
     if annex:
-        h.append("<p class='tnote'>Design-process records (source verification of the cited standards, "
-                 "analysis screening notes and the design log) are in the QA annex: "
-                 "<a href='%s'>%s</a>.</p>" % (annex, annex))
+        h.append("<p class='tnote'>Design-process records (source verification of the cited standards, %sthe "
+                 "design log) are in the QA annex: <a href='%s'>%s</a>.</p>"
+                 % ("analysis screening notes and " if _cfs_annex_screens(res, pkg) else "", annex, annex))
     return "".join(h)
+
+
+def _cfs_annex_screen_lists(res, pkg):
+    """(screening notes, wall-line gate flags) that the QA annex prints under "Analysis screening notes"."""
+    notes = list((pkg or {}).get("preflight_warnings") or []) + list((res or {}).get("preflight_warnings") or [])
+    gate = []
+    for dd in ((res or {}).get("directions") or {}).values():
+        gate += ["model vs tributary distribution: %s" % re.sub(r"\s*--\s*justify\b.*$", "", str(f))
+                 for f in dd.get("gate_flags", [])]
+    return notes, gate
+
+
+def _cfs_annex_screens(res, pkg):
+    """True when the QA annex has an "Analysis screening notes" section (the Section 7 pointer names it only then)."""
+    notes, gate = _cfs_annex_screen_lists(res, pkg)
+    return bool(notes or gate)
 
 
 def _cfs_write_qa_annex(name, cfg, res, pkg, root, qa_num=7):
@@ -5380,11 +5405,7 @@ def _cfs_write_qa_annex(name, cfg, res, pkg, root, qa_num=7):
         for k, v in blocks.items():
             parts.append("<h3>%s</h3>" % _cap1(_hk(k)))
             parts.append("<pre>%s</pre>" % _html.escape(v if isinstance(v, str) else json.dumps(v, indent=1)[:20000]))
-    notes = list((pkg or {}).get("preflight_warnings") or []) + list((res or {}).get("preflight_warnings") or [])
-    gate = []
-    for dd in ((res or {}).get("directions") or {}).values():
-        gate += ["model vs tributary distribution: %s" % re.sub(r"\s*--\s*justify\b.*$", "", str(f))
-                 for f in dd.get("gate_flags", [])]
+    notes, gate = _cfs_annex_screen_lists(res, pkg)
     if notes or gate:
         parts.append("<h2>Analysis screening notes</h2><p>Screens the analysis raises for the engineer to evaluate; "
                      "the evaluation recorded in the calculation package follows each group.</p>")
