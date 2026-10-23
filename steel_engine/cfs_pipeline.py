@@ -30,6 +30,10 @@ import cfs_engine as CE
 
 COMBOS_NOTE = ("ASCE 7-22 2.3 LRFD; seismic cases carry (1.2+0.2SDS)D and 0.9-0.2SDS "
                "counteracting; the net-uplift case 0.9D+1.0W is a required anchorage case")
+# a structure with no wind exposure (no cfg['wind'], e.g. a platform inside an enclosed building) has no wind case
+COMBOS_NOTE_NO_WIND = ("ASCE 7-22 2.3 LRFD; seismic cases carry (1.2+0.2SDS)D and 0.9-0.2SDS "
+                       "counteracting; no wind load acts on the structure (no wind exposure), so there is no "
+                       "0.9D+1.0W case")
 
 # S400-20 Table A3.2-1 expected-strength factors (sheet/strip; Fy < 37 ksi and Fy >= 50 ksi
 # bands -- cfs_systems.ry_rt covers every band)
@@ -705,6 +709,23 @@ def _capacity_stack(cfg, line, dist, om0, OmE=None, Vn=None, Ca=None, Vcum=None)
     return out
 
 
+def _expected_strength_stack(cfg, line, dist, OmE, Vn, Ca=None, base_k=None):
+    """Full expected-strength stack at the base story: T = sum_k Omega_E Vn_k h_k / Ca_k / L, every story at
+    Omega_E Vn with no Omega_0 cap (the 'T at Omega_E Vn' value beside the Omega_0-level stack; T_cd is the
+    per-story chain of _capacity_stack). None where a story of the line has no declared Vn."""
+    M = 0.0
+    for k in sorted(dist, reverse=True):
+        if not line.present(k):
+            continue
+        if Vn.get(k) is None:
+            return None
+        ca = (Ca or {}).get(k, 1.0) or 1.0
+        M += OmE * Vn[k] * cfg["heights_ft"][k - 1] / ca
+    if base_k is None:
+        base_k = min(k for k in dist if line.present(k))
+    return round(M / max(line.length(base_k), 1e-6), 1)
+
+
 def collector_seeds(cfg, res):
     """NUMERIC collector seeds (ASCE 7-22 12.10) per declared collector line.
     Per direction and level: Fx (ELF), Fpx (12.10-1, bounds 12.10-2/-3), and the design basis
@@ -910,7 +931,7 @@ def build_package(name, cfg, res):
     di = diaphragm_idealization(cfg, res)
     pkg = dict(building=name, code="AISI S100-16 (2020) w/S2-20, AISI S240-20, AISI S400-20 -- LRFD; "
                                    "ASCE 7-22",
-               system=sysname, combos_note=COMBOS_NOTE,
+               system=sysname, combos_note=(COMBOS_NOTE if cfg.get("wind") else COMBOS_NOTE_NO_WIND),
                combos=enumerate_combos(cfg),
                L_factor=fL, L_factor_basis=L_basis,
                rho=rho,
@@ -1149,9 +1170,10 @@ def build_package(name, cfg, res):
                 T_om = round(st_om[base_k]["T"], 1)
                 T_cd, st_cd, T_ev = T_om, None, None
                 if Vn and OmE is not None:
+                    # T_cd: per-story chain sum min(Omega0 V, Omega_E Vn) h / L; T_ev: the full Omega_E Vn stack
                     st_cd = _capacity_stack(cfg, _ln, dd["dist"], Om0e, OmE, Vn, Ca, Vcum)
-                    T_ev = round(st_cd[base_k]["T"], 1)
-                    T_cd = min(T_om, T_ev)
+                    T_cd = min(T_om, round(st_cd[base_k]["T"], 1))
+                    T_ev = _expected_strength_stack(cfg, _ln, dd["dist"], OmE, Vn, Ca, base_k)
                 w_bay = _segs[0][0] if _segs else None
                 relief, relief_note = _chord_dead_relief(cfg, _ln, dirn, w_bay)
                 cd_entry = dict(
@@ -1160,9 +1182,10 @@ def build_package(name, cfg, res):
                     Ve_cap_by_story_kip=Ve_cap, T_Om0_stack_kip=T_om,
                     T_OmegaE_Vn_stack_kip=T_ev, T_cd_seed_kip=T_cd,
                     dead_relief_kip_available=relief, dead_relief_basis=relief_note,
-                    basis="T_cd_seed = min(Omega0-level stack, Omega_E*Vn_selected stack%s) "
-                          "per S400 B3.4 capacity design -- relief only as documented"
-                          % ("" if T_ev is not None else " -- NOT evaluated: Vn not declared"))
+                    basis=("T_cd_seed = sum over the stories of min(Omega0 V_ELF, Omega_E*Vn_selected) h / L "
+                           "(per-story chain, S400 B3.4 capacity design; at most the smaller of the two full "
+                           "stacks) -- relief only as documented" if st_cd is not None else
+                           "T_cd_seed = Omega0-level stack -- Omega_E*Vn NOT evaluated: Vn not declared"))
                 if Ca:
                     cd_entry["type_ii_Ca_by_story"] = {k: round(v, 3) for k, v in Ca.items()}
                 if lsysname == "strap_braced" and _segs:
@@ -1176,8 +1199,8 @@ def build_package(name, cfg, res):
                     hd["T_cd_seed_kip"] = T_cd
                 if "capacity_design" in pkg and "lines" in pkg["capacity_design"]:
                     pkg["capacity_design"]["lines"]["%s:%s" % (dirn, lname)] = cd_entry
-                hd["basis"] += ("; CAPACITY DESIGN: final demand = min(Omega0-level, "
-                                "expected-strength Omega_E*Vn stack of the SELECTED assembly) "
+                hd["basis"] += ("; CAPACITY DESIGN: final demand = per-story min(Omega0-level, "
+                                "expected-strength Omega_E*Vn of the SELECTED assembly), stacked "
                                 "= T_cd_seed_kip -- NEVER the raw ELF T_cum/T_bay seed "
                                 "(see capacity_design block)")
                 st_use = st_cd or st_om

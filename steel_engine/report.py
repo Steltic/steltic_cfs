@@ -2111,17 +2111,18 @@ def _cfs_holddown_schedule(pkg, cfg=None):
                      _num_or(cap) if _fnum(cap) is not None else (_pt(cap) or "&mdash;"),
                      _cdc(d.get("DC")), refs.ref(d.get("cited"))])
     cd = _cfs_capacity_design_required(cfg) if cfg else True
+    _nw = bool(cfg) and not cfg.get("wind")        # no wind exposure: no 0.9D+1.0W case
     intro = ("<p>Overturning tension per wall line, accumulated top-down. ELF&middot;&rho; = the "
              "&rho;-amplified ELF stack; T<sub>cd</sub> = the capacity-design tension (expected "
              "strength &Omega;<sub>E</sub>V<sub>n</sub> of the wall, not to exceed the "
-             "&Omega;<sub>0</sub>-level effect; S400 B3.4); wind = 0.9D+1.0W. The <i>design T</i> "
+             "&Omega;<sub>0</sub>-level effect; S400 B3.4); %s. The <i>design T</i> "
              "is the tension the D/C is computed on. Devices resist tension only; beyond the "
              "discrete hold-down range a continuous rod is designed and its elongation enters the "
-             "drift.</p>" if cd else
-             "<p>Overturning tension per wall line, accumulated top-down (ELF&middot;&rho; and "
-             "0.9D+1.0W). Capacity design is not required for this system and SDC (S400 A1.2.3), "
-             "so T<sub>cd</sub> is shown for reference only. The <i>design T</i> is the tension "
-             "the D/C is computed on.</p>")
+             "drift.</p>" % ("no wind case (no wind exposure)" if _nw else "wind = 0.9D+1.0W") if cd else
+             "<p>Overturning tension per wall line, accumulated top-down (%s). Capacity design is not "
+             "required for this system and SDC (S400 A1.2.3), so T<sub>cd</sub> is shown for reference only. "
+             "The <i>design T</i> is the tension the D/C is computed on.</p>"
+             % ("ELF&middot;&rho;; no wind exposure" if _nw else "ELF&middot;&rho; and 0.9D+1.0W"))
     return ("<h3>Hold-down / continuous rod schedule</h3>" + intro
             + _ref_table(["ID", "Dir", "ELF&middot;&rho; T (kip)", "T<sub>cd</sub> (kip)",
                           "Wind T (kip)", "Design T (kip)", "Basis of design T", "Device / rod",
@@ -2165,11 +2166,13 @@ def _cfs_anchorage_schedule(pkg, cfg=None):
                      _cdc_e(a), refs.ref(a.get("cited"))])
     cd = _cfs_capacity_design_required(cfg) if cfg else any(_fnum(a.get("v_cd_seed_plf")) for a in slots)
     intro = ("<p>Anchorage of each wall line at the base story: sill / bottom-track shear anchorage (unit "
-             "shear) and the hold-down anchorage (tension). &rho;-ELF and wind unit shears; "
+             "shear) and the hold-down anchorage (tension). %s; "
              "v<sub>cd</sub> = the line's capacity-design story shear / L (expected strength "
              "&Omega;<sub>E</sub>V<sub>n</sub>, not above the &Omega;<sub>0</sub>-level effect; S400 B3.4). "
              "The <i>design v</i> and <i>design T</i> are the demands the D/C is computed on; concrete "
-             "anchorage to ACI 318-19 Ch. 17.</p>" if cd else
+             "anchorage to ACI 318-19 Ch. 17.</p>" % ("&rho;-ELF unit shears (no wind exposure)"
+                                                      if (cfg and not cfg.get("wind")) else
+                                                      "&rho;-ELF and wind unit shears") if cd else
              "<p>Anchorage of each wall line at the base story (unit shear and hold-down tension). Capacity "
              "design is not required for this system and SDC (S400 A1.2.3).</p>")
     return ("<h3>Anchorage schedule (per wall line)</h3>" + intro
@@ -3963,6 +3966,8 @@ def _cfs_wind_rows(cfg, pkg):
                              _cn(_fnum(wb.get("qh_psf"))), _at, _cn(_fnum(wb.get("qh_Kd_psf"))), _cn(_fnum(wb.get("Kd"))))])
         else:
             rows.append(["Velocity pressure q<sub>h</sub> (Eq. 26.10-1)", "%s psf%s" % (_cn(_fnum(wb.get("qh_psf"))), _at)])
+        if isinstance(cfg.get("wind_h_basis"), str) and cfg["wind_h_basis"].strip():   # e.g. h per wing / roof
+            rows[-1][1] += "; %s" % _pt(cfg["wind_h_basis"])
     return rows
 
 
@@ -4260,7 +4265,7 @@ def _cfs_elf_selfcheck(cfg, res, pkg):
 
 def _cfs_wall_demands_section(cfg, res, pkg):
     e = res.get("elf") or {}
-    h = ["<h2>3. Seismic and wind demands</h2>",
+    h = ["<h2>3. Seismic %sdemands</h2>" % ("" if (cfg and not cfg.get("wind")) else "and wind "),
          "<h3>3.1 Equivalent lateral force procedure (ASCE 7-22 &sect;12.8)</h3>"]
     ebd = res.get("elf_by_dir") or {}
     rows = [["Seismic weight W (&sect;12.7.2)", "%s kip" % _cn(_fnum(e.get("W")), 1)],
@@ -4950,6 +4955,25 @@ def _cfs_item_status(key, cfg, pkg):
     return None
 
 
+def _cfs_cd_chain_stored(ln):
+    """True where a capacity-design line record carries the per-story min chain under T_OmegaE_Vn_stack_kip: the value
+    equals T_cd while the Omega_0 level governs at some story of the line (where the full Omega_E Vn stack is larger)."""
+    te, tc = _fnum(ln.get("T_OmegaE_Vn_stack_kip")), _fnum(ln.get("T_cd_seed_kip"))
+    if te is None or tc is None or abs(te - tc) > 0.051:
+        return False
+    vn, ve, oe = ln.get("Vn_selected_kip"), ln.get("Ve_cap_by_story_kip"), ln.get("Omega_E_by_story")
+    if not isinstance(vn, dict) or not isinstance(ve, dict):
+        return True                     # no per-story record: the value is the chain (it equals T_cd)
+    ve = {str(k): v for k, v in ve.items()}
+    oe = {str(k): v for k, v in oe.items()} if isinstance(oe, dict) else {}
+    for s_, v in vn.items():
+        o = _fnum(oe.get(str(s_))) if oe.get(str(s_)) is not None else _fnum(ln.get("Omega_E"))
+        c, v = _fnum(ve.get(str(s_))), _fnum(v)
+        if None not in (o, v, c) and o * v > 1.005 * c:
+            return True
+    return False
+
+
 def _cfs_capacity_chapter(cfg, pkg):
     """Section 5: seismic detailing and capacity design -- only the checks that apply to the
     system, each with the place it is shown; the R <= 3 statement only where R <= 3."""
@@ -5021,25 +5045,37 @@ def _cfs_capacity_chapter(cfg, pkg):
     lines = cd.get("lines") or {}
     if req and lines:
         rows = []
+        # the second tension column prints what the records carry: the full Omega_E Vn stack, or -- where a line
+        # record carries the per-story min chain under that key -- the chain itself, labelled as the chain
+        chain_col = any(_cfs_cd_chain_stored(ln) for ln in lines.values() if isinstance(ln, dict))
         for k, ln in lines.items():
             if not isinstance(ln, dict):
                 continue
             vn = ln.get("Vn_selected_kip")
             vn = (", ".join("s%s %s" % (_html.escape(str(k_)), _cn(_fnum(x))) for k_, x in vn.items())
                   if isinstance(vn, dict) else _num_or(vn))
+            t2 = ln.get("T_OmegaE_Vn_stack_kip")
+            if chain_col and t2 is not None:
+                t2 = ln.get("T_cd_seed_kip")
             rows.append([_pt(k), _cn(_fnum(ln.get("Om0_eff"))), _cn(_fnum(ln.get("Omega_E"))),
                          vn, _num_or(ln.get("T_Om0_stack_kip")),
-                         _num_or(ln.get("T_OmegaE_Vn_stack_kip")), "<b>%s</b>" % _num_or(ln.get("T_cd_bay_seed_kip", ln.get("T_cd_seed_kip"))),
+                         _num_or(t2), "<b>%s</b>" % _num_or(ln.get("T_cd_bay_seed_kip", ln.get("T_cd_seed_kip"))),
                          _num_or(ln.get("dead_relief_kip_available"))])
         h.append("<h3>Capacity-design tension by line (S400 B3.4)</h3><p class='tnote'>T<sub>cd</sub> is the "
                  "tension at the expected strength &Omega;<sub>E</sub>V<sub>n</sub> of the selected assembly, not above "
                  "the &Omega;<sub>0</sub>-level effect. Where the line is chained story by story, T<sub>cd</sub> = "
                  "&Sigma;<sub>i</sub> min(&Omega;<sub>E</sub>V<sub>n,i</sub>, &Omega;<sub>0</sub>V<sub>i</sub>) h<sub>i</sub> / L, "
-                 "which can be below both stack values; otherwise it is the smaller of the two stacks. Strap lines are "
-                 "per bay. %s %s</p>" % (
+                 "which can be below both stack values; otherwise it is the smaller of the two stacks. %s "
+                 "Strap lines are per bay. %s %s</p>" % (
+                     ("The &Omega;<sub>0</sub> column carries the full &Omega;<sub>0</sub>V of every story; the chain "
+                      "column carries the per-story sum above, which is T<sub>cd</sub>." if chain_col else
+                      "The two stack columns carry the full &Omega;<sub>0</sub>V and the full "
+                      "&Omega;<sub>E</sub>V<sub>n</sub> of every story."),
                      _pt(_drift_basis_clean(cd.get("Om0_eff_basis", ""))), _pt(cd.get("Omega_E_basis", "")))
                  + _table(["Line", "&Omega;<sub>0</sub> (eff.)", "&Omega;<sub>E</sub>", "V<sub>n</sub> selected (kip)",
-                           "T at &Omega;<sub>0</sub> (kip)", "T at &Omega;<sub>E</sub>V<sub>n</sub> (kip)",
+                           "T, &Omega;<sub>0</sub> stack (kip)",
+                           ("T, per-story min chain (kip)" if chain_col else
+                            "T, &Omega;<sub>E</sub>V<sub>n</sub> stack (kip)"),
                            "T<sub>cd</sub> (kip)", "0.9D relief available (kip)"], rows))
     extra = {k: v for k, v in cd.items() if k not in ("basis", "note", "instruction", "seed_basis", "lines", "Ve_seed",
                                                       "Om0", "Om0_eff", "Om0_eff_basis", "Omega_E",
@@ -5047,7 +5083,7 @@ def _cfs_capacity_chapter(cfg, pkg):
              and v not in (None, "", [], {})}
     if extra:
         h.append("<h3>Capacity-design records</h3>" + _cfs_block_html(extra))
-    if sysname in _WIND_WALL_BASIS:
+    if sysname in _WIND_WALL_BASIS and cfg.get("wind"):                # no wind exposure: no wind design note
         h.append("<p class='tnote'><b>Wind design of the lateral walls:</b> %s.</p>" % _WIND_WALL_BASIS[sysname])
     if pkg.get("holddowns") and not _cfs_is_portal(cfg):
         h.append("<p class='tnote'>Specific hold-down and rod products, concrete anchorage (ACI 318 Ch. 17) and "
@@ -5216,12 +5252,17 @@ def _cfs_qa_section(name, root, cfg, res, pkg, annex=None, num=7):
     _portal = _cfs_is_portal(cfg)
     _cd_on = _cfs_capacity_design_required(cfg)
     _has_hd = bool(pkg.get("holddowns")) or bool(pkg.get("anchorage") and not _portal)
+    _windless = not (cfg or {}).get("wind")
     for cat, desc, _rx in _QA_CATS:
         n = len(buckets[cat])
+        if cat == "Anchorage chain" and _windless:       # no wind exposure: no wind net-uplift case to design
+            desc = ("hold-down devices within their class envelope (else a continuous rod); no wind net-uplift case "
+                    "(no wind exposure)" if _has_hd else
+                    "column-base anchorage designed; no wind net-uplift case (no wind exposure)")
         if not n:            # a row that does not apply to this structure is left out (it can only read PASS)
             if cat.startswith("Capacity design") and not _cd_on:
                 continue
-            if cat == "Anchorage chain" and not _has_hd:
+            if cat == "Anchorage chain" and not _has_hd and not _windless:
                 desc = "the 0.9D+1.0W net-uplift path at the column bases designed"
             if cat == "Code basis" and _portal:
                 desc = ("screw &phi; = 0.50 / &Omega; = 3.00 and the screw's own shear strength (S100-16 w/S2-20 J4); "
