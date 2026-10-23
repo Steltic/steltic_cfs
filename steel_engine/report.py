@@ -716,7 +716,7 @@ def _log_txt(tool, d, result=False):
         m = re.match(r"(\d+) hits?", d)
         if tool == "search_engineering_standards":
             if not m or m.group(1) == "0":
-                return "no match in the standards corpus"
+                return "clause not found in the reference library"
             return "%s matching provision%s" % (m.group(1), "" if m.group(1) == "1" else "s")
         m = re.search(r"(\d+) issues?", d)
         if m:
@@ -744,8 +744,8 @@ def _activity_section(name):
     recs, src = _load_activity(name)
     h = ["<h2>Design log</h2>",
          "<p>Analysis runs, self-consistency checks and code-provision look-ups recorded while this design was "
-         "prepared. A look-up with no match in the standards corpus is listed as such; the provisions the report "
-         "cites are the ones found.</p>"]
+         "prepared. A look-up that returned no clause from the reference library of standards is listed as "
+         "\u201cclause not found in the reference library\u201d.</p>"]
     if not recs:
         h.append("<p class='cnote'>No design log was recorded for this job.</p>")
         return "".join(h)
@@ -797,12 +797,12 @@ CHAPTERS = {
    "Dead loads: realistic light-frame self-weight, superimposed (MEP, ceilings, finishes, partitions), cladding.",
    "Live loads per occupancy with correct reductions, COMPOUNDED down the stud/chord stacks (and not where prohibited).",
    "Roof live/snow: flat-roof, drift at every stated step/valley, unbalanced, rain-on-snow, minimums.",
-   "Wind (Ch. 26-31): MWFRS and C&amp;C; enclosure classification where raised; NET UPLIFT (0.9D+1.0W) as a first-class case.",
+   "Wind (Ch. 26-31): MWFRS and C&amp;C; enclosure classification where raised; NET UPLIFT (0.9D + 1.0W) as a first-class case.",
    "Seismic (Ch. 11-12): S<sub>DS</sub>/S<sub>D1</sub>, SDC, period, C<sub>s</sub>, V, vertical distribution, E<sub>v</sub>, 5% tributary-shift accidental eccentricity, &rho;.",
    "Governing case (wind vs seismic) identified per line/direction \u2014 BOTH hazards run."]),
  4: ("Load combinations", [
    "Full ASCE 7-22 &sect;2.3 LRFD set (gravity, wind &plusmn;, seismic &plusmn; with E<sub>v</sub> &amp; &rho;, &Omega;<sub>0</sub> where required), &plusmn; tributary shift.",
-   "Combinations applied to the right elements (&Omega;<sub>0</sub> to collectors and capacity-protected items only); net-uplift 0.9D+1.0W anchorage case carried through the whole path.",
+   "Combinations applied to the right elements (&Omega;<sub>0</sub> to collectors and capacity-protected items only); net-uplift 0.9D + 1.0W anchorage case carried through the whole path.",
    "Second-order effects handled per-combination on frame paths (no superposition of factored second-order results)."]),
  5: ("Analysis model fidelity", [
    "Wall lines, segment lengths per story, and openings match the brief; frame paths: geometry and member orientation correct.",
@@ -834,11 +834,11 @@ CHAPTERS = {
  10: ("Connections", [
    "Connection demands (incl. capacity-design/overstrength where required) stated per type.",
    "Connections designed in this package per S100 Ch. J: screws (tilting/bearing/pull-out/pull-over), welds on thin sheet, bolts with tilting; sized components and every limit-state D/C &le; 1.0.",
-   "Strap connections to the expected strap strength; uplift clips on the 0.9D+1.0W path; track-to-foundation and distributed Type II anchorage.",
+   "Strap connections to the expected strap strength; uplift clips on the 0.9D + 1.0W path; track-to-foundation and distributed Type II anchorage.",
    "Anchorage to concrete scoped to ACI 318 Ch. 17 with demands handed off; constructability of screw patterns and device placement."]),
  11: ("Foundations interface", [
    "Wall-line reactions (shear plf, hold-down/rod tensions, bearing) provided to foundation design; consistent with the anchorage scheme.",
-   "Net uplift anchorage (0.9D+1.0W) explicit per line; overall overturning/sliding; load cases to geotech consistent with bearing/lateral capacity."]),
+   "Net uplift anchorage (0.9D + 1.0W) explicit per line; overall overturning/sliding; load cases to geotech consistent with bearing/lateral capacity."]),
  12: ("Drawings, specifications & documentation", [
    "Drawings internally consistent and consistent with the calculations.",
    "General notes, material/coating specs, screw/weld specs, special-inspection schedule and design loads shown.",
@@ -1521,7 +1521,7 @@ def _s400_capacity_chapter(cfg, pkg):
         label = "system not specifically detailed for seismic (R &le; 3)"
         checks = [("S400 detailing", "NOT applicable at R &le; 3 — design per AISI S100 alone; state this explicitly"),
                   ("Wind governance", "prove whether wind or seismic governs each direction"),
-                  ("Net uplift", "0.9D+1.0W anchorage path is still required")]
+                  ("Net uplift", "0.9D + 1.0W anchorage path is still required")]
     else:
         label = "CFS seismic system (declare cfg['system'] from the S400 set)"
         checks = [("System declaration", "cfg['system'] must name the exact S400 system — the report will not infer it from R")]
@@ -1608,6 +1608,62 @@ def _pub_scrub(s):
     return s.strip(" ;,")
 
 
+_CFS_CASE_PART = {"unb761": "unb"}         # 7.6.1 unbalanced snow: the clause is in the case description
+
+
+def _cfs_case_sub(m):
+    parts = ([m.group(2)] if m.group(2) else []) + [p for p in m.group(3).split("_") if p]
+    return "%s<sub>%s</sub>" % (m.group(1), ",".join(_CFS_CASE_PART.get(p, p) for p in parts))
+
+
+def _cfs_combo_tokens(s):
+    """Load-combination and load-case names in ESCAPED text, typeset with the notation of ASCE 7 Ch. 2 (the same
+    transform wherever a combination or a case is named): (1.2+0.2SDS)D -> (1.2 + 0.2S_DS)D, '+rho*EX+' / '+rho*EX-'
+    -> + / - rho E_X (the sense of the seismic load), Om0*E -> Omega_0 E, '+1.00E_neg' -> - 1.00E, '+1.0WY-' ->
+    - 1.0W_Y, case names with qualifiers W2_R_b2 -> W_{2,R,b2}, S_bal -> S_bal, Qtor_R -> Q_{tor,R}."""
+    s = re.sub(r"\(1\.2\+0\.2SDS\)D", "(1.2 + 0.2S<sub>DS</sub>)D", s)
+    s = re.sub(r"\(0\.9-0\.2SDS\)D", "(0.9 &minus; 0.2S<sub>DS</sub>)D", s)
+    s = re.sub(r"(?<![\w.])0\.2SDS\b", "0.2S<sub>DS</sub>", s)
+    s = re.sub(r"\+rho\s*\*\s*E([XY])\+", r" + &rho;E<sub>\1</sub>", s)
+    s = re.sub(r"\+rho\s*\*\s*E([XY])-", r" &minus; &rho;E<sub>\1</sub>", s)
+    s = re.sub(r"(?<![&\w])rho\s*\*\s*E\b", "&rho;E", s)
+    s = re.sub(r"(?<![&\w])rho E\b", "&rho;E", s)
+    s = re.sub(r"\+(\d+(?:\.\d+)?)W([XY])\+", r" + \1W<sub>\2</sub>", s)
+    s = re.sub(r"\+(\d+(?:\.\d+)?)W([XY])-", r" &minus; \1W<sub>\2</sub>", s)
+    s = re.sub(r"(?<![&\w])Om(?:ega_?)?0\s*\*\s*E\b", "&Omega;<sub>0</sub>E", s)
+    s = re.sub(r"\+(Om0|\d+(?:\.\d+)?)E_neg\b",
+               lambda m: " &minus; %sE" % ("&Omega;<sub>0</sub>" if m.group(1) == "Om0" else m.group(1)), s)
+    s = re.sub(r"(?<![&\w])Om0E\b", "&Omega;<sub>0</sub>E", s)
+    s = re.sub(r"(?<![A-Za-z&])([WSQ])([A-Za-z0-9]*)((?:_[A-Za-z0-9]+)+)\b", _cfs_case_sub, s)
+    s = re.sub(r"(?<=[\d.])(W|Q)(2|par2?|long2?|tor)\b", r"\1<sub>\2</sub>", s)
+    s = re.sub(r"(?<![A-Za-z&])(W|Q)(par2?|long2?|tor)\b", r"\1<sub>\2</sub>", s)
+    s = re.sub(r"(?<![A-Za-z&])Lr\b", "L<sub>r</sub>", s)
+    s = re.sub(r"(?<![\w.])0\.9-0\.2S<sub>DS</sub>", "0.9 &minus; 0.2S<sub>DS</sub>", s)
+    s = re.sub(r"(?<![&\w])tau_b\b", "&tau;<sub>b</sub>", s)
+    return s
+
+
+def _cfs_combo_label(label):
+    """A load-combination label as printed: the analysis identity ('(1.2+0.2SDS)D+rho*EX++0.5L+0.15S') typeset
+    ('(1.2 + 0.2S_DS)D + rho E_X + 0.5L + 0.15S'), with spaces around the + of the terms."""
+    if label in (None, "", "None"):
+        return "&mdash;"
+    s = _cfs_combo_tokens(_html.escape(_pub_scrub(str(label)) if _CFS_PUB[0] else str(label)))
+    s = re.sub(r"(?<=\d) x (?=\S)", " &times; ", s)                    # '0.42 x C&C' (a load fraction)
+    s = re.sub(r"(?<=[\w)>;])(?<![0-9]e)\+(?=[\w(&])", " + ", s)
+    return re.sub(r"[ ]{2,}", " ", s).strip()
+
+
+def _cfs_case_label(name):
+    """A load-case name alone (W, W2_R_b2, Wpar_A_clr, S_bal ...), typeset as in the combinations."""
+    n = str(name or "")
+    m = re.match(r"^([WSQ])([A-Za-z0-9]*)((?:_[A-Za-z0-9]+)*)$", n)
+    if not m or not (m.group(2) or m.group(3)):
+        return _pt(n)
+    parts = ([m.group(2)] if m.group(2) else []) + [p for p in m.group(3).split("_") if p]
+    return "%s<sub>%s</sub>" % (m.group(1), ",".join(_CFS_CASE_PART.get(p, p) for p in parts))
+
+
 def _pt(x):
     """Agent/seed TEXT for the report body: escaped, and scrubbed of harness wording in
     publication mode. Numbers and containers go through the one number formatter."""
@@ -1624,12 +1680,22 @@ def _pt(x):
     # engineering symbols for the framework / designer shorthand
     s = s.replace("&gt;=", "&ge;").replace("&lt;=", "&le;").replace(" -&gt; ", " &rarr; ")
     s = re.sub(r"(?<=\S) x (?=\d|\(\s*[\d.])", " &times; ", s)   # '4.5 psf x 15.0 ft' products ('x (east)' is prose)
+    s = _cfs_combo_tokens(s)                                     # combinations and load cases, as in Section 2
     s = re.sub(r"\bOm0_eff\b", "&Omega;<sub>0,eff</sub>", s)
     s = re.sub(r"\bOm(?:ega_?)?0\b", "&Omega;<sub>0</sub>", s)
     s = re.sub(r"\bOmega_E\b", "&Omega;<sub>E</sub>", s)
     s = re.sub(r"(?<![&\w])phi_([a-z]{1,2})\b(\s*\*\s*)?", r"&phi;<sub>\1</sub>", s)
     s = re.sub(r"(?<![&\w])phi\s*\*\s*", "&phi;", s)
     s = re.sub(r"(?<![&\w])phi\b", "&phi;", s)
+    s = re.sub(r"(?<![&\w])phi([A-Z])([a-z]{1,3})?\b",                # phiMn, phiTn, phiMnlo -> phi M_n ...
+               lambda m: "&phi;%s%s" % (m.group(1), ("<sub>%s</sub>" % m.group(2)) if m.group(2) else ""), s)
+    s = re.sub(r"(?<![&\w])rho\b", "&rho;", s)
+    s = re.sub(r"(?<![&\w])theta_max\b", "&theta;<sub>max</sub>", s)
+    s = re.sub(r"(?<![&\w])theta\b", "&theta;", s)
+    s = re.sub(r"(?<![&\w])lambda\b", "&lambda;", s)
+    s = re.sub(r"(?<![&\w])([TVvPMRh])_(cd|cap|design|ELF|elf|cum|sx|u|n|y|f)\b", r"\1<sub>\2</sub>", s)  # T_cd, h_sx
+    s = re.sub(r"(</sub>)\s*\*\s*(?=[A-Za-z])", r"\1", s)            # Omega_E*Vn -> Omega_E Vn
+    s = re.sub(r"(?<=[\w)>;])(?<![0-9]e)\+(?=[\w(&])", " + ", s)     # combination terms spaced as in Section 2
     return s
 
 
@@ -1703,10 +1769,11 @@ _HK = {"DC": "D/C", "v_unit_plf": "seismic unit shear, &rho;E (plf)",
        "T_cum_kip": "ELF&middot;&rho; overturning tension (kip)",
        "T_cd_seed_kip": "capacity-design tension T<sub>cd</sub> (kip)",
        "T_bay_seed_kip": "ELF&middot;&rho; tension per bay (kip)",
-       "T_wind_kip": "0.9D+1.0W tension (kip)", "T_design_kip": "design tension (kip)",
+       "T_wind_kip": "0.9D + 1.0W tension (kip)", "T_design_kip": "design tension (kip)",
        "k_kip_in": "anchorage stiffness (kip/in.)", "capacity": "design strength",
        "limit_state": "limit state(s)", "cited": "reference", "selection": "selection",
-       "governing_combo": "governing combination", "P_kip": "axial force P (kip)",
+       "governing_combo": "governing combination", "P_kip": "axial force P (kip)", "line_story": "line, story",
+       "ratio_RtFu_RyFy": "(R<sub>t</sub>F<sub>u</sub>)/(R<sub>y</sub>F<sub>y</sub>)",
        "M_kipin": "moment M (kip-in.)", "V_base_kip": "base shear (kip)",
        "T_net_uplift_kip": "net uplift (kip)", "M_base_kipin": "base moment (kip-in.)",
        "uplift_combo": "uplift combination", "M_transfer_kipin": "joint moment (kip-in.)",
@@ -1748,14 +1815,15 @@ _HK = {"DC": "D/C", "v_unit_plf": "seismic unit shear, &rho;E (plf)",
        "story_stiffness_kip_per_inch": "story stiffness (kip/in.)", "V_story_over_V": "story shear / V",
        "bays_below_cm": "bays below the CM", "bays_above_cm": "bays above the CM",
        "H_over_400_in": "limit H/400 (in.)", "ok": "OK"}
-_HK_UNITS = (("_kipin_per_rad", "kip-in./rad"), ("_kipin_rad", "kip-in./rad"),
+_HK_UNITS = (("_kipin_per_rad", "kip-in./rad"), ("_kipin_rad", "kip-in./rad"), ("_kip_per_inch", "kip/in."),
+             ("_kipin2", "kip-in.&sup2;"),
              ("_kip_per_in", "kip/in."), ("_kip_per_ft", "kip/ft"),
              ("_kip_in", "kip-in."), ("_kipin", "kip-in."), ("_kip_ft", "kip-ft"),
              ("_kipft", "kip-ft"), ("_klf", "klf"), ("_plf", "plf"), ("_psf", "psf"), ("_pcf", "pcf"),
              ("_ksi", "ksi"), ("_kips", "kip"), ("_kip", "kip"), ("_in2", "in.&sup2;"),
              ("_in4", "in.<sup>4</sup>"), ("_in", "in."), ("_ft", "ft"), ("_hz", "Hz"),
              ("_sf", "sf"), ("_s", "s"), ("_pct", "%"), ("_mph", "mph"), ("_mil", "mil"),
-             ("_rad", "rad"))
+             ("_rad", "rad"), ("_deg", "deg"))
 
 
 def _hk_unit(k):
@@ -1767,15 +1835,59 @@ def _hk_unit(k):
     return k, ""
 
 
+_HK_MID_UNIT = {"kip": "kip", "kips": "kip", "plf": "plf", "psf": "psf", "ksi": "ksi", "klf": "klf",
+                "kipin": "kip-in.", "kipft": "kip-ft"}
+_HK_STOP2 = {"In", "At", "Of", "On", "No", "Up", "Or", "To", "By", "As", "Is", "It", "If", "Be", "Do", "So", "We"}
+_HK_SYM_SKIP = {"v", "interaction", "limit", "ratio", "provided", "required", "tdesign", "pdesign", "mdesign",
+                "vdesign"}
+
+
+def _hk_words(base):
+    """The words of a snake_case key as engineering text: Greek names as symbols (Omega_E, Omega0, phi, rho, theta,
+    Delta), DC -> D/C, 'story1' -> 'story 1', symbol subscripts (Vn, RyFyAg, T_cd, phiPn_c -> phi P_n)."""
+    nk = re.sub(r"[^a-z0-9]", "", base.lower())
+    if nk in _SYM and nk not in _HK_SYM_SKIP and not re.search(r"phi_?v[a-z]", base):   # phivn (plf) is phi v_n
+        return _SYM[nk]
+    s = _html.escape(re.sub(r"_+", " ", base).strip())
+    L, R_ = r"(?<![&\w])", r"(?![\w;])"                        # word edges that never cut into an entity
+    s = re.sub(r"\b(story|avg|level|bay|span|frame|segment|zone)(\d+)\b", r"\1 \2", s)
+    s = re.sub(L + r"Omega ?E ?Vn" + R_, "&Omega;<sub>E</sub>V<sub>n</sub>", s)
+    s = re.sub(L + r"Omega ?E" + R_, "&Omega;<sub>E</sub>", s)
+    s = re.sub(L + r"(?:Omega ?0|Om0) eff" + R_, "&Omega;<sub>0,eff</sub>", s)
+    s = re.sub(L + r"(?:Omega ?0|Om0)" + R_, "&Omega;<sub>0</sub>", s)
+    s = re.sub(L + r"phi ?([A-Za-z])([a-z0-9]{0,3})" + R_,
+               lambda m: "&phi;%s%s" % (m.group(1), ("<sub>%s</sub>" % m.group(2)) if m.group(2) else ""), s)
+    s = re.sub(L + r"phi" + R_, "&phi;", s)
+    s = re.sub(L + r"theta ?max" + R_, "&theta;<sub>max</sub>", s)
+    for w_, g_ in (("rho", "&rho;"), ("theta", "&theta;"), ("lambda", "&lambda;"), ("tau", "&tau;")):
+        s = re.sub(L + w_ + R_, g_, s)
+    s = re.sub(L + r"Delta ([A-Za-z])" + R_, r"&Delta;<sub>\1</sub>", s)
+    s = re.sub(L + r"Delta" + R_, "&Delta;", s)
+    s = re.sub(L + r"DC" + R_, "D/C", s)
+    s = re.sub(L + r"vn" + R_, "v<sub>n</sub>", s)
+    s = re.sub(L + r"qh" + R_, "q<sub>h</sub>", s)
+    s = re.sub(L + r"([TVvQ]) (cd|cap|ELF|elf|f|E|cum)" + R_, r"\1<sub>\2</sub>", s)
+    s = re.sub(L + r"P cum" + R_, "P<sub>cum</sub>", s)
+    s = re.sub(L + r"((?:[A-Z][a-z]){2,4})" + R_,
+               lambda m: "".join("%s<sub>%s</sub>" % (p_[0], p_[1]) for p_ in re.findall("[A-Z][a-z]", m.group(1))), s)
+    s = re.sub(L + r"([A-Z])([a-z])" + R_,
+               lambda m: m.group(0) if m.group(0) in _HK_STOP2 else "%s<sub>%s</sub>" % (m.group(1), m.group(2)), s)
+    s = re.sub(r"(&Omega;<sub>[0E]</sub>) (?=[A-Z]|&(?!minus))", r"\1", s)     # Omega0 E, Omega0 V_ELF: one symbol
+    return s
+
+
 def _hk(k):
-    """Human label of a package key (unit suffixes spelled out)."""
+    """Human label of a package key: unit suffixes (and a unit inside the key, 'P_cum_kip_by_story') spelled out
+    in parentheses, the words typeset (_hk_words)."""
     k = str(k)
     if k in _HK:
         return _HK[k]
     base, u = _hk_unit(k)
-    if u:
-        return "%s (%s)" % (_html.escape(base.replace("_", " ")), u)
-    return _html.escape(k.replace("_", " "))
+    if not u:
+        m = re.match(r"^(.+?)_(%s)_(.+)$" % "|".join(_HK_MID_UNIT), base, re.I)
+        if m:
+            base, u = "%s_%s" % (m.group(1), m.group(3)), _HK_MID_UNIT[m.group(2).lower()]
+    return "%s (%s)" % (_hk_words(base), u) if u else _hk_words(base)
 
 
 def _cap1(s):
@@ -2088,7 +2200,7 @@ def _hd_basis(d, T_des):
     if tcd and rel and near(tcd - rel):
         return "T<sub>cd</sub> less 0.9D relief"
     if near(d.get("T_wind_kip")):
-        return "wind, 0.9D+1.0W"
+        return "wind, 0.9D + 1.0W"
     if near(d.get("T_bay_seed_kip")) or near(d.get("T_cum_kip")):
         return "ELF&middot;&rho;"
     if tcd and T_des > tcd:
@@ -2126,18 +2238,18 @@ def _cfs_holddown_schedule(pkg, cfg=None):
                      _num_or(cap) if _fnum(cap) is not None else (_pt(cap) or "&mdash;"),
                      _cdc(d.get("DC")), refs.ref(d.get("cited"))])
     cd = _cfs_capacity_design_required(cfg) if cfg else True
-    _nw = bool(cfg) and not cfg.get("wind")        # no wind exposure: no 0.9D+1.0W case
+    _nw = bool(cfg) and not cfg.get("wind")        # no wind exposure: no 0.9D + 1.0W case
     intro = ("<p>Overturning tension per wall line, accumulated top-down. ELF&middot;&rho; = the "
              "&rho;-amplified ELF stack; T<sub>cd</sub> = the capacity-design tension (expected "
              "strength &Omega;<sub>E</sub>V<sub>n</sub> of the wall, not to exceed the "
              "&Omega;<sub>0</sub>-level effect; S400 B3.4); %s. The <i>design T</i> "
              "is the tension the D/C is computed on. Devices resist tension only; beyond the "
              "discrete hold-down range a continuous rod is designed and its elongation enters the "
-             "drift.</p>" % ("no wind case (no wind exposure)" if _nw else "wind = 0.9D+1.0W") if cd else
+             "drift.</p>" % ("no wind case (no wind exposure)" if _nw else "wind = 0.9D + 1.0W") if cd else
              "<p>Overturning tension per wall line, accumulated top-down (%s). Capacity design is not "
              "required for this system and SDC (S400 A1.2.3), so T<sub>cd</sub> is shown for reference only. "
              "The <i>design T</i> is the tension the D/C is computed on.</p>"
-             % ("ELF&middot;&rho;; no wind exposure" if _nw else "ELF&middot;&rho; and 0.9D+1.0W"))
+             % ("ELF&middot;&rho;; no wind exposure" if _nw else "ELF&middot;&rho; and 0.9D + 1.0W"))
     return ("<h3>Hold-down / continuous rod schedule</h3>" + intro
             + _ref_table(["ID", "Dir", "ELF&middot;&rho; T (kip)", "T<sub>cd</sub> (kip)",
                           "Wind T (kip)", "Design T (kip)", "Basis of design T", "Device / rod",
@@ -2269,7 +2381,7 @@ def _cfs_stud_schedule(pkg):
         head.pop(5)
         rows = [r[:5] + r[6:] for r in rows]
     intro = ("<p class='tnote'>P<sub>cum</sub> is the typical bearing-stud axial stack "
-             "(1.2D+1.6L, one tributary width, roof live load 0, no wall self-weight) from the "
+             "(1.2D + 1.6L, one tributary width, roof live load 0, no wall self-weight) from the "
              "analysis; the designed stud schedule (sections by story group, bracing assumption, "
              "E2/E3/E4, G5 at the track, H1) is shown where filled.</p>" if any_seed else
              "<p>Stud sections step down with height and are never lighter below; the bracing "
@@ -3321,7 +3433,7 @@ def build_report(name, root=None):
             ["&Sigma; horizontal base shear &Sigma;R<sub>x</sub>", f"{Rx:.0f} kip"],
             ["Max single-column vertical reaction", f"{pmax:.0f} kip (compression)"],
             ["Min single-column vertical reaction", f"{pmin:.0f} kip " + ("&mdash; <b>net uplift</b>" if pmin < 0 else "(no uplift)")]]))
-    parts.append("<p class='cnote'>Net uplift is governed by the 0.9D+1.0W and (0.9&minus;0.2S<sub>DS</sub>)D+E "
+    parts.append("<p class='cnote'>Net uplift is governed by the 0.9D + 1.0W and (0.9 &minus; 0.2S<sub>DS</sub>)D + E "
                  "combinations — for light CFS at high wind it commonly GOVERNS the anchorage: hold-down/rod "
                  "tensions and the per-line shear (plf) and bearing handed to the foundation are in the Chapter-6 "
                  "schedules. <b>Out of scope:</b> foundation/geotechnical design and concrete anchorage detailing "
@@ -3440,13 +3552,81 @@ CFS_CSS = (".tnote{font-size:12px;color:#444;margin:2px 0 10px}ol.tnote{font-siz
            ".credit{font-size:13px;color:#333;margin:2px 0 10px}"
            "table.sc td{text-align:left;vertical-align:top}table.sc td.v{text-align:right;"
            "white-space:nowrap;font-weight:600}.pass{color:#1a6b2d;font-weight:600}"
-           ".fail{color:#a00;font-weight:600}")
+           ".fail{color:#a00;font-weight:600}.na{color:#555;font-weight:600}")
 
 CFS_EDITION = "AISI S100-16 (2020) w/S2-20 (as referenced by IBC 2024)"
 
 
 def _cfs_is_portal(cfg):
     return "span_ft" in (cfg or {}) or bool((cfg or {}).get("spans"))
+
+
+def _cfs_component_kind(cfg, pkg=None):
+    """'purlin' or 'component' for a component design on an existing structure (cfg structure_kind, or the
+    package's component_mode); None for a building or frame designed as a whole."""
+    sk = str((cfg or {}).get("structure_kind") or "").lower()
+    if sk in ("purlin", "component"):
+        return sk
+    return "component" if (pkg or {}).get("component_mode") else None
+
+
+def _cfs_records(v):
+    return [x for x in (v if isinstance(v, list) else [v] if isinstance(v, dict) else []) if isinstance(x, dict)]
+
+
+def _cfs_has_holddowns(pkg):
+    """True when the package specifies hold-downs or tie-down rods: a hold-down schedule, or base / anchorage
+    records (not waived) that name hold-down brackets or tie-down rods."""
+    p = pkg or {}
+    if p.get("holddowns") not in (None, "", [], {}):
+        return True
+    return any(not it.get("waived") and re.search(r"hold-?downs?|tie-?down", json.dumps(it, default=str), re.I)
+               for g in ("bases", "anchorage") for it in _cfs_records(p.get(g)))
+
+
+def _cfs_anchorage_in_scope(cfg, pkg):
+    """False for a component job on an existing structure, or when every base-anchorage record is waived
+    (and no hold-down or base record is designed)."""
+    if _cfs_component_kind(cfg, pkg):
+        return False
+    p = pkg or {}
+    anc = _cfs_records(p.get("anchorage"))
+    return not (anc and all(a.get("waived") for a in anc) and not p.get("holddowns") and not p.get("bases"))
+
+
+def _cfs_and(items):
+    items = [x for x in items if x]
+    return items[0] if len(items) == 1 else "%s and %s" % (", ".join(items[:-1]), items[-1]) if items else ""
+
+
+def _cfs_qa_not_applicable(cat, cfg, pkg):
+    """The reason a Section 7.1 check category does not apply to this design (printed as 'not applicable
+    (reason)' in place of a PASS that could only be vacuous), or None. pkg['qa_not_applicable'] =
+    {category or its first words: reason} states one for any job."""
+    p = pkg or {}
+    over = p.get("qa_not_applicable")
+    if isinstance(over, dict):
+        for k, v in over.items():
+            k_ = str(k).strip().lower()
+            if k_ and cat.lower().startswith(k_) and v:
+                return _pt(v) if isinstance(v, str) else "see the design basis"
+    if cat == "Anchorage chain" and not _cfs_anchorage_in_scope(cfg, p) and not _cfs_has_holddowns(p):
+        if _cfs_component_kind(cfg, p) or any(str(a.get("waiver_scope") or "").lower() == "existing"
+                                              for a in _cfs_records(p.get("anchorage"))):
+            return "the column bases and their anchorage are existing, outside the scope of this design"
+        return "the base anchorage is waived (Section 4)"
+    sdc = _cfs_sdc_detail(cfg)[0]
+    if sdc == "A" and cat == "System and height limits":
+        return "SDC A: ASCE 7-22 &sect;11.7 applies and Table 12.2-1 is not used"
+    if sdc == "A" and cat == "ELF self-check":
+        return "SDC A: ASCE 7-22 &sect;11.7 applies; no equivalent lateral force analysis"
+    if cat == "Drift and stability":
+        dt = [d for d in p.get("drift_table") or [] if isinstance(d, dict)]
+        if not [d for d in dt if not d.get("waived")] and _find_theta(p) is None:
+            if dt and all(str(d.get("waiver_scope") or "").lower() == "existing" for d in dt):
+                return "the drift and deflection rows belong to the existing frames, outside the scope of this design"
+            return "every drift row is waived (Section 4)" if dt else "no story drift or stability row in this design"
+    return None
 
 
 def _cfs_publish(cfg, pkg):
@@ -3913,12 +4093,20 @@ def _cfs_basis_rows(cfg, res, pkg):
     ca = _find_key(pkg, ("Ca", "Ca_effective", "type_II_adjustment"))
     if ca is not None:
         rows.append(["Type II adjustment C<sub>a</sub>", _cn(ca) if not isinstance(ca, str) else _pt(ca)])
+    _am = pkg.get("analysis_method_text")           # the package's own statement of the method, for any job
+    _am = _pt(_am) if isinstance(_am, str) and _am.strip() else None
+    _ck = _cfs_component_kind(cfg, pkg)
+    if _am is None and _ck:                         # component job: the existing frames are not analysed
+        _am = _pt(_cfs_custom_model(cfg, pkg)[1]) or (
+            "continuous-beam analysis of each purlin and girt line over the existing frames; existing frames not "
+            "analysed" if _ck == "purlin" else
+            "the new components are designed on their own supports; the existing structure is not analysed")
     if portal:
         _sc = str(cfg.get("structure_kind", "")).lower() == "portal_singlechannel" or bool(pkg.get("torsion_companion"))
-        rows.append(["analysis method", _CFS_TIER_TEXT["portal"]
-                     + (" (the single-channel torsion is checked separately, Section 4)" if _sc else "")])
+        rows.append(["analysis method", _am or (_CFS_TIER_TEXT["portal"]
+                     + (" (the single-channel torsion is checked separately, Section 4)" if _sc else ""))])
     else:
-        rows.append(["analysis method", _CFS_TIER_TEXT["wall"] % (
+        rows.append(["analysis method", _am or _CFS_TIER_TEXT["wall"] % (
             "semi-rigid diaphragm (coupled solve)" if cfg.get("diaphragm") == "semi-rigid"
             else "flexible-diaphragm tributary distribution with the 5% accidental shift")])
         db = pkg.get("diaphragm_basis")
@@ -4210,10 +4398,18 @@ def _cfs_title(name, cfg, pkg):
     return (cfg or {}).get("project_title") or (pkg or {}).get("project_title") or (cfg or {}).get("title") or name
 
 
+_CFS_KIND_SUBTITLE = {"purlin": "Cold-formed steel purlins and girts on an existing building (component design)",
+                      "component": "Cold-formed steel components on an existing structure (component design)",
+                      "canopy": "Cold-formed steel canopy frame", "mezzanine": "Cold-formed steel mezzanine"}
+
+
 def _cfs_title_block(name, cfg, res, pkg):
     portal = _cfs_is_portal(cfg)
     title = _cfs_title(name, cfg, pkg)
-    kind = "Cold-formed steel portal frame" if portal else "Cold-formed steel light-frame building"
+    _st = (pkg or {}).get("report_subtitle")
+    kind = (_pt(_st) if isinstance(_st, str) and _st.strip() else None) or \
+        _CFS_KIND_SUBTITLE.get(str((cfg or {}).get("structure_kind") or "").lower()) or \
+        ("Cold-formed steel portal frame" if portal else "Cold-formed steel light-frame building")
     stds = [CFS_EDITION]
     if not portal or pkg.get("studs") or pkg.get("wall_lines"):
         stds.append("AISI S240-20")
@@ -4229,18 +4425,35 @@ def _cfs_title_block(name, cfg, res, pkg):
     return "".join(h)
 
 
+def _cfs_case_legend(s):
+    """The load-case legend of a typeset combinations note ('Load-case keys: ...', written for the analysis names of
+    the cases) in the notation the combinations table prints: W2 -> W_2, 'the suffix _R' -> 'the subscript R',
+    E_neg -> -E, Om0E_neg -> -Omega_0 E (the cases with a qualifier already read W_{2,R,b2}, S_bal ... through _pt)."""
+    i = s.find("Load-case keys:")
+    if i < 0:
+        return s
+    leg = "Load-case notation:" + s[i + len("Load-case keys:"):]
+    leg = re.sub(r"the suffix _(\w+)", r"the subscript \1", leg)
+    leg = re.sub(r"(?<![\w&;>])W2(?=\s*=)", "W<sub>2</sub>", leg)
+    leg = re.sub(r"(?<![\w&;>])Om0E_neg\b", "&minus;&Omega;<sub>0</sub>E", leg)
+    leg = re.sub(r"(?<![\w&;>])E_neg\b", "&minus;E", leg)
+    return s[:i] + leg
+
+
 def _cfs_combos_section(cfg, res, pkg):
     combos = [c for c in (pkg.get("combos") or []) if isinstance(c, dict)]
     h = "<h2>2. Load combinations (ASCE 7-22 &sect;2.3 LRFD)</h2>"
     if combos:
-        h += _table(["Combination", "Use"], [[_pt(c.get("label")), _pt(c.get("role") or "strength")]
+        h += _table(["Combination", "Use"], [[_cfs_combo_label(c.get("label")), _pt(c.get("role") or "strength")]
                                              for c in combos])
     note = pkg.get("combos_note")
+    if isinstance(note, str):
+        note = note.replace(" (role 'overstrength')", "")
     if note:
         import cfs_pipeline as _CP
         if isinstance(note, str) and not _CP.has_rain_basis(cfg):   # no rain row in the loads table
             note = note.replace(_CP.RAIN_BASIS_REF, "")
-        h += "<p class='tnote'>%s</p>" % _pt(note)
+        h += "<p class='tnote'>%s</p>" % _cfs_case_legend(_pt(note))
     return h
 
 
@@ -4447,10 +4660,14 @@ def _cfs_portal_loads(cfg, res, pkg):
                                  for z in rf if isinstance(z, (list, tuple)) and len(z) == 3)
             else:
                 rtxt = "&mdash;"
-            crow.append([_pt(c.get("name")), _pt(c.get("desc") or ""),
+            crow.append([_cfs_case_label(c.get("name")), _pt(c.get("desc") or ""),
                          _num_or(w_.get("col_L"), "%.2f") if w_ else "&mdash;",
                          _num_or(w_.get("col_R"), "%.2f") if w_ else "&mdash;", rtxt])
-        h.append("<h4>MWFRS wind cases, psf (+ toward the surface; free-roof values are net pressures)</h4>"
+        _free = (str(wb.get("enclosure") or ((cfg or {}).get("wind") or {}).get("enclosure") or "").lower() == "open"
+                 or str((cfg or {}).get("structure_kind") or "").lower() == "canopy"
+                 or any(re.search(r"free[- ]roof", str(c.get("desc") or ""), re.I) for c in wcases))
+        h.append("<h4>MWFRS wind cases, psf (+ toward the surface%s)</h4>"
+                 % ("; free-roof values are net pressures" if _free else "")
                  + _table(["Case", "Description", "Left wall / column", "Right wall / column", "Roof"], crow))
         prow = []
     if prow:
@@ -4513,11 +4730,13 @@ def _cfs_portal_design_section(pkg, cfg=None, res=None, name=None):
             cells, engs = _cfs_member_demands(m, sm, custom)
             flags.append(engs)
             if m.get("waived"):
-                rows.append([_pt(m.get("id")), _pt(m.get("section")), _pt(m.get("governing_combo")),
+                rows.append([_pt(m.get("id")), _pt(m.get("section")),
+                             _cfs_combo_label(m.get("governing_combo")) if m.get("governing_combo") else "",
                              *cells, _waived_cell(m), _cdc(m.get("DC")) if m.get("DC") is not None else "&mdash;",
                              refs.ref(m.get("cited"))])
                 continue
-            rows.append([_pt(m.get("id")), _pt(m.get("section")), _pt(m.get("governing_combo")), *cells,
+            rows.append([_pt(m.get("id")), _pt(m.get("section")),
+                         _cfs_combo_label(m.get("governing_combo")) if m.get("governing_combo") else "", *cells,
                          _pt(m.get("capacity")) or "<b>PENDING</b>", _cdc_e(m), refs.ref(m.get("cited"))])
         head = ["Member", "Section", "Governing combination", "P (kip)", "V (kip)", "M (kip-in.)",
                 "Design strength", "D/C", "Ref."]
@@ -4565,7 +4784,7 @@ def _cfs_portal_design_section(pkg, cfg=None, res=None, name=None):
             rows.append([_pt(a.get("id")), _pt(a.get("selection")) or "<b>PENDING</b>", *cells,
                          _pt(a.get("limit_state")) or "<b>PENDING</b>", _pt(a.get("capacity")) or "<b>PENDING</b>",
                          _cdc_e(a), refs.ref(a.get("cited"))])
-        h.append("<h3>Base anchorage</h3><p>Net uplift (0.9D+1.0W) is a required case; concrete "
+        h.append("<h3>Base anchorage</h3><p>Net uplift (0.9D + 1.0W) is a required case; concrete "
                  "embedment is designed to ACI 318-19 Ch. 17 with the interface forces below.</p>"
                  + _ref_table(["Base", "Selection", "V (kip)", "Net uplift T (kip)", "M<sub>base</sub> (kip-in.)",
                                "Limit state(s)", "Design strength", "D/C", "Ref."], rows, refs))
@@ -5058,9 +5277,9 @@ def _cfs_capacity_chapter(cfg, pkg):
             a = max(an, key=lambda e: _fnum(e.get("DC")) or 0.0)
             custom, _cd = _cfs_custom_model(cfg, pkg)
             if custom and a.get("T_design_kip") is None:
-                rows.append(["Net-uplift anchorage (0.9D+1.0W)", "base anchorage table, D/C %s" % _cdc(a.get("DC"))])
+                rows.append(["Net-uplift anchorage (0.9D + 1.0W)", "base anchorage table, D/C %s" % _cdc(a.get("DC"))])
             else:
-                rows.append(["Net-uplift anchorage (0.9D+1.0W)", "base anchorage table, uplift %s kip (%s), D/C %s" % (
+                rows.append(["Net-uplift anchorage (0.9D + 1.0W)", "base anchorage table, uplift %s kip (%s), D/C %s" % (
                     _num_or(a.get("T_design_kip", a.get("T_net_uplift_kip"))), _pt(a.get("uplift_combo")),
                     _cdc(a.get("DC")))])
         if rows:
@@ -5123,7 +5342,10 @@ def _cfs_block_html(v, depth=0):
         for k, x in v.items():
             if x in (None, "", [], {}):
                 continue
-            if isinstance(x, dict) and depth < 3:
+            if isinstance(x, dict) and x and all(re.match(r"^(?:[sSL]?\d+)$", str(q)) for q in x) and \
+                    all(not isinstance(y, (dict, list)) for y in x.values()):
+                rows.append([_hk(k), ", ".join("%s: %s" % (_html.escape(str(q)), _cn(y)) for q, y in x.items())])
+            elif isinstance(x, dict) and depth < 3:
                 rows.append([_hk(k), _cfs_block_html(x, depth + 1)])
             elif isinstance(x, list) and any(isinstance(y, dict) for y in x) and depth < 3:
                 rows.append([_hk(k), "".join(_cfs_block_html(y, depth + 1) for y in x)])
@@ -5237,7 +5459,7 @@ _QA_CATS = (
                                     "capacity-design demands (T<sub>cd</sub>, &Omega;<sub>0</sub>-capped shear)",
      r"capacity-design|T_cd|amplification not applied|shear anchorage designed|requires check"),
     ("Anchorage chain", "hold-down devices within their class envelope (else a continuous rod); the "
-                        "0.9D+1.0W net-uplift path designed",
+                        "0.9D + 1.0W net-uplift path designed",
      r"class envelope|NET-UPLIFT|uplift path"),
     ("Code basis", "screw &phi; = 0.50 / &Omega; = 3.00 and the screw's own shear strength (S100-16 w/S2-20 J4); "
                    "ASTM A449 rod strength by diameter; interaction &ge; its axial term (H1-1b aware); "
@@ -5273,6 +5495,7 @@ def _cfs_qa_section(name, root, cfg, res, pkg, annex=None, num=7):
         else:
             other.append(i)
     rows = []
+    _na_any = False
     _portal = _cfs_is_portal(cfg)
     _cd_on = _cfs_capacity_design_required(cfg)
     _has_hd = bool(pkg.get("holddowns")) or bool(pkg.get("anchorage") and not _portal)
@@ -5287,11 +5510,16 @@ def _cfs_qa_section(name, root, cfg, res, pkg, annex=None, num=7):
             if cat.startswith("Capacity design") and not _cd_on:
                 continue
             if cat == "Anchorage chain" and not _has_hd and not _windless:
-                desc = "the 0.9D+1.0W net-uplift path at the column bases designed"
+                desc = "the 0.9D + 1.0W net-uplift path at the column bases designed"
             if cat == "Code basis" and _portal:
                 desc = ("screw &phi; = 0.50 / &Omega; = 3.00 and the screw's own shear strength (S100-16 w/S2-20 J4); "
                         "interaction &ge; its axial term (H1-1b aware); ASCE 7-22 snow factors; no preliminary "
                         "(unchecked) values used as the design basis")
+            _na = _cfs_qa_not_applicable(cat, cfg, pkg)
+            if _na:          # ... or, where the category exists but has nothing to check here, says why
+                _na_any = True
+                rows.append([cat, desc, "<span class='na'>not applicable</span> (%s)" % _na])
+                continue
         rows.append([cat, desc, "<span class='pass'>PASS</span>" if not n else
                      "<span class='fail'>%d item(s)</span>" % n])
     if res and not _cfs_is_portal(cfg):
@@ -5311,10 +5539,12 @@ def _cfs_qa_section(name, root, cfg, res, pkg, annex=None, num=7):
     if other:
         rows.append(["Other", "remaining screens", "<span class='fail'>%d item(s)</span>" % len(other)])
     h.append("<h3>%d.1 Checks performed on this package</h3>" % num + _table(["Check", "Scope", "Result"], rows))
+    _nv = _cfs_and([_cfs_has_holddowns(pkg) and "specific hold-down and rod products",
+                    _cfs_anchorage_in_scope(cfg, pkg) and "concrete anchorage", "delegated items"])
     h.append("<p class='tnote'>Not verified by this report: the design strengths themselves (AISI table values "
              "and equations) are the designer's and are traceable through the references, the sample "
-             "calculations and Appendix A; specific hold-down and rod products, concrete anchorage and "
-             "delegated items are confirmed against the stated demands on the drawings and submittals.</p>")
+             "calculations and Appendix A; %s are confirmed against the stated demands on the drawings and "
+             "submittals.</p>" % _nv)
     # module verdicts surfaced
     mv = []
     dt = [d for d in pkg.get("drift_table") or [] if isinstance(d, dict)]
@@ -5376,12 +5606,13 @@ def _cfs_qa_section(name, root, cfg, res, pkg, annex=None, num=7):
                  "package is final:</p>" % (num, len(issues))
                  + _table(["#", "Item"], [[str(n + 1), _pt(i)] for n, i in enumerate(issues)]))
     else:
-        h.append("<h3>%d.3 Self-consistency result</h3><p><span class='pass'>PASS</span> &mdash; every check "
-                 "listed in %d.1 passed for this package.</p>" % (num, num))
+        h.append("<h3>%d.3 Self-consistency result</h3><p><span class='pass'>PASS</span> &mdash; every %scheck "
+                 "listed in %d.1 passed for this package.</p>" % (num, "applicable " if _na_any else "", num))
     if annex:
-        h.append("<p class='tnote'>Design-process records (source verification of the cited standards, %sthe "
-                 "design log) are in the QA annex: <a href='%s'>%s</a>.</p>"
-                 % ("analysis screening notes and " if _cfs_annex_screens(res, pkg) else "", annex, annex))
+        # the screening notes are named only when the annex prints them (one test, shared with the annex writer)
+        h.append("<p class='tnote'>Design-process records (%s) are in the QA annex: <a href='%s'>%s</a>.</p>" % (
+            _cfs_and(["source verification of the cited standards",
+                      _cfs_annex_screens(res, pkg) and "analysis screening notes", "the design log"]), annex, annex))
     return "".join(h)
 
 
@@ -5473,6 +5704,34 @@ _CFS_APPX_SKIP = {"id", "checks", "rows", "waived", "basis", "note", "notes", "i
                   "at_neg", "framework_slot"}
 
 
+_CFS_MEMBER_WORD = {"col": "frame columns", "raf": "frame rafters", "kb": "knee braces"}
+_CFS_JOINT_WORD = {"knee": "column-to-rafter knee connection", "apex": "ridge connection at the apex"}
+
+
+def _cfs_item_title(key, it, cid):
+    """(Appendix A card title, field shown in the title) for a portal package's frame members, joints, bases
+    and schedules: a readable name followed by the element label, which the model key, the Section 4 tables and
+    the 3D model view use (the package keys themselves are unchanged)."""
+    s_, lab, used = str(cid), None, None
+    if key == "members" and s_.startswith("frame-"):
+        m = str(it.get("member") or "")
+        lab = _CFS_MEMBER_WORD.get(m) or (m if len(m) > 4 else None)
+        used = "member" if lab else None
+    elif key == "connections" and s_.startswith("conn-"):
+        lab = _CFS_JOINT_WORD.get(str(it.get("joint") or "")) or "%s connection" % s_[5:]
+        used = "joint" if it.get("joint") in _CFS_JOINT_WORD else None
+    elif key == "anchorage" and s_ == "base-anchor":
+        lab = "column-base anchorage"
+    elif key == "schedules" and s_.startswith("sched-"):
+        nm = str(it.get("schedule") or s_[6:]).replace("_", " ").strip()
+        head, qual = (re.split(r"\s+-{1,2}\s+|\s+[–—]\s+|:\s+", nm, maxsplit=1) + [""])[:2]
+        head = head if re.search(r"\bschedule$", head, re.I) else "%s schedule" % head
+        lab, used = ("%s, %s" % (head, qual) if qual else head), "schedule"    # 'purlin - x roof': 'Purlin schedule, x roof'
+    if not lab:
+        return _pt(cid), None
+    return ("%s %s" % (_pt(_cap1(lab)), ("&mdash; %s" if "(" in lab else "(%s)") % _pt(cid))), used
+
+
 def _cfs_appendix_calcs(pkg, cfg=None, res=None, name=None):
     """APPENDIX A: the referenced design-calculation record -- one card per designed item (inputs
     and demands, limit states, references, strengths, D/C, per-check breakdown). In a custom /
@@ -5480,6 +5739,7 @@ def _cfs_appendix_calcs(pkg, cfg=None, res=None, name=None):
     if not isinstance(pkg, dict):
         return ""
     custom = bool(cfg) and _cfs_custom_model(cfg, pkg)[0]
+    _portal_pkg = _cfs_is_portal(cfg) if cfg else bool(pkg.get("members") and not pkg.get("wall_lines"))
     seeds = _cfs_portal_seeds(name, cfg, res) if (custom and res and _cfs_is_portal(cfg)) else {}
     seed_by = {(g, e.get("id")): e for g in ("members", "connections", "anchorage")
                for e in seeds.get(g) or [] if isinstance(e, dict)}
@@ -5491,13 +5751,14 @@ def _cfs_appendix_calcs(pkg, cfg=None, res=None, name=None):
         cards.append("<h3>%s</h3>" % gtitle)
         for it in items:
             cid = it.get("id") or it.get("joint") or it.get("schedule") or "item"
+            title, t_used = _cfs_item_title(key, it, cid) if _portal_pkg else (_pt(cid), None)
             if it.get("waived"):
-                cards.append("<h4>%s</h4><p><b>WAIVED:</b> %s</p>" % (_pt(cid), _pt(it["waived"])))
+                cards.append("<h4>%s</h4><p><b>WAIVED:</b> %s</p>" % (title, _pt(it["waived"])))
                 continue
             rows = []
             keys = [k for k in _CFS_APPX_ORDER if k in it] + [k for k in it if k not in _CFS_APPX_ORDER]
             for k in keys:
-                if k in _CFS_APPX_SKIP:
+                if k in _CFS_APPX_SKIP or k == t_used:
                     continue
                 v = it[k]
                 if v in (None, "", [], {}):
@@ -5508,9 +5769,11 @@ def _cfs_appendix_calcs(pkg, cfg=None, res=None, name=None):
                     sv = "<b>%.3f</b>" % float(v)
                 elif k == "system" and isinstance(v, str):
                     sv = _pt(_SYS_SHORT.get(v, v))
+                elif k == "governing_combo" and isinstance(v, str):
+                    sv = _cfs_combo_label(v)
                 elif isinstance(v, str):
                     sv = _pt(v)
-                elif isinstance(v, dict) and k.endswith(("_by_story", "_by_level", "_by_story_kip")):
+                elif isinstance(v, dict) and ("_by_story" in k or "_by_level" in k):
                     sv = ", ".join("%s: %s" % (_html.escape(str(s_)), _cn(x)) for s_, x in v.items())
                 else:
                     sv = _cn(v)
@@ -5520,7 +5783,7 @@ def _cfs_appendix_calcs(pkg, cfg=None, res=None, name=None):
                 if se and k in se and _fnum(v) is not None and _same(v, se.get(k)):
                     continue        # an outline-frame (3D view) value the design model did not use: not printed
                 rows.append(["line shear, &rho;E (kip)" if (key == "wall_lines" and k == "V_kip") else _hk(k), sv])
-            card = "<h4>%s</h4>" % _pt(cid) + _table(["Field", "Value"], rows)
+            card = "<h4>%s</h4>" % title + _table(["Field", "Value"], rows)
             checks = [c for c in it.get("checks") or [] if isinstance(c, dict)]
             if checks:
                 crow = [[_pt(c.get("limit_state", c.get("name", "check"))), *_check_dem_cap(c),
@@ -5548,7 +5811,7 @@ def _cfs_appendix_calcs(pkg, cfg=None, res=None, name=None):
             "governing limit state, reference, design strength and D/C.</p>" + "".join(cards))
 
 
-def _cfs_iso_figure(cfg, name, res, pkg):
+def _cfs_iso_figure(cfg, name, res, pkg, probe=None):
     """Section-1 annotated ISOMETRIC of the building (static PNG) so the element labels are
     visually identifiable: wall lines '<dir>-<name>' at their plan positions and story levels
     's1..sN' (wall path); col_L/col_R/raf_L/raf_R, knee/apex/base and frame numbering (portal).
@@ -5569,11 +5832,18 @@ def _cfs_iso_figure(cfg, name, res, pkg):
     xs = [c[0] for c in nodes.values()]
     ys = [c[1] for c in nodes.values()]
     zs = [c[2] for c in nodes.values()]
-    dx, dy, dz = max(xs) - min(xs) or 1, max(ys) - min(ys) or 1, max(zs) - min(zs) or 1
+    import numpy as _np
+    from mpl_toolkits.mplot3d import proj3d
     fig = plt.figure(figsize=(16.0, 7.5))
     ax = fig.add_subplot(111, projection="3d")
-    ax.add_collection3d(Line3DCollection(segs, colors=cols, linewidths=0.9, alpha=0.9))
+    # the 3D axes keeps a square drawing box inside the wide figure: the artists are not clipped to it, and the
+    # zoom and the axes centre are fitted below so that the whole model (end walls and end bays included) fills
+    # the figure inside margins kept for the labels
+    lc = Line3DCollection(segs, colors=cols, linewidths=0.9, alpha=0.9)
+    lc.set_clip_on(False)
+    ax.add_collection3d(lc)
     portal = _cfs_is_portal(cfg)
+    ext = [tuple(float(v) for v in c) for c in nodes.values()]
     if not portal:
         from mpl_toolkits.mplot3d.art3d import Poly3DCollection
         z = [0.0]
@@ -5581,43 +5851,62 @@ def _cfs_iso_figure(cfg, name, res, pkg):
             z.append(z[-1] + hh * 12.0)
         Lx, Ly = cfg["plan_ft"][0] * 12.0, cfg["plan_ft"][1] * 12.0
         plates = [[(0, 0, zz), (Lx, 0, zz), (Lx, Ly, zz), (0, Ly, zz)] for zz in z[1:]]
-        ax.add_collection3d(Poly3DCollection(plates, facecolors="#7a8899", alpha=0.12,
-                                             edgecolors="#7a8899", linewidths=0.4))
-    try:
-        ax.set_box_aspect((dx, dy, dz), zoom=1.42)
-    except TypeError:
-        ax.set_box_aspect((dx, dy, dz))
+        pcol = Poly3DCollection(plates, facecolors="#7a8899", alpha=0.12, edgecolors="#7a8899", linewidths=0.4)
+        pcol.set_clip_on(False)
+        ax.add_collection3d(pcol)
+        ext += [(float(a), float(b), float(c)) for pl in plates for a, b, c in pl]
+        ext += [(Lx * 1.02, Ly * 0.40, 0.0), (Lx * 1.02, Ly * 0.62, 0.0)]          # north arrow
+        qv = ax.quiver(Lx * 1.02, Ly * 0.4, 0, 0, 0.14 * Ly, 0, color="k", arrow_length_ratio=0.35)
+        qv.set_clip_on(False)
+        ax.text(Lx * 1.02, Ly * 0.62, 0, "N (+Y)", fontsize=8, ha="left")
+    ex = _np.array(ext, dtype=float)
+    lo = ex.min(axis=0)
+    span = _np.maximum(ex.max(axis=0) - lo, 1.0)
+    ax.set_xlim(lo[0], lo[0] + span[0])
+    ax.set_ylim(lo[1], lo[1] + span[1])
+    ax.set_zlim(lo[2], lo[2] + span[2])
+    ax.set_proj_type("ortho")
     ax.view_init(elev=19, azim=-64)
     ax.set_axis_off()
-    ax.set_xlim(min(xs) - 0.08 * dx, max(xs) + 0.08 * dx)
-    ax.set_ylim(min(ys) - 0.08 * dy, max(ys) + 0.08 * dy)
-    ax.set_zlim(min(zs), max(zs) + 0.12 * dz)
-    ax.set_position((-0.02, -0.03, 1.04, 1.06))
-    from mpl_toolkits.mplot3d import proj3d
 
     def _ann(txt, tip, off_pts, color, fs=10):
         x2, y2, _ = proj3d.proj_transform(tip[0], tip[1], tip[2], ax.get_proj())
-        ax.annotate(txt, xy=(x2, y2), xytext=off_pts, textcoords="offset points",
-                    color=color, fontsize=fs, fontweight="bold",
-                    ha="center", va="center", annotation_clip=False,
-                    arrowprops=dict(arrowstyle="-", color=color, lw=1.2,
-                                    shrinkA=8, shrinkB=2, alpha=0.9))
-    if not portal:
-        for i, ln in enumerate(cfg["lines_x"]):
-            _ann("X-%s" % ln.name, (0.06 * Lx, ln.pos * 12.0, z[-1] * 0.55),
-                 (-70 - 24 * (i % 2), 12 * (i % 2)), "#b30000")
-        for i, ln in enumerate(cfg["lines_y"]):
-            _ann("Y-%s" % ln.name, (ln.pos * 12.0, 0.30 * Ly, z[-1]),
-                 (0, 55 + 16 * (i % 2)), "#006400")
-        for k in range(1, len(z)):
-            _ann("s%d" % k, (Lx, 0.0, (z[k - 1] + z[k]) / 2.0), (48, 0), "#444444", fs=9)
-        ax.quiver(Lx * 1.02, Ly * 0.4, 0, 0, 0.14 * Ly, 0, color="k", arrow_length_ratio=0.35)
-        ax.text(Lx * 1.02, Ly * 0.62, 0, "N (+Y)", fontsize=8, ha="left")
-        cap = ("Wall labels read <code>wall-&lt;dir&gt;-&lt;line&gt;-s&lt;story&gt;</code> (e.g. "
-               "<code>wall-X-%s-s2</code> = X-direction line %s at story 2); hold-downs are "
-               "<code>hd-&lt;dir&gt;-&lt;line&gt;</code>. Blue = chord studs, grey = tracks, orange = "
-               "panel / strap diagonals." % (_html.escape(cfg["lines_x"][0].name), _html.escape(cfg["lines_x"][0].name)))
-    else:
+        return ax.annotate(txt, xy=(x2, y2), xytext=off_pts, textcoords="offset points",
+                           color=color, fontsize=fs, fontweight="bold",
+                           ha="center", va="center", annotation_clip=False,
+                           arrowprops=dict(arrowstyle="-", color=color, lw=1.2,
+                                           shrinkA=8, shrinkB=2, alpha=0.9))
+
+    def _labels():
+        out = []
+        if not portal:
+            for i, ln in enumerate(cfg["lines_x"]):
+                out.append(_ann("X-%s" % ln.name, (0.06 * Lx, ln.pos * 12.0, z[-1] * 0.55),
+                                (-70 - 24 * (i % 2), 12 * (i % 2)), "#b30000"))
+            for i, ln in enumerate(cfg["lines_y"]):
+                out.append(_ann("Y-%s" % ln.name, (ln.pos * 12.0, 0.30 * Ly, z[-1]), (0, 55 + 16 * (i % 2)),
+                                "#006400"))
+            for k in range(1, len(z)):
+                out.append(_ann("s%d" % k, (Lx, 0.0, (z[k - 1] + z[k]) / 2.0), (48, 0), "#444444", fs=9))
+            return out
+        out.append(_ann("col_L", (0.0, 0.0, He * 0.5), (-55, 0), "#b30000"))
+        out.append(_ann("col_R", (span_x, 0.0, He * 0.5), (55, -10), "#b30000"))
+        for k, xk in enumerate(xs_[1:-1], 1):
+            out.append(_ann("col_I%d" % k, (xk, 0.0, He * 0.45), (28, -38), "#b30000"))
+            out.append(_ann("valley", (xk, 0.0, He), (-10, 48), "#006400", fs=9))
+        out.append(_ann("raf_L", (s1 * 0.30, 0.0, He + 0.60 * (apx[0] - He)), (-20, -55), "#b30000"))
+        out.append(_ann("raf_R", (span_x - sN * 0.28, 0.0, He + 0.55 * (apx[-1] - He)), (60, 25), "#b30000"))
+        out.append(_ann("knee", (0.0, 0.0, He), (-45, 40), "#006400"))
+        for k, ak in enumerate(apx):
+            out.append(_ann("apex/ridge" if len(apx) == 1 else "ridge %d" % (k + 1),
+                            ((xs_[k] + xs_[k + 1]) / 2.0, 0.0, ak), (0, 55), "#006400"))
+        out.append(_ann("base", (0.0, 0.0, 0.0), (-30, -35), "#006400"))
+        for j in (0, nf - 1):
+            out.append(_ann("frame %d" % (j + 1), (span_x / 2.0, j * cfg["spacing_ft"] * 12.0, 0.0),
+                            (0, -45), "#555555", fs=9))
+        return out
+
+    if portal:
         _sp = cfg.get("spans") or []
         He = cfg["eave_ft"] * 12.0
         if _sp:                                   # multi-span: every column line and ridge
@@ -5628,24 +5917,56 @@ def _cfs_iso_figure(cfg, name, res, pkg):
         else:
             xs_ = [0.0, float(cfg["span_ft"]) * 12.0]
             apx = [float(cfg.get("apex_ft") or cfg["eave_ft"]) * 12.0]
-        span, Ha = xs_[-1], max(apx)
+        span_x = xs_[-1]
         s1, sN = xs_[1] - xs_[0], xs_[-1] - xs_[-2]
-        _ann("col_L", (0.0, 0.0, He * 0.5), (-55, 0), "#b30000")
-        _ann("col_R", (span, 0.0, He * 0.5), (55, -10), "#b30000")
-        for k, xk in enumerate(xs_[1:-1], 1):
-            _ann("col_I%d" % k, (xk, 0.0, He * 0.45), (28, -38), "#b30000")
-            _ann("valley", (xk, 0.0, He), (-10, 48), "#006400", fs=9)
-        _ann("raf_L", (s1 * 0.30, 0.0, He + 0.60 * (apx[0] - He)), (-20, -55), "#b30000")
-        _ann("raf_R", (span - sN * 0.28, 0.0, He + 0.55 * (apx[-1] - He)), (60, 25), "#b30000")
-        _ann("knee", (0.0, 0.0, He), (-45, 40), "#006400")
-        for k, ak in enumerate(apx):
-            _ann("apex/ridge" if len(apx) == 1 else "ridge %d" % (k + 1),
-                 ((xs_[k] + xs_[k + 1]) / 2.0, 0.0, ak), (0, 55), "#006400")
-        _ann("base", (0.0, 0.0, 0.0), (-30, -35), "#006400")
-        nf = int(round(dy / (cfg["spacing_ft"] * 12.0))) + 1
-        for j in (0, nf - 1):
-            _ann("frame %d" % (j + 1), (span / 2.0, j * cfg["spacing_ft"] * 12.0, 0.0),
-                 (0, -45), "#555555", fs=9)
+        nf = int(round((max(ys) - min(ys)) / (cfg["spacing_ft"] * 12.0))) + 1
+    W_in, H_in = fig.get_size_inches()
+    pad = [125.0, 100.0, 50.0, 85.0]              # left, right, bottom, top margins for the labels (points)
+    zoom, cx, cy, anns = 1.0, 0.5, 0.5, []
+    for _attempt in range(4):
+        for _it in range(4):                      # scale the projected model into the margins and centre it
+            ax.set_box_aspect(tuple(span), zoom=zoom)
+            ax.set_position((cx - 0.5, cy - 0.5, 1.0, 1.0))
+            fig.canvas.draw()
+            px, py, _pz = proj3d.proj_transform(ex[:, 0], ex[:, 1], ex[:, 2], ax.get_proj())
+            f = fig.transFigure.inverted().transform(ax.transData.transform(_np.column_stack([px, py])))
+            (bx0, by0), (bx1, by1) = f.min(axis=0), f.max(axis=0)
+            tx0, tx1 = pad[0] / 72.0 / W_in, 1.0 - pad[1] / 72.0 / W_in
+            ty0, ty1 = pad[2] / 72.0 / H_in, 1.0 - pad[3] / 72.0 / H_in
+            sc = min((tx1 - tx0) / max(bx1 - bx0, 1e-9), (ty1 - ty0) / max(by1 - by0, 1e-9))
+            zoom *= sc
+            cx = (tx0 + tx1) / 2.0 - sc * ((bx0 + bx1) / 2.0 - cx)
+            cy = (ty0 + ty1) / 2.0 - sc * ((by0 + by1) / 2.0 - cy)
+        ax.set_box_aspect(tuple(span), zoom=zoom)
+        ax.set_position((cx - 0.5, cy - 0.5, 1.0, 1.0))
+        fig.canvas.draw()
+        for a_ in anns:
+            a_.remove()
+        anns = _labels()
+        fig.canvas.draw()
+        rnd = fig.canvas.get_renderer()
+        Wp, Hp = W_in * fig.dpi, H_in * fig.dpi
+        bbs = [a_.get_window_extent(rnd) for a_ in anns]     # the 3D north-arrow text sits inside the right margin
+        if not bbs:
+            break
+        k_pt = 72.0 / fig.dpi
+        over = [max(0.0, -min(b.x0 for b in bbs)) * k_pt, max(0.0, max(b.x1 for b in bbs) - Wp) * k_pt,
+                max(0.0, -min(b.y0 for b in bbs)) * k_pt, max(0.0, max(b.y1 for b in bbs) - Hp) * k_pt]
+        if not any(o > 0.5 for o in over):
+            break
+        cap = (0.3 * W_in * 72.0, 0.3 * W_in * 72.0, 0.3 * H_in * 72.0, 0.3 * H_in * 72.0)    # the model keeps >= 40 %
+        pad = [min(p_ + (o + 8.0 if o > 0.5 else 0.0), c_) for p_, o, c_ in zip(pad, over, cap)]
+    if isinstance(probe, dict):                  # the fitted model extent (figure fraction) and the clipping flags
+        px, py, _pz = proj3d.proj_transform(ex[:, 0], ex[:, 1], ex[:, 2], ax.get_proj())
+        f = fig.transFigure.inverted().transform(ax.transData.transform(_np.column_stack([px, py])))
+        probe.update(extent=(float(f[:, 0].min()), float(f[:, 0].max()), float(f[:, 1].min()), float(f[:, 1].max())),
+                     clipped=[bool(c_.get_clip_on()) for c_ in ax.collections], zoom=zoom)
+    if not portal:
+        cap = ("Wall labels read <code>wall-&lt;dir&gt;-&lt;line&gt;-s&lt;story&gt;</code> (e.g. "
+               "<code>wall-X-%s-s2</code> = X-direction line %s at story 2); hold-downs are "
+               "<code>hd-&lt;dir&gt;-&lt;line&gt;</code>. Blue = chord studs, grey = tracks, orange = "
+               "panel / strap diagonals." % (_html.escape(cfg["lines_x"][0].name), _html.escape(cfg["lines_x"][0].name)))
+    else:
         cap = ("Element labels: <code>frame-col</code> / <code>frame-raf</code> (columns col_L/col_R%s, "
                "rafters raf_L/raf_R%s), <code>conn-knee</code> / <code>conn-apex</code> (joints), "
                "<code>base-anchor</code> (bases). Blue = columns, grey = rafters, purlins and girts, "

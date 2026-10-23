@@ -93,18 +93,18 @@ def test_no_wind_exposure_has_no_wind_case_wording(tmp_path):
     cap = _text(RPT._cfs_capacity_chapter(cfg, pkg))
     assert "Wind design of the lateral walls" not in cap
     hd = _text(RPT._cfs_holddown_schedule(pkg, cfg))
-    assert "wind = 0.9D+1.0W" not in hd and "no wind case (no wind exposure)" in hd
+    assert "wind = 0.9D + 1.0W" not in hd and "no wind case (no wind exposure)" in hd
     an = _text(RPT._cfs_anchorage_schedule(pkg, cfg))
     assert "and wind unit shears" not in an and "ρ-ELF unit shears (no wind exposure)" in an
     qa = _text(RPT._cfs_qa_section("gyp", str(tmp_path), cfg, {}, pkg))
-    assert "0.9D+1.0W net-uplift path" not in qa and "no wind net-uplift case (no wind exposure)" in qa
+    assert "0.9D + 1.0W net-uplift path" not in qa and "no wind net-uplift case (no wind exposure)" in qa
 
 
 def test_wind_exposure_keeps_the_wind_case_wording():
     cfg = _gyp(wind=dict(V=115.0, exposure="C"))
     pkg = CP.build_package("gypw", cfg, CE.run(cfg))
     assert pkg["combos_note"] == CP.COMBOS_NOTE
-    assert "wind = 0.9D+1.0W" in _text(RPT._cfs_holddown_schedule(pkg, cfg))
+    assert "wind = 0.9D + 1.0W" in _text(RPT._cfs_holddown_schedule(pkg, cfg))
     assert "and wind unit shears" in _text(RPT._cfs_anchorage_schedule(pkg, cfg))
 
 

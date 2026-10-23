@@ -225,8 +225,8 @@ def test_existing_frames_wording(tmp_path):
     ("T_used_s", "T used (s)"), ("A_sf", "A (sf)"), ("strength_loss_pct", "strength loss (%)"),
     ("V_mph", "V (mph)"), ("t_min_mil", "t min (mil)"), ("slip_rotation_rad", "slip rotation (rad)"),
     ("unit_weight_pcf", "unit weight (pcf)"), ("K_kipin_rad", "K (kip-in./rad)"),
-    ("k_rot_min_kipin_per_rad", "k rot min (kip-in./rad)"), ("Pu_kip_per_ft", "Pu (kip/ft)"),
-    ("Ta (s)", "Ta (s)"), ("bolts", "bolts")])
+    ("k_rot_min_kipin_per_rad", "k rot min (kip-in./rad)"), ("Pu_kip_per_ft", "P<sub>u</sub> (kip/ft)"),
+    ("Ta (s)", "T<sub>a</sub> (s)"), ("bolts", "bolts")])
 def test_unit_suffixes(key, label):
     assert RPT._hk(key) == label
 
