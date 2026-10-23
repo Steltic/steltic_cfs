@@ -1659,7 +1659,9 @@ def _cn(v, nd=None):
             return s + "0" if s.endswith(".") else s
         if a >= 0.001:
             return "%.3g" % v
-        return "%.2e" % v
+        dec = 2 - int(math.floor(math.log10(a)))            # three significant figures, fixed notation (no 6.00e-05)
+        s = ("%%.%df" % dec) % v
+        return s.rstrip("0").rstrip(".") if "." in s else s
     if isinstance(v, dict):
         items = [(k, x) for k, x in v.items() if x not in (None, "", [], {})]
         return "; ".join("%s: %s" % (_hk(k), _cn(x)) for k, x in items) or "&mdash;"
@@ -1732,7 +1734,20 @@ _HK = {"DC": "D/C", "v_unit_plf": "seismic unit shear, &rho;E (plf)",
        "elf_self_check": "ELF self-check", "type_ii_basis": "Type II basis",
        "type_ii_limitations": "Type II limitations", "type_ii_Ca_table": "Type II C<sub>a</sub> table",
        "purlin_girt_I621_conditions": "purlin and girt conditions of AISI S100 I6.2.1",
-       "rho_by_dir": "redundancy factor &rho; by direction", "two_stage_note": "two-stage procedure note"}
+       "rho_by_dir": "redundancy factor &rho; by direction", "two_stage_note": "two-stage procedure note",
+       # record fields that otherwise print as spelled-out Greek or with a bare unit word (R21k)
+       "P_cum_kip_by_story_design": "cumulative axial by story, design (kip)",
+       "demand_kip_by_level": "demand by level (kip)", "Omega_E_by_story": "&Omega;<sub>E</sub> by story",
+       "vn_plf_by_story": "v<sub>n</sub> by story (plf)",
+       "v_f_plf_by_story": "finish strength v<sub>finish</sub> by story (plf)",
+       "phi_vn_plf": "&phi;v<sub>n</sub> (plf)", "phiMn_kipin": "&phi;M<sub>n</sub> (kip-in.)",
+       "phiVn_kip": "&phi;V<sub>n</sub> (kip)", "phiRn_kip": "&phi;R<sub>n</sub> (kip)",
+       "phiRn_plf": "&phi;R<sub>n</sub> (plf)", "phiPn_kip": "&phi;P<sub>n</sub> (kip)",
+       "phiTn_kip": "&phi;T<sub>n</sub> (kip)", "delta_SS_in": "&delta;<sub>SS</sub> (in.)",
+       "theta_max": "&theta;<sub>max</sub>", "pct_full_height": "full-height sheathing (%)",
+       "story_stiffness_kip_per_inch": "story stiffness (kip/in.)", "V_story_over_V": "story shear / V",
+       "bays_below_cm": "bays below the CM", "bays_above_cm": "bays above the CM",
+       "H_over_400_in": "limit H/400 (in.)", "ok": "OK"}
 _HK_UNITS = (("_kipin_per_rad", "kip-in./rad"), ("_kipin_rad", "kip-in./rad"),
              ("_kip_per_in", "kip/in."), ("_kip_per_ft", "kip/ft"),
              ("_kip_in", "kip-in."), ("_kipin", "kip-in."), ("_kip_ft", "kip-ft"),
@@ -2716,6 +2731,10 @@ def _grounding_check(cfg, name, pkg):
             mm = _re.search(r"\[([A-Za-z0-9_]+)\]", r.get("detail", ""))
             if mm: col[mm.group(1)] = col.get(mm.group(1), 0) + 1
     def n(c): return col.get(c, 0)
+
+    def nl(c):                                       # "1 provision look-up" / "3 provision look-ups"
+        k = n(c)
+        return "%d provision look-up%s" % (k, "" if k == 1 else "s")
     # ALSO credit grounding from the CITED CLAUSES in calc_package.json (not the activity log alone), so a
     # filled, RAG-grounded package is recognised even if the auto-logger did not record the queries (P5).
     def _cited(obj):
@@ -2752,14 +2771,14 @@ def _grounding_check(cfg, name, pkg):
                      ev, ("&mdash;" if not required else ("grounded" if ok else "<b>MISSING</b>"))])
     row("AISI S100 &mdash; member/connection limit states (EWM)", True,
         n("engineering_standards_S100") > 0 or cite_s100,
-        f"{n('engineering_standards_S100')} provision look-ups" + (" + cited in the calculation package" if cite_s100 else ""))
+        nl("engineering_standards_S100") + (" + cited in the calculation package" if cite_s100 else ""))
     row("AISI S240 &mdash; framing rules (studs/track/built-up/bracing/trusses)", is_wall,
         n("engineering_standards_S240") > 0 or cite_s240,
-        f"{n('engineering_standards_S240')} provision look-ups" + (" + cited in the calculation package" if cite_s240 else ""),
+        nl("engineering_standards_S240") + (" + cited in the calculation package" if cite_s240 else ""),
         na="n/a (no light-frame walls)")
     row("AISI S400 &mdash; seismic wall/strap/SBMF capacities + capacity design",
         needs_s400, n("engineering_standards_S400") > 0 or has_cap or cite_s400,
-        f"{n('engineering_standards_S400')} provision look-ups" + (" + capacity-design record" if has_cap else "")
+        nl("engineering_standards_S400") + (" + capacity-design record" if has_cap else "")
         + (" + cited in the calculation package" if cite_s400 else ""),
         na="n/a (no S400 seismic system, or R = 3 in SDC B/C per S400 A1.2.3)")
     row("Connections verified (S100 Ch. J / fastener schedules)", True, has_conn or wall_sched,
@@ -3567,7 +3586,12 @@ def _cfs_codes_rows(cfg, pkg):
     if not portal or pkg.get("studs") or pkg.get("wall_lines"):
         rows.append(["AISI S240-20", "cold-formed steel structural framing (studs, track, joists, "
                                      "headers, built-up members, bracing)"])
-    rows.append(["AISI S400-20", _cfs_s400_status(cfg, pkg)])
+    elif re.search(r"\bs\s*240\b", blob):           # a portal package that designs framing to S240 (trusses, studs)
+        rows.append(["AISI S240-20", "cold-formed steel structural framing designed in this package (studs, "
+                                     "track, trusses, bracing)"])
+    scope = (pkg or {}).get("s400_scope")           # the designer's statement of every S400 section used
+    rows.append(["AISI S400-20", _pt(scope) if isinstance(scope, str) and scope.strip()
+                 else _cfs_s400_status(cfg, pkg)])
     rows.append(["ACI 318-19 Ch. 17", "anchorage to concrete (anchor design forces handed to the "
                                       "foundation design)"])
     if re.search(r"\bweld", blob):
@@ -5141,7 +5165,7 @@ _CFS_PORTAL_SHOWN = {"members", "connections", "anchorage", "schedules", "drift_
                      "design_agent", "report_mode", "materials", "occupancy", "project_title",
                      "detailing", "seismic", "sbmf", "crane", "design_model", "custom_model",
                      "hand_model", "analysis_model", "component_mode", "elf_spot_check",
-                     "elf_self_check", "self_check"}
+                     "elf_self_check", "self_check", "s400_scope"}
 # design-process records: QA annex only (never the report body in publication mode)
 _CFS_HARNESS_KEYS = {"rag_grounding", "grounding", "corpus_defects", "rag_quality", "solution_notes",
                      "solution_note", "issues", "issues_log", "brief_notes", "brief", "citation_red_flags",
@@ -5183,7 +5207,7 @@ def _cfs_framework_checks_html(pkg):
                  "T<sub>upper</sub>; (d) upper-portion reactions amplified by "
                  "(R/&rho;)<sub>upper</sub>/(R/&rho;)<sub>lower</sub> &ge; 1.0 &mdash; %s</p>"
                  % _pt(ts.get("amplification_basis"))
-                 + _table(["Dir", "K<sub>upper</sub> (kip/in.)", "K<sub>lower</sub>", "ratio",
+                 + _table(["Dir", "K<sub>upper</sub> (kip/in.)", "K<sub>lower</sub> (kip/in.)", "ratio",
                            "T<sub>upper</sub> (s)", "T<sub>entire</sub> (s)", "T ratio", "Status",
                            "Notes"], rows))
         rx = ts.get("reactions_to_podium") or []
@@ -5355,10 +5379,26 @@ def _cfs_qa_section(name, root, cfg, res, pkg, annex=None, num=7):
         h.append("<h3>%d.3 Self-consistency result</h3><p><span class='pass'>PASS</span> &mdash; every check "
                  "listed in %d.1 passed for this package.</p>" % (num, num))
     if annex:
-        h.append("<p class='tnote'>Design-process records (source verification of the cited standards, "
-                 "analysis screening notes and the design log) are in the QA annex: "
-                 "<a href='%s'>%s</a>.</p>" % (annex, annex))
+        h.append("<p class='tnote'>Design-process records (source verification of the cited standards, %sthe "
+                 "design log) are in the QA annex: <a href='%s'>%s</a>.</p>"
+                 % ("analysis screening notes and " if _cfs_annex_screens(res, pkg) else "", annex, annex))
     return "".join(h)
+
+
+def _cfs_annex_screen_lists(res, pkg):
+    """(screening notes, wall-line gate flags) that the QA annex prints under "Analysis screening notes"."""
+    notes = list((pkg or {}).get("preflight_warnings") or []) + list((res or {}).get("preflight_warnings") or [])
+    gate = []
+    for dd in ((res or {}).get("directions") or {}).values():
+        gate += ["model vs tributary distribution: %s" % re.sub(r"\s*--\s*justify\b.*$", "", str(f))
+                 for f in dd.get("gate_flags", [])]
+    return notes, gate
+
+
+def _cfs_annex_screens(res, pkg):
+    """True when the QA annex has an "Analysis screening notes" section (the Section 7 pointer names it only then)."""
+    notes, gate = _cfs_annex_screen_lists(res, pkg)
+    return bool(notes or gate)
 
 
 def _cfs_write_qa_annex(name, cfg, res, pkg, root, qa_num=7):
@@ -5380,11 +5420,7 @@ def _cfs_write_qa_annex(name, cfg, res, pkg, root, qa_num=7):
         for k, v in blocks.items():
             parts.append("<h3>%s</h3>" % _cap1(_hk(k)))
             parts.append("<pre>%s</pre>" % _html.escape(v if isinstance(v, str) else json.dumps(v, indent=1)[:20000]))
-    notes = list((pkg or {}).get("preflight_warnings") or []) + list((res or {}).get("preflight_warnings") or [])
-    gate = []
-    for dd in ((res or {}).get("directions") or {}).values():
-        gate += ["model vs tributary distribution: %s" % re.sub(r"\s*--\s*justify\b.*$", "", str(f))
-                 for f in dd.get("gate_flags", [])]
+    notes, gate = _cfs_annex_screen_lists(res, pkg)
     if notes or gate:
         parts.append("<h2>Analysis screening notes</h2><p>Screens the analysis raises for the engineer to evaluate; "
                      "the evaluation recorded in the calculation package follows each group.</p>")
