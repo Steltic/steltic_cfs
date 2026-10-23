@@ -1659,7 +1659,9 @@ def _cn(v, nd=None):
             return s + "0" if s.endswith(".") else s
         if a >= 0.001:
             return "%.3g" % v
-        return "%.2e" % v
+        dec = 2 - int(math.floor(math.log10(a)))            # three significant figures, fixed notation (no 6.00e-05)
+        s = ("%%.%df" % dec) % v
+        return s.rstrip("0").rstrip(".") if "." in s else s
     if isinstance(v, dict):
         items = [(k, x) for k, x in v.items() if x not in (None, "", [], {})]
         return "; ".join("%s: %s" % (_hk(k), _cn(x)) for k, x in items) or "&mdash;"
@@ -1732,7 +1734,20 @@ _HK = {"DC": "D/C", "v_unit_plf": "seismic unit shear, &rho;E (plf)",
        "elf_self_check": "ELF self-check", "type_ii_basis": "Type II basis",
        "type_ii_limitations": "Type II limitations", "type_ii_Ca_table": "Type II C<sub>a</sub> table",
        "purlin_girt_I621_conditions": "purlin and girt conditions of AISI S100 I6.2.1",
-       "rho_by_dir": "redundancy factor &rho; by direction", "two_stage_note": "two-stage procedure note"}
+       "rho_by_dir": "redundancy factor &rho; by direction", "two_stage_note": "two-stage procedure note",
+       # record fields that otherwise print as spelled-out Greek or with a bare unit word (R21k)
+       "P_cum_kip_by_story_design": "cumulative axial by story, design (kip)",
+       "demand_kip_by_level": "demand by level (kip)", "Omega_E_by_story": "&Omega;<sub>E</sub> by story",
+       "vn_plf_by_story": "v<sub>n</sub> by story (plf)",
+       "v_f_plf_by_story": "finish strength v<sub>finish</sub> by story (plf)",
+       "phi_vn_plf": "&phi;v<sub>n</sub> (plf)", "phiMn_kipin": "&phi;M<sub>n</sub> (kip-in.)",
+       "phiVn_kip": "&phi;V<sub>n</sub> (kip)", "phiRn_kip": "&phi;R<sub>n</sub> (kip)",
+       "phiRn_plf": "&phi;R<sub>n</sub> (plf)", "phiPn_kip": "&phi;P<sub>n</sub> (kip)",
+       "phiTn_kip": "&phi;T<sub>n</sub> (kip)", "delta_SS_in": "&delta;<sub>SS</sub> (in.)",
+       "theta_max": "&theta;<sub>max</sub>", "pct_full_height": "full-height sheathing (%)",
+       "story_stiffness_kip_per_inch": "story stiffness (kip/in.)", "V_story_over_V": "story shear / V",
+       "bays_below_cm": "bays below the CM", "bays_above_cm": "bays above the CM",
+       "H_over_400_in": "limit H/400 (in.)", "ok": "OK"}
 _HK_UNITS = (("_kipin_per_rad", "kip-in./rad"), ("_kipin_rad", "kip-in./rad"),
              ("_kip_per_in", "kip/in."), ("_kip_per_ft", "kip/ft"),
              ("_kip_in", "kip-in."), ("_kipin", "kip-in."), ("_kip_ft", "kip-ft"),

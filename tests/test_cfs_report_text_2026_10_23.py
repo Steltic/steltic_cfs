@@ -114,3 +114,18 @@ def test_codes_table_prints_the_stated_S400_scope_and_section_6_does_not_repeat_
     assert "s400_scope" in RPT._CFS_PORTAL_SHOWN and "S400 scope" not in _text(RPT._cfs_extra_blocks(pkg))
     row = [r for r in RPT._cfs_codes_rows(cfg, {"members": []}) if r[0] == "AISI S400-20"][0]
     assert "Section E4" in _text(row[1])
+
+
+# ---------------- 5. record labels and small numbers ----------------
+
+def test_record_fields_print_readable_labels():
+    assert RPT._hk("phi_vn_plf") == "&phi;v<sub>n</sub> (plf)"
+    assert RPT._hk("P_cum_kip_by_story_design") == "cumulative axial by story, design (kip)"
+    assert RPT._hk("story_stiffness_kip_per_inch") == "story stiffness (kip/in.)"
+    assert RPT._hk("bays_below_cm") == "bays below the CM" and RPT._hk("ok") == "OK"
+    assert RPT._hk("demand_kip_by_level") == "demand by level (kip)"
+
+
+def test_small_numbers_print_in_fixed_notation():
+    assert RPT._cn(6.0e-05) == "0.00006" and RPT._cn(9.7e-04) == "0.00097" and RPT._cn(-1.234e-07) == "-0.000000123"
+    assert RPT._cn(0.0015) == "0.0015" and RPT._cn(0.25) == "0.25" and "e-" not in RPT._cn(3.3e-06)
