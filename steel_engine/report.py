@@ -1765,6 +1765,7 @@ def _cap_num(x):
 
 
 _HK = {"DC": "D/C", "v_unit_plf": "seismic unit shear, &rho;E (plf)",
+       "phiPn_c": "&phi;P<sub>n</sub> (kip)", "phiMn_c": "&phi;M<sub>n</sub> (kip-in.)",
        "v_wind_plf": "wind unit shear, 1.0W (plf)", "V_kip": "shear V (kip)",
        "T_cum_kip": "ELF&middot;&rho; overturning tension (kip)",
        "T_cd_seed_kip": "capacity-design tension T<sub>cd</sub> (kip)",
