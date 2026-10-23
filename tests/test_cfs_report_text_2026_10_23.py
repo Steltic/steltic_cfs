@@ -47,7 +47,7 @@ def test_qa_pointer_omits_screening_notes_when_the_annex_has_none(tmp_path):
     res, pkg = _no_screens(res, pkg)
     assert not RPT._cfs_annex_screens(res, pkg)
     txt = _text(RPT._cfs_qa_section("gyp", str(tmp_path), cfg, res, pkg, annex="qa_annex.html"))
-    assert "Design-process records (source verification of the cited standards, the design log) are in the QA annex" in txt
+    assert "Design-process records (source verification of the cited standards and the design log) are in the QA annex" in txt
     assert "analysis screening notes" not in txt
 
 
