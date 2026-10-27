@@ -119,7 +119,7 @@ def test_wall_report_body_has_no_harness_text(wall_report):
     # the design-process records went to the QA annex, linked from the QA chapter
     assert "href='qa_annex.html'" in html
     annex = open(os.path.join(root, "qa_annex.html"), encoding="utf-8").read()
-    assert "Grounding verification" in annex and "CORRECTED vs my offline memory" in annex
+    assert "Source verification" in annex and "CORRECTED vs my offline memory" in annex   # C7 (Oct 27) heading
     assert "chunk E2.3 truncated" in annex and "Design log" in annex
 
 

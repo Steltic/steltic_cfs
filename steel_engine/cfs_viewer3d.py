@@ -25,10 +25,41 @@ _DIR = os.path.dirname(os.path.abspath(__file__))
 ORANGE = "#ff8a3d"
 
 _CAVEAT_COMMON = (
-    "D/C colors are read from design/calc_package_cfs.json (the agent-filled check of "
-    "record) — grey members have no package slot. Animated shapes are STATIC deflection "
-    "patterns (per-story drift profiles / combo deflections), not eigenmodes. "
+    "D/C colors are the governing D/C of each member's design record in the calculation package "
+    "(the check of record); grey members have no design record. Animated shapes are static deflection "
+    "patterns (per-story drift profiles / combination deflections), not eigenmodes. "
     "North = +Y. Drag = orbit, scroll = zoom, right-drag = pan, click a member for details.")
+
+
+def _combo_txt(label):
+    """A combination as the report prints it (typeset ASCE 7 notation), never the analysis key."""
+    if not label or label == "?":
+        return None
+    try:
+        import report as _R
+        return _R._cfs_combo_label(label)
+    except Exception:
+        return _html.escape(str(label))
+
+
+def _num(v):
+    try:
+        return float(str(v).replace("in.", "").replace("in", "").strip())
+    except (TypeError, ValueError):
+        return None
+
+
+def _pkg_eave_sway(pkg):
+    """(sway in., H/x, case) of the report's serviceability row (drift_table 'eave_sway'), or None when the package
+    has none or carries it as outside the scope (existing frames)."""
+    for r in (pkg or {}).get("drift_table") or []:
+        if isinstance(r, dict) and str(r.get("check", "")).lower() == "eave_sway":
+            if r.get("waived"):
+                return None
+            v = _num(r.get("value_in", r.get("sway_in")))
+            if v is not None:
+                return v, r.get("H_over"), r.get("wind_case")
+    return None
 
 
 def _pkg_wall_dc(pkg):
@@ -52,6 +83,74 @@ def _pkg_chord(pkg):
             sec = str(s.get("section", "chord")).split(";")[0][:26]
             return (dc if isinstance(dc, (int, float)) else None, sec)
     return (None, "chord studs")
+
+
+# =============================================================== plan geometry (optional cfg keys)
+#   cfg['plan_outline_ft']        [(x, y), ...] ft, the plan outline (L, T, U, Z, cross ...), counter-clockwise or not
+#   cfg['plan_outline_by_story']  {story: [(x, y), ...]} the plate on top of that story where it differs (set-backs)
+#   cfg['line_plan_pos_ft']       {"X-<line>" or "<line>": ft} the drawn position of a wall line where the analysis
+#                                 position (WallLine.pos, tributary fit) differs from the plan position
+# Without them the plates are the bounding plan_ft rectangle and the lines sit at their analysis positions.
+def plan_outline(cfg, story=None):
+    """Plan outline [(x, y) ft] of the plate on top of `story` (1..N)."""
+    bys = cfg.get("plan_outline_by_story") or {}
+    if story is not None and (bys.get(story) or bys.get(str(story))):
+        return [tuple(map(float, v)) for v in (bys.get(story) or bys.get(str(story)))]
+    if cfg.get("plan_outline_ft"):
+        return [tuple(map(float, v)) for v in cfg["plan_outline_ft"]]
+    Lx, Ly = float(cfg["plan_ft"][0]), float(cfg["plan_ft"][1])
+    return [(0.0, 0.0), (Lx, 0.0), (Lx, Ly), (0.0, Ly)]
+
+
+def has_outline(cfg):
+    return bool(cfg.get("plan_outline_ft") or cfg.get("plan_outline_by_story"))
+
+
+def _inside(poly, x, y):
+    c = False
+    n = len(poly)
+    for i in range(n):
+        (x1, y1), (x2, y2) = poly[i], poly[(i + 1) % n]
+        if (y1 > y) != (y2 > y) and x < x1 + (y - y1) * (x2 - x1) / (y2 - y1):
+            c = not c
+    return c
+
+
+def plan_rects(poly):
+    """Rectangles (x0, x1, y0, y1) ft covering a rectilinear outline (grid cells whose centre is inside)."""
+    xs = sorted({p[0] for p in poly}); ys = sorted({p[1] for p in poly})
+    out = []
+    for a in range(len(xs) - 1):
+        for b in range(len(ys) - 1):
+            if _inside(poly, (xs[a] + xs[a + 1]) / 2.0, (ys[b] + ys[b + 1]) / 2.0):
+                out.append((xs[a], xs[a + 1], ys[b], ys[b + 1]))
+    return out
+
+
+def line_pos_ft(cfg, dirn, ln):
+    m = cfg.get("line_plan_pos_ft") or {}
+    v = m.get("%s-%s" % (dirn, ln.name), m.get(ln.name))
+    return float(v) if v is not None else float(ln.pos)
+
+
+def line_extent_ft(poly, dirn, pos):
+    """(lo, hi) ft of a wall line at `pos` within the outline: an X line runs along x at y = pos, a Y line along y."""
+    hits = []
+    for eps in (0.05, -0.05):
+        c = pos + eps
+        cuts = []
+        n = len(poly)
+        for i in range(n):
+            (x1, y1), (x2, y2) = poly[i], poly[(i + 1) % n]
+            if dirn == "X" and (y1 > c) != (y2 > c):
+                cuts.append(x1 + (c - y1) * (x2 - x1) / (y2 - y1))
+            if dirn == "Y" and (x1 > c) != (x2 > c):
+                cuts.append(y1 + (c - x1) * (y2 - y1) / (x2 - x1))
+        hits += cuts
+    if len(hits) < 2:
+        xs = [p[0] for p in poly]; ys = [p[1] for p in poly]
+        return (min(xs), max(xs)) if dirn == "X" else (min(ys), max(ys))
+    return min(hits), max(hits)
 
 
 # =============================================================== wall path
@@ -85,20 +184,24 @@ def _wall_data(cfg, name, res, pkg):
     sysname = str(cfg.get("system", ""))
     strap = sysname == "strap_braced"
 
-    for dirn, lines, dim in (("X", cfg["lines_x"], Lx), ("Y", cfg["lines_y"], Ly)):
+    base_poly = plan_outline(cfg, 1)
+    for dirn, lines in (("X", cfg["lines_x"]), ("Y", cfg["lines_y"])):
         for ln in lines:
             # layout from the story with the most segments (stacked walls; upper stories
             # with fewer segments drop the LAST positions -- matches stepped briefs)
             base_segs = max((ln.segments.get(k, []) for k in range(1, cfg["stories"] + 1)),
                             key=len)
+            pos_ft = line_pos_ft(cfg, dirn, ln)
+            lo_ft, hi_ft = line_extent_ft(base_poly, dirn, pos_ft)
+            dim = (hi_ft - lo_ft) * 12.0
             tot = sum(L for (L, _h) in base_segs) * 12.0
             gap = max((dim - tot) / (len(base_segs) + 1), 0.0)
             starts = []
-            cur = gap
+            cur = lo_ft * 12.0 + gap
             for (L, _h) in base_segs:
                 starts.append(cur)
                 cur += L * 12.0 + gap
-            pos = ln.pos * 12.0
+            pos = pos_ft * 12.0
             # persistent segment-end node grids per story level
             grid = {}     # (segidx, end, level) -> tag
 
@@ -134,7 +237,8 @@ def _wall_data(cfg, name, res, pkg):
                        {"V": None})
                     el(nbb, nta, "brace", sec, dc, "line %s story %d" % (ln.name, k))
 
-    slabs = [[0.0, Lx, 0.0, Ly, zz] for zz in z[1:]]
+    slabs = [[x0 * 12.0, x1 * 12.0, y0 * 12.0, y1 * 12.0, z[k]]
+             for k in range(1, len(z)) for (x0, x1, y0, y1) in plan_rects(plan_outline(cfg, k))]
 
     # drift-profile "modes" per direction (governing line cumulative story drifts)
     modes = []
@@ -227,17 +331,17 @@ def _wall_data(cfg, name, res, pkg):
             "support_label": "Supports (hold-downs/rods at chords; track anchors between)",
             "levels": [round(v, 1) for v in z],
             "stats": stats,
-            "demand_src": "D/C: design/calc_package_cfs.json wall/chord slots",
+            "demand_src": "D/C: wall-line and chord design records of the calculation package",
             "load_labels": {
                 "lDLdyn": "Dead load (story totals, incl. cladding/partitions in W)",
                 "lLLdyn": "Live load (story totals, unreduced)",
                 "lWind": "Wind story forces (MWFRS screen)",
                 "lSeis": "Seismic ELF story forces"},
             "caveat": ("SCHEMATIC wall model: segments laid out evenly along each line "
-                       "(plan positions of individual segments are not part of the cfg); "
+                       "(their exact plan positions are on the wall-line schedules); "
                        "diagonals represent sheathing panels (literal straps on strap-braced "
-                       "systems); slabs show the BOUNDING plan for irregular (T/U/L) "
-                       "buildings. " + _CAVEAT_COMMON),
+                       "systems); " + ("slabs follow the floor plan. " if has_outline(cfg) else
+                                       "slabs show the bounding plan. ") + _CAVEAT_COMMON),
         },
         "nodes": nodes, "fixed": fixed, "elements": elements,
         "modes": modes, "slabs": slabs, "loads": loads,
@@ -395,27 +499,32 @@ def _portal_data(cfg, name, res, pkg):
     else:
         geo = ["Span / eave / apex", "%.0f / %.0f / %.0f ft" % (
             meta["span_in"] / 12.0, cfg["eave_ft"], cfg.get("apex_ft", cfg["eave_ft"]))]
-    stats = [["Frames shown", "%d @ %.1f ft o.c." % (nf, cfg["spacing_ft"])], geo,
-             ["Governing combos", "col: %s · raf: %s" % (gov.get("col", "?"),
-                                                         gov.get("raf", "?"))],
-             ["Base V / net uplift", "%s / %s kip" % (a.get("V_base_kip", "?"),
-                                                      a.get("T_net_uplift_kip", "?"))]]
+    stats = [["Frames shown", "%d @ %.1f ft o.c." % (nf, cfg["spacing_ft"])], geo]
+    gc, gr = _combo_txt(gov.get("col")), _combo_txt(gov.get("raf"))
+    if gc or gr:
+        stats.append(["Governing combinations", "column: %s · rafter: %s" % (gc or "&mdash;", gr or "&mdash;")])
+    vb, tb = _num(a.get("V_base_kip")), _num(a.get("T_net_uplift_kip"))
+    if vb is not None or tb is not None:
+        stats.append(["Base V / net uplift", "%s / %s kip" % ("%.2f" % vb if vb is not None else "&mdash;",
+                                                              "%.2f" % tb if tb is not None else "&mdash;")])
     if isinstance(a.get("M_base_kipin"), (int, float)) and a["M_base_kipin"] > 1:
         stats.append(["Base moment (fixed)", "%.0f kip-in" % a["M_base_kipin"]])
     if (res or {}).get("seismic", {}).get("W_frame_kip"):
         stats.append(["Seismic W / V per frame", "%.1f / %.2f kip" % (
             res["seismic"]["W_frame_kip"], res["seismic"].get("V_kip") or 0.0)])
+    ps = _pkg_eave_sway(pkg)                           # the report's serviceability value (design model)
     sv = (res or {}).get("service") or {}
-    if sv:
-        stats.append(["Eave sway (service)", "%s in (H/%s)" % (sv.get("eave_sway_in", "?"),
-                                                               int(sv.get("H_over", 0)))])
+    if ps:
+        stats.append(["Eave sway (service wind)", "%.2f in%s" % (ps[0], (" (H/%d)" % int(ps[1])) if ps[1] else "")])
+    elif sv and _num(sv.get("eave_sway_in")) is not None and not (pkg or {}).get("drift_table"):
+        stats.append(["Eave sway (service wind)", "%.2f in (H/%d)" % (_num(sv["eave_sway_in"]),
+                                                                       int(sv.get("H_over", 0) or 0))])
     dcs = [v[0] for v in mem_dc.values() if v[0] is not None]
     if dcs:
         stats.append(["Max member D/C (package)", "%.2f" % max(dcs)])
 
     note_nf = ("" if (cfg.get("n_frames") or cfg.get("length_ft")) else
-               " Only a representative %d-frame slice is drawn (set cfg['length_ft'] or "
-               "cfg['n_frames'] for the full building)." % nf)
+               " Only a representative %d-frame slice of the building is drawn." % nf)
     return {
         "meta": {
             "title": "%s — CFS portal model" % name,
@@ -426,7 +535,7 @@ def _portal_data(cfg, name, res, pkg):
             "support_label": "Supports (%s)" % cfg.get("base", "pinned"),
             "levels": [0.0, round(cfg["eave_ft"] * 12.0, 1)],
             "stats": stats,
-            "demand_src": "D/C: design/calc_package_cfs.json member/schedule slots",
+            "demand_src": "D/C: member and schedule design records of the calculation package",
             "load_labels": {
                 "lDLstat": "Roof dead load (ribbons on rafters)",
                 "lLLstat": "Roof snow/Lr (ribbons on rafters)",
