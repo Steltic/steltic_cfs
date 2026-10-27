@@ -39,3 +39,9 @@ def test_d13_only_for_sheet_welds_and_d11_where_cited():
 
 def test_one_open_side_wording():
     assert "side wall; the other side is open" in FRAME
+
+
+def test_design_credit_has_no_date():
+    pkg = {"design_agent": {"model": "Claude Opus 5.5", "provider": "Anthropic", "harness": "Steltic",
+                            "date": "2026-10-27"}}
+    assert R._cfs_design_credit(pkg) == "Designed by Claude Opus 5.5 (Anthropic) with Steltic"
