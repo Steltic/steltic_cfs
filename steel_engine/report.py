@@ -702,9 +702,9 @@ def _load_activity(name):
     merged.sort(key=lambda r: (r.get("ts") or "", r.get("step") or 0))
     return merged, src
 
-_LOG_NAME = {"search_engineering_standards": "code provision look-up", "run_python": "analysis / check run",
+_LOG_NAME = {"search_engineering_standards": "code provision check", "run_python": "analysis / check run",
              "new_activity_log": "design started"}
-_LOG_STD = {"engineering_standards_S100": "AISI S100-16 (R2020), library copy with Supplement 3-22", "engineering_standards_S240": "AISI S240-20",
+_LOG_STD = {"engineering_standards_S100": "AISI S100-16 (2020) w/S2-20", "engineering_standards_S240": "AISI S240-20",
             "engineering_standards_S400": "AISI S400-20", "engineering_standards_ASCE7": "ASCE 7-22",
             "engineering_standards_A360": "AISC 360-22", "engineering_standards_A341": "AISC 341-22"}
 
@@ -723,11 +723,16 @@ def _log_txt(tool, d, result=False):
             return "%s issues" % m.group(1)
         return "completed" if ("rc=0" in d or d in ("started", "")) else ("returned an error" if "rc=" in d else "")
     if tool == "search_engineering_standards":
-        m = re.match(r"\[([^\]]+)\]\s*(?:exact_section|exact_equation|exact_table|eq|table|fts|keyword)?\s*(.*)$", d)
+        m = re.match(r"\[([^\]]+)\]\s*(exact_section|exact_equation|exact_table|eq|table|fts|keyword)?\s*(.*)$", d)
         if m:
-            return "%s %s" % (_LOG_STD.get(m.group(1), m.group(1).replace("engineering_standards_", "")),
-                              m.group(2).replace("\u00ab", "\u201c").replace("\u00bb", "\u201d"))
-        return d
+            q = _pretty_query(m.group(3).replace("\u00ab", "\u201c").replace("\u00bb", "\u201d"))
+            kind = m.group(2) or ""
+            if kind in ("exact_table", "table") and not re.match(r"(?i)table\b", q):
+                q = "Table " + q
+            elif kind in ("exact_equation", "eq") and not re.match(r"(?i)eq", q):
+                q = "Eq. " + q
+            return "%s %s" % (_LOG_STD.get(m.group(1), m.group(1).replace("engineering_standards_", "")), q)
+        return _pretty_query(d)
     if tool == "run_python":
         for pat, txt in ((r"design_and_report|run_job.*design|pipeline", "analysis model, demand envelope and report"),
                          (r"consistency|check", "self-consistency check of the calculation package"),
@@ -740,11 +745,24 @@ def _log_txt(tool, d, result=False):
     return re.sub(r"(?:/[\w.-]+)+/([\w.-]+)", r"\1", d)
 
 
+_QUERY_SYM = ((r"\bOmega_?0\b", "\u03a9\u2080"), (r"\bOmega_?E\b", "\u03a9E"), (r"\bOmega\b", "\u03a9"),
+              (r"\bphi_?v\b", "\u03c6v"), (r"\bphi_?b\b", "\u03c6b"), (r"\bphi_?c\b", "\u03c6c"),
+              (r"\bphi\b", "\u03c6"), (r"\brho\b", "\u03c1"), (r"\bEWM\b", "effective width method"))
+
+
+def _pretty_query(q):
+    """A code-check description in engineering notation: symbols for the raw keys (Omega0, phi_v, rho)."""
+    q = str(q or "")
+    for pat, rep in _QUERY_SYM:
+        q = re.sub(pat, rep, q)
+    return q
+
+
 def _activity_section(name):
     recs, src = _load_activity(name)
     h = ["<h2>Design log</h2>",
-         "<p>Analysis runs, self-consistency checks and code-provision look-ups recorded while this design was "
-         "prepared. A look-up that returned no clause from the reference library of standards is listed as "
+         "<p>Analysis runs, self-consistency checks and code-provision checks recorded while this design was "
+         "prepared. A check that returned no clause from the reference library of standards is listed as "
          "\u201cclause not found in the reference library\u201d.</p>"]
     if not recs:
         h.append("<p class='cnote'>No design log was recorded for this job.</p>")
@@ -2845,9 +2863,9 @@ def _grounding_check(cfg, name, pkg):
             if mm: col[mm.group(1)] = col.get(mm.group(1), 0) + 1
     def n(c): return col.get(c, 0)
 
-    def nl(c):                                       # "1 provision look-up" / "3 provision look-ups"
+    def nl(c):                                       # "1 provision check" / "3 provision checks"
         k = n(c)
-        return "%d provision look-up%s" % (k, "" if k == 1 else "s")
+        return "%d provision check%s" % (k, "" if k == 1 else "s")
     # ALSO credit grounding from the CITED CLAUSES in calc_package.json (not the activity log alone), so a
     # filled, RAG-grounded package is recognised even if the auto-logger did not record the queries (P5).
     def _cited(obj):
@@ -2881,8 +2899,8 @@ def _grounding_check(cfg, name, pkg):
     rows = []
     def row(item, required, ok, ev, na=""):
         rows.append([item, "required" if required else (na or "n/a"),
-                     ev, ("&mdash;" if not required else ("grounded" if ok else "<b>MISSING</b>"))])
-    row("AISI S100 &mdash; member/connection limit states (EWM)", True,
+                     ev, ("&mdash;" if not required else ("verified" if ok else "<b>MISSING</b>"))])
+    row("AISI S100 &mdash; member/connection limit states (effective width method)", True,
         n("engineering_standards_S100") > 0 or cite_s100,
         nl("engineering_standards_S100") + (" + cited in the calculation package" if cite_s100 else ""))
     row("AISI S240 &mdash; framing rules (studs/track/built-up/bracing/trusses)", is_wall,
@@ -2913,21 +2931,21 @@ def _grounding_check(cfg, name, pkg):
     if _re.search(r"\bs\s*310\b", _ct, _re.I):
         flags.append("cites S310 — not in the reference library: verify the value's stated basis (a fabricated S310 "
                      "clause number is a red flag)")
-    head = ("<h3>Grounding verification</h3>"
+    head = ("<h3>Source verification</h3>"
             f"<p>Whether the governing provisions of each standard the systems require were verified against the "
             f"text of the standard. R = {R}; "
             + ("light-frame walls present &mdash; S100 + S240 required; S400 for the seismic "
                "system (wind shear walls: S240 B5)." if is_wall else
                "frame path &mdash; S100 required; S240/S400 only where light-frame walls/straps appear.")
             + "</p>")
-    tail = ("<p class='note'>Grounding incomplete: the items marked MISSING were required for this building's "
-            "systems but no provision look-up or calculation-package evidence was found; verify those provisions "
-            "against the standards.</p>" if nmiss else "<p>Every standard the systems require was consulted (look-ups "
-            "or calculation-package citations, above).</p>")
+    tail = ("<p class='note'>Source verification incomplete: the items marked MISSING were required for this "
+            "building's systems but no provision check or calculation-package evidence was found; verify those "
+            "provisions against the standards.</p>" if nmiss else "<p>Every standard the systems require was "
+            "verified (provision checks or calculation-package citations, above).</p>")
     if flags:
         tail += ("<p class='note'><b>Citation red flags:</b></p><ul>"
                  + "".join("<li>%s</li>" % f for f in flags) + "</ul>")
-    return head + _table(["Grounding requirement", "Applies", "Evidence", "Status"], rows) + tail
+    return head + _table(["Standard and scope", "Applies", "Evidence", "Status"], rows) + tail
 
 def _appendix_case_figs(cases, cfg):
     """Which load-case indices get a per-combo N/V/M figure in Appendix B. Default: a fast
@@ -3438,8 +3456,8 @@ def build_report(name, root=None):
                  "combinations — for light CFS at high wind it commonly GOVERNS the anchorage: hold-down/rod "
                  "tensions and the per-line shear (plf) and bearing handed to the foundation are in the Chapter-6 "
                  "schedules. <b>Out of scope:</b> foundation/geotechnical design and concrete anchorage detailing "
-                 "(ACI 318 Ch. 17) are delegated with these demands. Overall overturning/sliding stability is "
-                 "confirmed against the geotechnical capacities.</p>")
+                 "(ACI 318 Ch. 17) are delegated with these demands. Overall overturning and sliding stability are "
+                 "to be confirmed by the foundation engineer with these reactions.</p>")
 
     # ============== Chapter 12 — Drawings, specifications & documentation ================
     parts.append(_chapter(12, status="out of scope for the analysis package &mdash; verified on the contract drawings"))
@@ -4441,12 +4459,38 @@ def _cfs_case_legend(s):
     return s[:i] + leg
 
 
+_WIND_CASE_LEGEND = (
+    (r"(?<![A-Za-z])W(?:2)?(?:_|\b)", "W, W<sub>2</sub>",
+     "MWFRS wind across the frames (ASCE 7-22 Fig. 27.3-1) with +GC<sub>pi</sub> (W) and &minus;GC<sub>pi</sub> "
+     "(W<sub>2</sub>), from the left-hand side"),
+    (r"_R\b|_R_", "subscript R", "the same wind case acting from the right-hand side (mirror of the left-hand case)"),
+    (r"_b2\b", "subscript b2", "the second windward-roof C<sub>p</sub> value of Fig. 27.3-1, where the figure gives two"),
+    (r"Wpar", "W<sub>par</sub>, W<sub>par2</sub>",
+     "wind parallel to the ridge (roof C<sub>p</sub> by distance from the windward end; side walls &minus;0.7) with "
+     "+GC<sub>pi</sub> / &minus;GC<sub>pi</sub>"),
+    (r"_(?:A|B)_(?:clr|obs)", "subscripts A, B / clr, obs",
+     "open-building free-roof load cases A and B (Figs. 27.3-4 to 27.3-7) with clear / obstructed wind flow"),
+)
+
+
+def _cfs_wind_legend(labels):
+    """Notation of the portal wind-case subscripts that appear in the combination labels (W, W2, R, b2, par)."""
+    txt = " ".join(str(x or "") for x in labels)
+    if not re.search(r"(?<![A-Za-z])W", txt):
+        return ""
+    rows = [[sym, mean] for pat, sym, mean in _WIND_CASE_LEGEND if re.search(pat, txt)]
+    if not rows:
+        return ""
+    return "<p class='tnote'><b>Wind-case notation:</b> %s.</p>" % "; ".join("%s = %s" % (a, b) for a, b in rows)
+
+
 def _cfs_combos_section(cfg, res, pkg):
     combos = [c for c in (pkg.get("combos") or []) if isinstance(c, dict)]
     h = "<h2>2. Load combinations (ASCE 7-22 &sect;2.3 LRFD)</h2>"
     if combos:
         h += _table(["Combination", "Use"], [[_cfs_combo_label(c.get("label")), _pt(c.get("role") or "strength")]
                                              for c in combos])
+        h += _cfs_wind_legend([c.get("label") for c in combos])
     note = pkg.get("combos_note")
     if isinstance(note, str):
         note = note.replace(" (role 'overstrength')", "")
@@ -5349,7 +5393,9 @@ def _cfs_block_html(v, depth=0):
             elif isinstance(x, dict) and depth < 3:
                 rows.append([_hk(k), _cfs_block_html(x, depth + 1)])
             elif isinstance(x, list) and any(isinstance(y, dict) for y in x) and depth < 3:
-                rows.append([_hk(k), "".join(_cfs_block_html(y, depth + 1) for y in x)])
+                # a list of like records (item / criteria / interface ...) is ONE table with column headings
+                rows.append([_hk(k), _cfs_block_html(x, depth + 1) if all(isinstance(y, dict) for y in x)
+                             else "".join(_cfs_block_html(y, depth + 1) for y in x)])
             elif isinstance(x, str):
                 rows.append([_hk(k), _pt(x)])
             else:
@@ -5363,7 +5409,7 @@ def _cfs_block_html(v, depth=0):
                     if k not in keys:
                         keys.append(k)
             if len(keys) <= 9:
-                return _table([_hk(k) for k in keys], [[_pt(y.get(k)) if isinstance(y.get(k), str)
+                return _table([_cap1(_hk(k)) for k in keys], [[_pt(y.get(k)) if isinstance(y.get(k), str)
                                                         else _cn(y.get(k)) for k in keys] for y in v])
             return "".join(_cfs_block_html(y, depth + 1) for y in v)
         return "<ul>%s</ul>" % "".join("<li>%s</li>" % (_pt(y) if isinstance(y, str) else _cn(y)) for y in v)
@@ -5636,7 +5682,7 @@ def _cfs_annex_screens(res, pkg):
 def _cfs_write_qa_annex(name, cfg, res, pkg, root, qa_num=7):
     """qa_annex.html beside report.html: the source-grounding table, the design-process records
     of the package, the framework screening notes and the activity log. Returns its file name."""
-    parts = ["<h1>%s &mdash; QA annex</h1>" % _html.escape(str(name)),
+    parts = ["<h1>%s &mdash; QA annex</h1>" % _pt(_cfs_title(name, cfg, pkg)),
              "<p>Design-process records supporting Section %d of the report. Not part of the calculation "
              "package.</p>" % qa_num]
     try:
@@ -5672,7 +5718,8 @@ def _cfs_write_qa_annex(name, cfg, res, pkg, root, qa_num=7):
     except Exception as ex:
         parts.append("<p class='note'>[activity log unavailable: %s]</p>" % _html.escape(str(ex)))
     html = ("<!doctype html><html><head><meta charset='utf-8'><title>%s QA annex</title><style>%s%s</style>"
-            "</head><body>%s</body></html>" % (_html.escape(str(name)), CSS, CFS_CSS, "".join(parts)))
+            "</head><body>%s</body></html>" % (_html.escape(re.sub(r"<[^>]+>", "", _pt(_cfs_title(name, cfg, pkg)))),
+                                               CSS, CFS_CSS, "".join(parts)))
     fn = "qa_annex.html"
     with open(os.path.join(root, fn), "w", encoding="utf-8") as f:
         f.write(html)
@@ -5816,7 +5863,11 @@ def _cfs_iso_figure(cfg, name, res, pkg, probe=None):
     """Section-1 annotated ISOMETRIC of the building (static PNG) so the element labels are
     visually identifiable: wall lines '<dir>-<name>' at their plan positions and story levels
     's1..sN' (wall path); col_L/col_R/raf_L/raf_R, knee/apex/base and frame numbering (portal).
-    Geometry comes from the same builder as the interactive viewer (cfs_viewer3d.viewer_data)."""
+    Geometry comes from the same builder as the interactive viewer (cfs_viewer3d.viewer_data); the plates follow
+    cfg['plan_outline_ft'] / ['plan_outline_by_story'] where given. cfg['model_figure'] = False omits the figure
+    (the model is then shown only by the plan figures); cfg['model_figure_note'] heads the caption."""
+    if cfg.get("model_figure") is False:
+        return ""
     try:
         import cfs_viewer3d as V3
         from mpl_toolkits.mplot3d.art3d import Line3DCollection
@@ -5851,7 +5902,7 @@ def _cfs_iso_figure(cfg, name, res, pkg, probe=None):
         for hh in cfg["heights_ft"]:
             z.append(z[-1] + hh * 12.0)
         Lx, Ly = cfg["plan_ft"][0] * 12.0, cfg["plan_ft"][1] * 12.0
-        plates = [[(0, 0, zz), (Lx, 0, zz), (Lx, Ly, zz), (0, Ly, zz)] for zz in z[1:]]
+        plates = [[(x * 12.0, y * 12.0, z[k]) for (x, y) in V3.plan_outline(cfg, k)] for k in range(1, len(z))]
         pcol = Poly3DCollection(plates, facecolors="#7a8899", alpha=0.12, edgecolors="#7a8899", linewidths=0.4)
         pcol.set_clip_on(False)
         ax.add_collection3d(pcol)
@@ -5881,12 +5932,15 @@ def _cfs_iso_figure(cfg, name, res, pkg, probe=None):
     def _labels():
         out = []
         if not portal:
+            _bp = V3.plan_outline(cfg, 1)
             for i, ln in enumerate(cfg["lines_x"]):
-                out.append(_ann("X-%s" % ln.name, (0.06 * Lx, ln.pos * 12.0, z[-1] * 0.55),
+                _p = V3.line_pos_ft(cfg, "X", ln); _lo, _hi = V3.line_extent_ft(_bp, "X", _p)
+                out.append(_ann("X-%s" % ln.name, ((_lo + 0.06 * (_hi - _lo)) * 12.0, _p * 12.0, z[-1] * 0.55),
                                 (-70 - 24 * (i % 2), 12 * (i % 2)), "#b30000"))
             for i, ln in enumerate(cfg["lines_y"]):
-                out.append(_ann("Y-%s" % ln.name, (ln.pos * 12.0, 0.30 * Ly, z[-1]), (0, 55 + 16 * (i % 2)),
-                                "#006400"))
+                _p = V3.line_pos_ft(cfg, "Y", ln); _lo, _hi = V3.line_extent_ft(_bp, "Y", _p)
+                out.append(_ann("Y-%s" % ln.name, (_p * 12.0, (_lo + 0.30 * (_hi - _lo)) * 12.0, z[-1]),
+                                (0, 55 + 16 * (i % 2)), "#006400"))
             for k in range(1, len(z)):
                 out.append(_ann("s%d" % k, (Lx, 0.0, (z[k - 1] + z[k]) / 2.0), (48, 0), "#444444", fs=9))
             return out
@@ -5963,7 +6017,11 @@ def _cfs_iso_figure(cfg, name, res, pkg, probe=None):
         probe.update(extent=(float(f[:, 0].min()), float(f[:, 0].max()), float(f[:, 1].min()), float(f[:, 1].max())),
                      clipped=[bool(c_.get_clip_on()) for c_ in ax.collections], zoom=zoom)
     if not portal:
-        cap = ("Wall labels read <code>wall-&lt;dir&gt;-&lt;line&gt;-s&lt;story&gt;</code> (e.g. "
+        _irr = (not V3.has_outline(cfg)) and cfg.get("area_sf") and \
+            float(cfg["area_sf"]) < 0.95 * float(cfg["plan_ft"][0]) * float(cfg["plan_ft"][1])
+        cap = (("Analysis idealization: the floor plates are drawn as the bounding plan and the wall lines at their "
+                "analysis positions; the wall-line schedules give the actual layout. " if _irr else "")
+               + "Wall labels read <code>wall-&lt;dir&gt;-&lt;line&gt;-s&lt;story&gt;</code> (e.g. "
                "<code>wall-X-%s-s2</code> = X-direction line %s at story 2); hold-downs are "
                "<code>hd-&lt;dir&gt;-&lt;line&gt;</code>. Blue = chord studs, grey = tracks, orange = "
                "panel / strap diagonals." % (_html.escape(cfg["lines_x"][0].name), _html.escape(cfg["lines_x"][0].name)))
@@ -5975,6 +6033,8 @@ def _cfs_iso_figure(cfg, name, res, pkg, probe=None):
                    ", interior columns col_I1%s" % ("&ndash;col_I%d" % (len(xs_) - 2) if len(xs_) > 3 else "")
                    if len(xs_) > 2 else "",
                    " (left / right halves of every span)" if len(xs_) > 2 else ""))
+    if cfg.get("model_figure_note"):
+        cap = _pt(cfg["model_figure_note"]) + " " + cap
     buf = io.BytesIO()
     fig.savefig(buf, format="png", dpi=140)
     plt.close(fig)

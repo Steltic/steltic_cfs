@@ -72,8 +72,8 @@ def test_grounding_table_counts_one_look_up_in_the_singular(monkeypatch):
             {"tool": "search_engineering_standards", "detail": "[engineering_standards_S100] exact_section F2.1"}]
     monkeypatch.setattr(RPT, "_load_activity", lambda name: (recs, None))
     txt = _text(RPT._grounding_check(cfg, "gyp", pkg))
-    assert "1 provision look-up" in txt and "1 provision look-ups" not in txt
-    assert "2 provision look-ups" in txt and "0 provision look-ups" in txt
+    assert "1 provision check" in txt and "1 provision checks" not in txt      # C7 (Oct 27): "check", not "look-up"
+    assert "2 provision checks" in txt and "0 provision checks" in txt
 
 
 # ---------------- 3. K_lower carries its unit ----------------
