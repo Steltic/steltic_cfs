@@ -3659,18 +3659,17 @@ def _cfs_publish(cfg, pkg):
 
 
 def _cfs_design_credit(pkg):
-    """'Designed by <model> (<provider>) with Steltic, <date>' from
-    calc_package_cfs['design_agent'] (same wording as the hot-rolled report); '' when no
-    model is recorded. A plain string is the model name."""
+    """'Designed by <model> (<provider>) with Steltic' from calc_package_cfs['design_agent'] (same wording as
+    the hot-rolled report); '' when no model is recorded. A plain string is the model name. No date: the report
+    header carries the date it was produced, and a re-run on a later day would otherwise print two dates."""
     da = (pkg or {}).get("design_agent") if isinstance(pkg, dict) else None
     if isinstance(da, str) and da.strip():
         da = {"model": da.strip()}
     if not isinstance(da, dict) or not da.get("model"):
         return ""
     harness = da.get("harness") or "Steltic"
-    return _html.escape("Designed by %s%s with %s%s" % (
-        da["model"], (" (%s)" % da["provider"]) if da.get("provider") else "", harness,
-        (", %s" % da["date"]) if da.get("date") else ""))
+    return _html.escape("Designed by %s%s with %s" % (
+        da["model"], (" (%s)" % da["provider"]) if da.get("provider") else "", harness))
 
 
 def _cfs_rc(cfg):

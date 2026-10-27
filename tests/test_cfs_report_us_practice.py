@@ -26,7 +26,7 @@ import report as RPT           # noqa: E402
 from test_cfs_code_basis_screens import ref_cfg    # noqa: E402
 
 AGENT = {"model": "Claude Opus 5.5", "provider": "Anthropic", "harness": "Steltic", "date": "2026-10-17"}
-CREDIT = "Designed by Claude Opus 5.5 (Anthropic) with Steltic, 2026-10-17"
+CREDIT = "Designed by Claude Opus 5.5 (Anthropic) with Steltic"           # no date (as the hot-rolled report)
 CITE = ("AISI S400-20 Table E1.3-1 (7/16 in. OSB, No. 8 screws); phi_v = 0.60 (E1.3.2) "
         "[RAG chunk E1.3.1.1.3 part 2/3] (retrieved verbatim)")
 
