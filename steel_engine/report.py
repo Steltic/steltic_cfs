@@ -1783,6 +1783,8 @@ def _cap_num(x):
 
 
 _HK = {"DC": "D/C", "v_unit_plf": "seismic unit shear, &rho;E (plf)",
+       "type_ii_Ca": "Type II shear resistance adjustment factor C<sub>a</sub>",
+       "v_unit_over_Ca_plf": "unit shear / C<sub>a</sub> (plf)",
        "phiPn_c": "&phi;P<sub>n</sub> (kip)", "phiMn_c": "&phi;M<sub>n</sub> (kip-in.)",
        "v_wind_plf": "wind unit shear, 1.0W (plf)", "V_kip": "shear V (kip)",
        "T_cum_kip": "ELF&middot;&rho; overturning tension (kip)",
@@ -3793,8 +3795,14 @@ def _cfs_codes_rows(cfg, pkg):
                  else _cfs_s400_status(cfg, pkg)])
     rows.append(["ACI 318-19 Ch. 17", "anchorage to concrete (anchor design forces handed to the "
                                       "foundation design)"])
-    if re.search(r"\bweld", blob):
+    # AWS D1.3 only where sheet steel is welded (arc spot / seam / flare-groove welds or welds to CFS members);
+    # welded plate washers and hot-rolled plates are AWS D1.1 work, not D1.3
+    if re.search(r"arc[- ]spot|arc[- ]seam|seam weld|puddle weld|flare[- ](?:bevel|groove|v)|\bd1\.3\b|"
+                 r"weld(?:ed|s)? (?:to|of|at) (?:the )?(?:studs?|tracks?|joists?|sheet|deck|purlins?|girts?|"
+                 r"cfs|cold-formed)", blob):
         rows.append(["AWS D1.3", "structural welding of sheet steel"])
+    if re.search(r"\bd1\.1\b", blob):
+        rows.append(["AWS D1.1", "structural welding of hot-rolled steel (plates, HSS)"])
     if re.search(r"aisc\s*360|\bhss\s*\d|\bw\d{1,2}x\d", blob):
         rows.append(["AISC 360-22", "hot-rolled steel components"])
     return rows

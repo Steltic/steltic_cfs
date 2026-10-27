@@ -1599,8 +1599,9 @@ def portal_seismic_weight(cfg, fr, members, meta):
     hts = {"L": meta["He_in"] / 12.0, "R": meta.get("HeR_in", meta["He_in"]) / 12.0}
     if clad and sides:
         items["cladding"] = clad * sp * sum(hts[x] / 2.0 for x in sides) / 1000.0
-        parts.append("wall cladding %.1f psf x %.1f ft x (%s) ft (upper half of the side walls) "
+        parts.append("wall cladding %.1f psf x %.1f ft x (%s) ft (upper half of the %s) "
                      "= %.2f kip" % (clad, sp, " + ".join("%.1f/2" % hts[x] for x in sides),
+                                     "side wall; the other side is open" if len(sides) == 1 else "side walls",
                                      items["cladding"]))
     elif not sides:
         parts.append("no side walls (open building / open sides)")
