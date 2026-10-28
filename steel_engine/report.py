@@ -4467,24 +4467,33 @@ def _cfs_case_legend(s):
 
 
 _WIND_CASE_LEGEND = (
-    (r"(?<![A-Za-z])W(?:2)?(?:_|\b)", "W, W<sub>2</sub>",
+    # enclosed / partially enclosed portal frames (Fig. 27.3-1, +/-GCpi)
+    (r"W2(?:_|\b)", "W, W<sub>2</sub>",
      "MWFRS wind across the frames (ASCE 7-22 Fig. 27.3-1) with +GC<sub>pi</sub> (W) and &minus;GC<sub>pi</sub> "
      "(W<sub>2</sub>), from the left-hand side"),
-    (r"_R\b|_R_", "subscript R", "the same wind case acting from the right-hand side (mirror of the left-hand case)"),
+    (r"W2?_R(?:_b2)?\b", "subscript R", "the same wind case acting from the right-hand side (mirror of the left-hand case)"),
     (r"_b2\b", "subscript b2", "the second windward-roof C<sub>p</sub> value of Fig. 27.3-1, where the figure gives two"),
-    (r"Wpar", "W<sub>par</sub>, W<sub>par2</sub>",
+    (r"Wpar(?!_)", "W<sub>par</sub>, W<sub>par2</sub>",
      "wind parallel to the ridge (roof C<sub>p</sub> by distance from the windward end; side walls &minus;0.7) with "
      "+GC<sub>pi</sub> / &minus;GC<sub>pi</sub>"),
-    (r"_(?:A|B)_(?:clr|obs)", "subscripts A, B / clr, obs",
-     "open-building free-roof load cases A and B (Figs. 27.3-4 to 27.3-7) with clear / obstructed wind flow"),
+    # open buildings, free roofs (Eq. 27.3-2, GCpi = 0)
+    (r"W_(?:A|B)_(?:clr|obs)", "W with subscripts A, B / clr, obs / L, R",
+     "open-building free-roof wind across the frames (ASCE 7-22 Eq. 27.3-2, Figs. 27.3-4 to 27.3-7, "
+     "GC<sub>pi</sub> = 0): load cases A and B, clear / obstructed flow, wind from the left (L) or the right (R)"),
+    (r"Wpar_(?:A|B)_", "W<sub>par</sub>",
+     "open-building free-roof wind along the ridge (Fig. 27.3-7), load cases A and B, clear / obstructed flow"),
+    # shear-wall buildings (directional procedure along each plan axis)
+    (r"W[XY][+-]", "W<sub>X</sub>, W<sub>Y</sub>",
+     "MWFRS wind along the X / Y plan axis (ASCE 7-22 Ch. 27 directional procedure), both senses (sign of the "
+     "term); each wall-line force is the envelope of Fig. 27.3-8 Cases 1 and 2 (Case 2 = 0.75 &times; Case 1 "
+     "with eccentricity &plusmn;0.15B)"),
 )
 
 
 def _cfs_wind_legend(labels):
-    """Notation of the portal wind-case subscripts that appear in the combination labels (W, W2, R, b2, par)."""
+    """Notation of the wind-case symbols that appear in the combination labels. A plain W (C&C or a single
+    MWFRS case) needs no legend."""
     txt = " ".join(str(x or "") for x in labels)
-    if not re.search(r"(?<![A-Za-z])W", txt):
-        return ""
     rows = [[sym, mean] for pat, sym, mean in _WIND_CASE_LEGEND if re.search(pat, txt)]
     if not rows:
         return ""

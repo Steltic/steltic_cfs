@@ -692,7 +692,11 @@ cfg = dict(
   # optional: monoslope=True (+overhang_ft), spans=[dict(span_ft=.., apex_ft=..), ...],
   #   point_loads=[...], crane=dict(...) (4.9 impact/lateral/longitudinal), knee_braces=dict(...)
   #   (explicit geometry), truss_roof=True (roof gravity to the column tops), pdelta=True,
-  #   service_wind_factor=0.42
+  #   service_wind_factor=0.42,
+  #   longitudinal_bracing=dict(side_bays={"L": [1, 9], "R": [1, 2, 9, 10]},   # 3D viewer: braced bays
+  #       header_bays={"L": [1, 10]}, header_bottom_ft=14.0, roof_bays=[1, 2, 3]),  # (bay k = frames k..k+1;
+  #       default: both side walls in the end bays, none across an open side),
+  #   plan_north="-X"                                 # viewer north arrow (default +Y)
 )
 ```
 The package (`kind="cfs_portal"`) seeds `members` (both columns and rafters enveloped, signed
