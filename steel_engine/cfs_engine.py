@@ -309,8 +309,8 @@ def direction_seismic(cfg, dirn):
         return s2
     if len(systems) <= 1:
         if systems and systems[0] != sysname and systems[0] in CS.SYSTEMS:
-            notes.append("every %s line declares %s (line_systems) -- its Table 12.2-1 "
-                         "R/Cd/Omega0 replace cfg['seis'] for the direction" % (dirn, systems[0]))
+            notes.append("every %s line is a %s: its Table 12.2-1 R, Cd and Omega0 apply to the direction"
+                         % (dirn, CS.SYSTEMS[systems[0]]["label"]))
             return dict(seis=seis_of(systems[0]), system=systems[0], per_line=None, notes=notes)
         return dict(seis=base, system=sysname, per_line=None, notes=notes)
     unknown = [x for x in systems if x not in CS.SYSTEMS]
@@ -323,19 +323,20 @@ def direction_seismic(cfg, dirn):
         str(cfg.get("diaphragm", "flexible")).lower() == "flexible"
     if cfg.get("use_12_2_3_3_exception"):
         if rc_ok and n_ag <= 2 and lf_ok:
-            notes.append("ASCE 7-22 12.2.3.3 EXCEPTION: each line designed with its own system "
-                         "R (RC I/II, %d stories above grade, light-frame/flexible); the "
-                         "diaphragm uses the least R in the direction (%s, R=%.1f)"
-                         % (n_ag, least, CS.SYSTEMS[least]["R"]))
+            notes.append("ASCE 7-22 12.2.3.3 exception: each line is designed with its own system R "
+                         "(Risk Category I/II, %d stories above grade, light-frame or flexible diaphragms); the "
+                         "diaphragm uses the least R in the direction (%s, R = %.1f)"
+                         % (n_ag, CS.SYSTEMS[least]["label"], CS.SYSTEMS[least]["R"]))
             return dict(seis=seis_of(least), system=least,
                         per_line={nm: (k, seis_of(k)) for nm, k in line_sys.items()},
                         notes=notes)
-        notes.append("12.2.3.3 exception REFUSED (needs RC I/II [%s], <= 2 stories above grade "
-                     "[%d], light-frame or flexible diaphragms [%s]) -- least R used for the "
-                     "whole direction" % (cfg.get("risk_cat", "II"), n_ag, lf_ok))
-    notes.append("ASCE 7-22 12.2.3.3: lines in %s use %s -- R = least R (%s, R=%.1f), Cd and "
-                 "Omega0 consistent with it, for the whole direction"
-                 % (dirn, "/".join(systems), least, CS.SYSTEMS[least]["R"]))
+        notes.append("12.2.3.3 exception not available (it needs Risk Category I/II [%s], at most 2 stories "
+                     "above grade [%d] and light-frame or flexible diaphragms [%s]): the least R is used for the "
+                     "whole direction" % (cfg.get("risk_cat", "II"), n_ag, "yes" if lf_ok else "no"))
+    notes.append("ASCE 7-22 12.2.3.3: the %s lines combine %s; the least R (%s, R = %.1f), with its Cd and "
+                 "Omega0, is used for the whole direction"
+                 % (dirn, " and ".join(CS.SYSTEMS[k]["label"] for k in systems), CS.SYSTEMS[least]["label"],
+                    CS.SYSTEMS[least]["R"]))
     return dict(seis=seis_of(least), system=least, per_line=None, notes=notes)
 
 

@@ -331,7 +331,7 @@ def test_cfs28_horizontal_combination_least_R_and_exception():
     c3 = box(line_systems=lsys)                                     # 3 stories -> no exception
     d = CE.direction_seismic(dict(c3, use_12_2_3_3_exception=True), "X")
     assert d["system"] == "strap_braced" and d["seis"]["R"] == 4.0 and d["per_line"] is None
-    assert any("REFUSED" in n for n in d["notes"])
+    assert any("exception not available" in n for n in d["notes"])
     c2 = box(stories=2, line_systems=lsys, use_12_2_3_3_exception=True)
     d2 = CE.direction_seismic(c2, "X")
     assert d2["per_line"]["X2"][0] == "wsp_shearwall" and d2["per_line"]["X1"][0] == "strap_braced"
