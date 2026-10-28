@@ -440,8 +440,9 @@ function select(mesh){
   if (e.rel) rows += `<tr><td>End releases</td><td>${e.rel}</td></tr>`;
   else if (e.type === 'beam') rows += `<tr><td>End fixity</td><td>${e.fe ? 'fixed-ended' : 'released / mixed'}</td></tr>`;
   if (e.wd) rows += `<tr><td>Web depth runs</td><td>${e.wd} (strong axis ⟂ ${e.wd})</td></tr>`;
+  if (e.where) rows += `<tr><td>Location</td><td>${e.where}</td></tr>`;
   if (e.combo) rows += `<tr><td>Governing combo</td><td>${e.combo}</td></tr>`;
-  for (const k in (e.f||{})) rows += `<tr><td>${FLAB[k]||k}</td><td>${e.f[k]}</td></tr>`;
+  for (const k in (e.f||{})) if (e.f[k] !== null && e.f[k] !== undefined) rows += `<tr><td>${FLAB[k]||k}</td><td>${e.f[k]}</td></tr>`;
   $('iBody').innerHTML = `<table>${rows}</table>`;
   refresh();
 }

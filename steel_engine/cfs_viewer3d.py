@@ -31,6 +31,12 @@ _CAVEAT_COMMON = (
     "North = +Y. Drag = orbit, scroll = zoom, right-drag = pan, click a member for details.")
 
 
+def _caveat_common(cfg):
+    """The common caveat with the plan north direction of this building (default +Y)."""
+    north = str((cfg or {}).get("plan_north") or "+Y")
+    return _CAVEAT_COMMON.replace("North = +Y.", "North = %s." % north)
+
+
 def _combo_txt(label):
     """A combination as the report prints it (typeset ASCE 7 notation), never the analysis key."""
     if not label or label == "?":
@@ -174,12 +180,13 @@ def _wall_data(cfg, name, res, pkg):
 
     etag = [0]
 
-    def el(t1, t2, typ, sec, util=None, combo=None, f=None):
+    def el(t1, t2, typ, sec, util=None, combo=None, f=None, where=None):
         etag[0] += 1
         c1, c2 = nodes[str(t1)], nodes[str(t2)]
         L = math.dist(c1, c2)
         elements.append({"tag": etag[0], "type": typ, "sec": sec, "n": [t1, t2],
-                         "L": round(L, 1), "util": util, "combo": combo, "f": f or {}})
+                         "L": round(L, 1), "util": util, "combo": combo, "f": f or {},
+                         "where": where})
 
     sysname = str(cfg.get("system", ""))
     strap = sysname == "strap_braced"
@@ -227,15 +234,12 @@ def _wall_data(cfg, name, res, pkg):
                     nta = gnode(si, 0, k, xa, pos)
                     ntb = gnode(si, 1, k, xb, pos)
                     cu = chord_dc if chord_dc is not None else None
-                    el(nba, nta, "column", chord_sec, cu, "package",
-                       {"P": None} if cu is None else None)
-                    el(nbb, ntb, "column", chord_sec, cu, "package")
-                    el(nta, ntb, "beam", "track", None, None)
-                    lab = ("strap X-brace " if strap else "panel ") + "%s/%s s%d" % (
-                        dirn, ln.name, k)
-                    el(nba, ntb, "brace", sec, dc, "line %s story %d" % (ln.name, k),
-                       {"V": None})
-                    el(nbb, nta, "brace", sec, dc, "line %s story %d" % (ln.name, k))
+                    where = "line %s, story %d" % (ln.name, k)
+                    el(nba, nta, "column", chord_sec, cu, where=where)
+                    el(nbb, ntb, "column", chord_sec, cu, where=where)
+                    el(nta, ntb, "beam", "track", None, None, where=where)
+                    el(nba, ntb, "brace", sec, dc, where=where)
+                    el(nbb, nta, "brace", sec, dc, where=where)
 
     slabs = [[x0 * 12.0, x1 * 12.0, y0 * 12.0, y1 * 12.0, z[k]]
              for k in range(1, len(z)) for (x0, x1, y0, y1) in plan_rects(plan_outline(cfg, k))]
@@ -341,7 +345,7 @@ def _wall_data(cfg, name, res, pkg):
                        "(their exact plan positions are on the wall-line schedules); "
                        "diagonals represent sheathing panels (literal straps on strap-braced "
                        "systems); " + ("slabs follow the floor plan. " if has_outline(cfg) else
-                                       "slabs show the bounding plan. ") + _CAVEAT_COMMON),
+                                       "slabs show the bounding plan. ") + _caveat_common(cfg)),
         },
         "nodes": nodes, "fixed": fixed, "elements": elements,
         "modes": modes, "slabs": slabs, "loads": loads,
@@ -387,12 +391,12 @@ def _portal_data(cfg, name, res, pkg):
 
     etag = [0]
 
-    def el(t1, t2, typ, sec, util=None, combo=None, f=None):
+    def el(t1, t2, typ, sec, util=None, combo=None, f=None, where=None):
         etag[0] += 1
         c1, c2 = nodes[str(t1)], nodes[str(t2)]
         elements.append({"tag": etag[0], "type": typ, "sec": sec, "n": [t1, t2],
                          "L": round(math.dist(c1, c2), 1), "util": util,
-                         "combo": combo, "f": f or {}})
+                         "combo": combo, "f": f or {}, "where": where})
 
     gov = (res or {}).get("governing") or {}
     for j in range(nf):
@@ -403,7 +407,7 @@ def _portal_data(cfg, name, res, pkg):
             for idx in idxs:
                 n1, n2 = fr.elems[idx][0], fr.elems[idx][1]
                 el(nid(j, n1), nid(j, n2), "column" if mkey == "col" else "beam",
-                   secl, dc, gov.get(mkey))
+                   secl, dc, _combo_txt(gov.get(mkey)))
 
     # purlins (rafter station nodes) + girts (column station nodes) between frames
     raf_nodes, col_nodes = set(), set()
@@ -416,14 +420,52 @@ def _portal_data(cfg, name, res, pkg):
             el(nid(j, t), nid(j + 1, t), "beam", "purlin", sched_dc.get("purlin"))
         for t in sorted(col_nodes - set(meta["base_nodes"])):
             el(nid(j, t), nid(j + 1, t), "beam", "girt", sched_dc.get("girt"))
-    # side-wall X-straps in the two end bays (exterior column lines; a multi-span frame's
-    # interior columns carry no side wall)
+    # longitudinal X-straps (exterior column lines; a multi-span frame's interior columns carry
+    # no side wall). Default: both side walls in the two end bays, none across an open side.
+    # cfg["longitudinal_bracing"] gives the actual layout: side_bays {"L"/"R": [bay, ...]},
+    # header_bays {"L"/"R": [...]} with header_bottom_ft (straps from the header to the eave on
+    # an open side) and roof_bays; bay k lies between frames k and k + 1 (frames numbered from 1).
+    lb = cfg.get("longitudinal_bracing") or {}
+    n_all = int(cfg.get("n_frames") or nf)
+    open_sides = set((cfg.get("wind") or {}).get("open_sides") or ())
+
+    def bay_idx(k):
+        """1-based bay of the building -> 0-based bay of the drawn slice (end bays kept at the ends)."""
+        b = int(k) - 1
+        if nf == n_all or b < (n_all - 1) / 2.0:
+            return min(max(b, 0), nf - 2)
+        return max(nf - 2 - (n_all - 2 - b), 0)
+
     bL, bR = meta["base_nodes"][0], meta["base_nodes"][-1]
     eL, eR = meta["eave_nodes"][0], meta["eave_nodes"][-1]
-    for j in (0, nf - 2):
-        for (b, e_) in ((bL, eL), (bR, eR)):
-            el(nid(j, b), nid(j + 1, e_), "brace", "X-strap", sched_dc.get("strap"))
-            el(nid(j + 1, b), nid(j, e_), "brace", "X-strap", sched_dc.get("strap"))
+    side_bays = lb.get("side_bays") or {s_: [] if s_ in open_sides else [1, n_all - 1] for s_ in ("L", "R")}
+    for s_, (b, e_) in (("L", (bL, eL)), ("R", (bR, eR))):
+        for j in sorted({bay_idx(k) for k in side_bays.get(s_) or ()}):
+            el(nid(j, b), nid(j + 1, e_), "brace", "X-strap", sched_dc.get("strap"),
+               where="side wall %s, bay %d" % (s_, j + 1))
+            el(nid(j + 1, b), nid(j, e_), "brace", "X-strap", sched_dc.get("strap"),
+               where="side wall %s, bay %d" % (s_, j + 1))
+    zh = float(lb.get("header_bottom_ft") or 0.0) * 12.0
+    for s_, (b, e_) in (("L", (bL, eL)), ("R", (bR, eR))):
+        bays = sorted({bay_idx(k) for k in (lb.get("header_bays") or {}).get(s_) or ()})
+        if not bays or zh <= 0.0:
+            continue
+        for j in range(nf):                       # header strut node on the open column line
+            x0, y0, _z = nodes[str(nid(j, b))]
+            nodes[str(nid(j, 90000 + (0 if s_ == "L" else 1)))] = [x0, y0, round(zh, 1)]
+        h_ = 90000 + (0 if s_ == "L" else 1)
+        for j in range(nf - 1):
+            el(nid(j, h_), nid(j + 1, h_), "beam", "header strut", None, where="open side %s" % s_)
+        for j in bays:
+            el(nid(j, h_), nid(j + 1, e_), "brace", "header X-strap", sched_dc.get("strap"),
+               where="open side %s header, bay %d" % (s_, j + 1))
+            el(nid(j + 1, h_), nid(j, e_), "brace", "header X-strap", sched_dc.get("strap"),
+               where="open side %s header, bay %d" % (s_, j + 1))
+    raf_elems = [fr.elems[i][:2] for lab_, idxs in members.items() if lab_.startswith("raf") for i in idxs]
+    for j in sorted({bay_idx(k) for k in lb.get("roof_bays") or ()}):
+        for (n1, n2) in raf_elems:
+            el(nid(j, n1), nid(j + 1, n2), "brace", "roof X-strap", None, where="roof, bay %d" % (j + 1))
+            el(nid(j + 1, n1), nid(j, n2), "brace", "roof X-strap", None, where="roof, bay %d" % (j + 1))
 
     # deflected shapes from real solves (replicated across frames)
     modes = []
@@ -544,7 +586,7 @@ def _portal_data(cfg, name, res, pkg):
             "caveat": ("Portal geometry is the analysis model; purlins/girts/straps are "
                        "drawn schematically between frames at their model stations."
                        + note_nf + " Animated shapes are combo deflections from real "
-                       "solves (mode 1 = wind sway, mode 2 = gravity). " + _CAVEAT_COMMON),
+                       "solves (mode 1 = wind sway, mode 2 = gravity). " + _caveat_common(cfg)),
         },
         "nodes": nodes, "fixed": fixed, "elements": elements,
         "modes": modes, "slabs": [], "loads": loads,
