@@ -157,3 +157,34 @@ def test_custom_model_viewer_drops_view_frame_combos(monkeypatch):
     d = _portal(monkeypatch, {"structure_kind": "component"})
     cols = [e for e in d["elements"] if e["type"] == "column"]
     assert cols and all(e["combo"] is None for e in cols)
+
+
+# ---- R24 wall-path items left for the engine (Ex1, Ex10, Ex11, Ex14) ----
+
+def test_mixed_system_notes_without_raw_keys():
+    src = open(os.path.join(ROOT, "steel_engine", "cfs_engine.py"), encoding="utf-8").read()
+    for raw in ("R = least R", "exception REFUSED", "12.2.3.3 EXCEPTION", "(line_systems) --"):
+        assert raw not in src
+    assert 'CS.SYSTEMS[least]["label"]' in src
+
+
+def test_wind_wall_note_names_every_system():
+    assert "_WIND_WALL_LABEL" in SRC_R and '"; ".join("%s: %s" % (_WIND_WALL_LABEL.get(x, x)' in SRC_R
+
+
+def test_qa_sentence_r_per_direction():
+    assert "Light-frame walls (R = {_r_txt})" in SRC_R
+
+
+def test_partition_row_is_the_w_weight():
+    assert "Partition weight in the seismic weight W (&sect;12.7.2 item 2, floor levels)" in SRC_R
+    assert "live load in Ch. 4; in W per" not in SRC_R
+
+
+def test_codes_table_reads_cfg_materials_for_d11():
+    rows = R._cfs_codes_rows({"span_ft": 60.0, "materials": [{"item": "Welds", "spec": "E70; AWS D1.1 (HSS)"}]}, {})
+    assert "AWS D1.1" in [r[0] for r in rows]
+
+
+def test_low_slope_roof_zones_in_surface_table():
+    assert "Roof by distance from the windward edge (Fig. 27.3-1, &theta; &lt; 10&deg;)" in SRC_R

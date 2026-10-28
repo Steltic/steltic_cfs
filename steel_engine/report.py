@@ -2933,10 +2933,18 @@ def _grounding_check(cfg, name, pkg):
     if _re.search(r"\bs\s*310\b", _ct, _re.I):
         flags.append("cites S310 — not in the reference library: verify the value's stated basis (a fabricated S310 "
                      "clause number is a red flag)")
+    try:                                          # R per direction where the two directions differ (mixed systems)
+        import cfs_systems as _CSY
+        _rd = {d: _CSY.SYSTEMS[str(v)]["R"] for d, v in sorted((cfg.get("system_by_dir") or {}).items())
+               if str(v) in _CSY.SYSTEMS}
+    except Exception:
+        _rd = {}
+    _r_txt = (" / ".join("%s (%s)" % (_cn(r_), d) for d, r_ in _rd.items())
+              if len(set(_rd.values())) > 1 else _cn(_fnum(R)) if _fnum(R) is not None else str(R))
     head = ("<h3>Source verification</h3>"
             f"<p>Whether the governing provisions of each standard the systems require were verified against the "
             f"text of the standard. "
-            + (f"Light-frame walls (R = {R}): AISI S100 and S240 are required, and S400 for the seismic system "
+            + (f"Light-frame walls (R = {_r_txt}): AISI S100 and S240 are required, and S400 for the seismic system "
                "(wind shear walls: S240 B5)." if is_wall else
                "Frame or component building: AISI S100 governs the members and connections; S240 and S400 apply "
                "only where light-frame walls or straps appear.")
@@ -3789,7 +3797,7 @@ def _cfs_all_bases_waived(pkg):
 
 def _cfs_codes_rows(cfg, pkg):
     portal = _cfs_is_portal(cfg)
-    blob = _cfs_agent_blob(pkg)
+    blob = _cfs_agent_blob(pkg) + " " + json.dumps((cfg or {}).get("materials") or "", default=str).lower()
     rows = [["IBC 2024", "adopting building code (confirm the locally adopted edition and amendments)"],
             ["ASCE/SEI 7-22", "loads and LRFD combinations: gravity (Ch. 4), snow (Ch. 7), seismic "
                               "(Ch. 11&ndash;12), wind (Ch. 26&ndash;30)"],
@@ -4284,7 +4292,7 @@ def _cfs_gravity_rows(cfg, pkg):
         return rows
     rows = [psf("D_floor", "Floor dead load"), psf("D_roof", "Roof dead load"),
             psf("clad", cfg.get("clad_label") or "Exterior cladding (per unit wall area)"),
-            psf("partition_psf", "Partitions (&sect;4.3.2, live load in Ch. 4; in W per &sect;12.7.2)"),
+            psf("partition_psf", "Partition weight in the seismic weight W (&sect;12.7.2 item 2, floor levels)"),
             psf("L_floor", "Floor live load L<sub>o</sub> (Table 4.3-1)"),
             psf("Lr", "Roof live load L<sub>r</sub> (Table 4.3-1)")]
     rows.append(psf("collateral", "Collateral load"))
@@ -4726,10 +4734,19 @@ def _cfs_portal_loads(cfg, res, pkg):
             (", SDC %s" % sdc) if sdc else "")])
     h.append(_table(["Load", "Basis / value"], rows))
     prow = []
-    for case, d in (("+GC<sub>pi</sub>", wb), ("&minus;GC<sub>pi</sub>", wb.get("case_neg") or {})):
-        if any(k in d for k in ("wall_wind", "wall_lee", "roof_wind", "roof_lee")):
-            prow.append([case] + [_num_or(d.get(k), "%.2f") for k in ("wall_wind", "wall_lee", "roof_wind", "roof_lee")])
     wcases = [c for c in (wb.get("cases") or []) if isinstance(c, dict)]
+    # theta < 10 deg: the roof Cp of Fig. 27.3-1 runs by distance from the windward edge -- print the zones, not
+    # a windward / leeward pair
+    _zc = [c for c in wcases[:2] if isinstance(c.get("roof"), (list, tuple)) and len(c["roof"]) > 2]
+    _zoned = len(_zc) == 2 and (_fnum(wb.get("theta_deg")) is None or _fnum(wb.get("theta_deg")) < 10.0)
+    for i_, (case, d) in enumerate((("+GC<sub>pi</sub>", wb), ("&minus;GC<sub>pi</sub>", wb.get("case_neg") or {}))):
+        if any(k in d for k in ("wall_wind", "wall_lee", "roof_wind", "roof_lee")):
+            if _zoned:
+                prow.append([case, _num_or(d.get("wall_wind"), "%.2f"), _num_or(d.get("wall_lee"), "%.2f"),
+                             "; ".join("%s&ndash;%s ft: %s" % (_cn(z[0]), _cn(z[1]), _num_or(z[2], "%.2f"))
+                                       for z in _zc[i_]["roof"] if isinstance(z, (list, tuple)) and len(z) == 3)])
+            else:
+                prow.append([case] + [_num_or(d.get(k), "%.2f") for k in ("wall_wind", "wall_lee", "roof_wind", "roof_lee")])
     if wcases and (wb.get("source") == "user" or str(wb.get("enclosure") or "").lower() == "open"):
         crow = []
         for c in wcases:
@@ -4754,7 +4771,9 @@ def _cfs_portal_loads(cfg, res, pkg):
         prow = []
     if prow:
         h.append("<h4>MWFRS surface pressures, psf (+ toward the surface)</h4>"
-                 + _table(["Case", "Windward wall", "Leeward wall", "Windward roof", "Leeward roof"], prow))
+                 + _table(["Case", "Windward wall", "Leeward wall",
+                           "Roof by distance from the windward edge (Fig. 27.3-1, &theta; &lt; 10&deg;)"] if _zoned else
+                          ["Case", "Windward wall", "Leeward wall", "Windward roof", "Leeward roof"], prow))
     if pkg.get("torsion_companion"):
         rows = [[_pt(t.get("member")), _pt(t.get("designator")), _num_or(t.get("e0_in"), "%.2f"),
                  _num_or(t.get("Lb_in"), "%.0f"), _num_or(t.get("T_seg_kipin"), "%.1f"),
@@ -5111,6 +5130,10 @@ _WIND_WALL_BASIS = {
 }
 
 
+_WIND_WALL_LABEL = {"wsp_shearwall": "wood structural panel walls", "steelsheet_wall": "steel sheet walls",
+                    "gypsum_wall": "gypsum board walls", "strap_braced": "flat-strap X-braced walls"}
+
+
 _SYM = {"pu": "P<sub>u</sub>", "pr": "P<sub>r</sub>", "mu": "M<sub>u</sub>", "mr": "M<sub>r</sub>",
         "vu": "V<sub>u</sub>", "vr": "V<sub>r</sub>", "tu": "T<sub>u</sub>", "tr": "T<sub>r</sub>",
         "mux": "M<sub>ux</sub>", "muy": "M<sub>uy</sub>", "tdesign": "T", "pdesign": "P", "mdesign": "M",
@@ -5413,8 +5436,13 @@ def _cfs_capacity_chapter(cfg, pkg):
              and v not in (None, "", [], {})}
     if extra:
         h.append("<h3>Capacity-design records</h3>" + _cfs_block_html(extra))
-    if sysname in _WIND_WALL_BASIS and cfg.get("wind"):                # no wind exposure: no wind design note
-        h.append("<p class='tnote'><b>Wind design of the lateral walls:</b> %s.</p>" % _WIND_WALL_BASIS[sysname])
+    _wsys = [sysname] + [str(v) for v in (cfg.get("system_by_dir") or {}).values()] + \
+        [str(v) for v in (cfg.get("line_systems") or {}).values() if isinstance(v, str)]
+    _wsys = [x for i, x in enumerate(_wsys) if x in _WIND_WALL_BASIS and x not in _wsys[:i]]
+    if _wsys and cfg.get("wind"):                                       # no wind exposure: no wind design note
+        h.append("<p class='tnote'><b>Wind design of the lateral walls:</b> %s.</p>" % (
+            _WIND_WALL_BASIS[_wsys[0]] if len(_wsys) == 1 else
+            "; ".join("%s: %s" % (_WIND_WALL_LABEL.get(x, x), _WIND_WALL_BASIS[x]) for x in _wsys)))
     if pkg.get("holddowns") and not _cfs_is_portal(cfg):
         h.append("<p class='tnote'>Specific hold-down and rod products, concrete anchorage (ACI 318 Ch. 17) and "
                  "cladding attachment are confirmed on the drawings and submittals against the demands in "
