@@ -126,17 +126,17 @@ def diaphragm_idealization(cfg, res=None):
                                 if w not in ("topping", "gypcrete", "gyp-crete"))
     if decl != "flexible":
         return dict(declared=decl, flexible_ok=False, warnings=warns,
-                    note="diaphragm modelled %s -- no flexible idealization; Table 12.2-1 "
-                         "footnote b Omega_0 reduction not applicable" % decl)
+                    note="diaphragm modelled %s (the flexible idealization is not used), so the Table 12.2-1 "
+                         "footnote b Omega_0 reduction does not apply" % decl)
     if concrete and not calc_ok:
         warns.append("flexible diaphragm idealization with %s -- ASCE 7-22 12.3.1.1(3)(a) "
                      "excludes concrete/similar topping > 1.5 in. (12.3.1.2: concrete slabs may "
-                     "be RIGID). Model semi-rigid (12.3.1) or show 12.3.1.3 "
+                     "be rigid). Model semi-rigid (12.3.1) or show 12.3.1.3 "
                      "(delta_MDD/Delta_ADVE > 2); the footnote-b Omega_0 reduction is "
-                     "WITHHELD" % ("topping %.2f in." % top if top > 1.5 else
+                     "withheld" % ("topping %.2f in." % top if top > 1.5 else
                                    "material %s" % mat_txt))
         return dict(declared=decl, flexible_ok=False, warnings=warns,
-                    note="flexible idealization NOT supported by 12.3.1.1 (concrete topping)")
+                    note="flexible idealization not supported by 12.3.1.1 (concrete topping)")
     if calc_ok:
         return dict(declared=decl, flexible_ok=True, warnings=warns,
                     note="flexible per 12.3.1.3 (delta_MDD/Delta_ADVE = %.2f > 2)" % float(ratio))
@@ -146,8 +146,8 @@ def diaphragm_idealization(cfg, res=None):
             drift_bad.append(d)
     if drift_bad:
         warns.append("12.3.1.1(3)(b): lines in %s exceed the Table 12.12-1 drift limit -- the "
-                     "light-frame FLEXIBLE idealization is not supported until every line "
-                     "complies; footnote-b Omega_0 reduction WITHHELD" % "/".join(drift_bad))
+                     "light-frame flexible idealization is not supported until every line "
+                     "complies; footnote-b Omega_0 reduction withheld" % "/".join(drift_bad))
         return dict(declared=decl, flexible_ok=False, warnings=warns,
                     note="flexible idealization pending drift compliance (12.3.1.1(3)(b))")
     return dict(declared=decl, flexible_ok=True, warnings=warns,

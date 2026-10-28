@@ -24,7 +24,7 @@ def _pkg(**mem):
 def test_no_nr_cell_no_legend():
     html = R._cfs_portal_design_section(_pkg(), {})
     assert "hand two-span frame model" in html
-    assert "n.r. = not reported" not in html and "its values are not printed" in html
+    assert "n.r. = not reported" not in html and "the view draws its geometry with the design model" in html
 
 
 def test_nr_cell_keeps_the_legend(monkeypatch):
