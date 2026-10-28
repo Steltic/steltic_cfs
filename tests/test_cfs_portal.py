@@ -460,4 +460,4 @@ def test_two_span_portal_viewer_and_model_figure():
     assert d["loads"]["seis"]["V"] == pytest.approx(res["seismic"]["V_kip"], abs=0.01)
     assert any(r[0] == "Spans / eave / apex" and "35 + 35" in r[1] for r in d["meta"]["stats"])
     fig = RPT._cfs_iso_figure(cfg, "two-span", res, {})
-    assert "data:image/png;base64," in fig and "col_I1" in fig
+    assert "data:image/png;base64," in fig and "exterior and interior columns" in fig and "col_I1" not in fig

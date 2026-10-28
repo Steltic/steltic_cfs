@@ -398,7 +398,12 @@ def _portal_data(cfg, name, res, pkg):
                          "L": round(math.dist(c1, c2), 1), "util": util,
                          "combo": combo, "f": f or {}, "where": where})
 
-    gov = (res or {}).get("governing") or {}
+    try:                                          # a custom / hand design model: the view frame's own results
+        import report as _R                       # (governing combinations) are not the design values
+        custom = bool(_R._cfs_custom_model(cfg, pkg)[0])
+    except Exception:
+        custom = False
+    gov = {} if custom else ((res or {}).get("governing") or {})
     for j in range(nf):
         for lab, idxs in members.items():
             mkey = "col" if lab.startswith("col") else "raf"
@@ -545,7 +550,8 @@ def _portal_data(cfg, name, res, pkg):
     gc, gr = _combo_txt(gov.get("col")), _combo_txt(gov.get("raf"))
     if gc or gr:
         stats.append(["Governing combinations", "column: %s · rafter: %s" % (gc or "&mdash;", gr or "&mdash;")])
-    vb, tb = _num(a.get("V_base_kip")), _num(a.get("T_net_uplift_kip"))
+    vb = _num(a.get("V_design_kip", None if custom else a.get("V_base_kip")))
+    tb = _num(a.get("T_design_kip", None if custom else a.get("T_net_uplift_kip")))
     if vb is not None or tb is not None:
         stats.append(["Base V / net uplift", "%s / %s kip" % ("%.2f" % vb if vb is not None else "&mdash;",
                                                               "%.2f" % tb if tb is not None else "&mdash;")])

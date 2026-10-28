@@ -17,6 +17,7 @@ import report as R  # noqa: E402
 import cfs_viewer3d as V  # noqa: E402
 
 TPL = open(os.path.join(ROOT, "steel_engine", "viewer3d_template.html"), encoding="utf-8").read()
+SRC_R = open(os.path.join(ROOT, "steel_engine", "report.py"), encoding="utf-8").read()
 
 
 def _plain(h):
@@ -104,3 +105,55 @@ def test_layout_header_and_roof_straps(monkeypatch):
     side = [e for e in br if e["sec"] == "X-strap"]
     assert len(side) == 8 and all(d["nodes"][str(e["n"][0])][0] == 240.0 for e in side)
     assert len([e for e in br if e["sec"] == "roof X-strap"]) == 8
+
+
+# ---- R24 component / portal template items (Ex25, Ex17, Ex29, QA annex) ----
+
+def test_codes_extra_rows_and_aci_row_only_with_designed_anchorage():
+    pkg = {"codes_extra": [["IEBC 2024", "existing building: alteration (Ch. 5)"]],
+           "connections": [{"id": "base-anchor", "waived": "existing bases outside the scope"}]}
+    rows = R._cfs_codes_rows({"span_ft": 100.0}, pkg)
+    names = [r[0] for r in rows]
+    assert names[1] == "IEBC 2024" and "ACI 318-19 Ch. 17" not in names
+    rows2 = R._cfs_codes_rows({"span_ft": 100.0}, {"connections": [{"id": "base-anchor", "DC": 0.5}]})
+    assert "ACI 318-19 Ch. 17" in [r[0] for r in rows2]
+    assert "codes_extra" in SRC_R
+
+
+def test_sdc_a_sfrs_row_does_not_cite_table_12_2_1_row_h():
+    assert "the Table 12.2-1 coefficients are not used)" in SRC_R
+    assert 'if _cfs_sdc_detail(cfg)[0] == "A" else' in SRC_R
+
+
+def test_all_waived_drift_rows_read_not_applicable():
+    assert "all on the existing structure outside this scope: not applicable" in SRC_R
+
+
+def test_cc_wind_basis_label():
+    assert '"Wind basis (components and cladding)" if _cc else "MWFRS wind basis"' in SRC_R
+
+
+def test_model_key_and_qa_scope_have_no_raw_ids():
+    assert "col_L/col_R" not in SRC_R.split("def _cfs_iso_figure")[1].split("Model key")[0].split('"""')[2]
+    assert "frame path &mdash; S100 required" not in SRC_R
+    assert "AISI S100 governs the members and connections" in SRC_R
+
+
+def test_screen_text_and_statuses_not_in_capitals():
+    import cfs_engine, preflight  # noqa: F401
+    for mod in ("cfs_engine.py", "preflight.py", "cfs_pipeline.py"):
+        src = open(os.path.join(ROOT, "steel_engine", mod), encoding="utf-8").read()
+        for w in ("OCCUPIED", "ARE deliverables", "BUILDING structure", "FLEXIBLE idealization", "WITHHELD"):
+            assert w not in src, (mod, w)
+    assert 'str(v.get("status") or "").lower()' in SRC_R
+    assert "flexible idealization NOT permitted" not in SRC_R
+
+
+def test_mnlo_typeset_as_in_s100():
+    assert '"phimnlo": "&phi;M<sub>n&#8467;o</sub>"' in SRC_R
+
+
+def test_custom_model_viewer_drops_view_frame_combos(monkeypatch):
+    d = _portal(monkeypatch, {"structure_kind": "component"})
+    cols = [e for e in d["elements"] if e["type"] == "column"]
+    assert cols and all(e["combo"] is None for e in cols)

@@ -576,14 +576,14 @@ def check_cfs(cfg):
                      "module (no rack system, no RMI MH16.1 path) -- say so to the user and stop")
     kind = str(cfg.get("structure_kind", "wall")).lower()
     if _NONBLDG_RE.search(txt) or kind in ("platform", "mezzanine"):
-        say("WARN", "platform / mezzanine / equipment-support keywords: CLASSIFY per ASCE 7-22 "
-                    "15.1.1 -- an OCCUPIED mezzanine or platform is a BUILDING structure (Ch. 12, "
+        say("WARN", "platform / mezzanine / equipment-support keywords: classify per ASCE 7-22 "
+                    "15.1.1 -- an occupied mezzanine or platform is a building structure (Ch. 12, "
                     "Table 12.2-1 system, beams/posts/joists designed to S100); a free-standing "
                     "unit inside a building is not a Ch. 13 component when it is self-supporting "
-                    "(13.1.1); only an UNOCCUPIED nonbuilding structure goes to Ch. 15 (15.4.1(1)(a) "
+                    "(13.1.1); only an unoccupied nonbuilding structure goes to Ch. 15 (15.4.1(1)(a) "
                     "still permits Table 12.2-1 for structures similar to buildings). State the "
                     "classification; model a one-level mezzanine on the wall path with the top "
-                    "level as a FLOOR (live + storage), not a roof")
+                    "level as a floor (live + storage), not a roof")
     if kind not in _CFS_KINDS and kind not in ("platform", "mezzanine"):
         say("WARN", "structure_kind=%r is not one of %s" % (kind, "/".join(_CFS_KINDS)))
     # ---- storage weight (ASCE 7-22 12.7.2 item 1) ----
@@ -723,7 +723,7 @@ def check(cfg):
                     "drift, and rafter thrust; state the idealization")
     if any(k in arch for k in ("platform", "vessel", "tank", "bin", "silo")):
         say("WARN", "B2 nonbuilding-structure keywords in cfg: classify per ASCE 7-22 15.1.1 -- an "
-                    "OCCUPIED platform/mezzanine is a building (Ch. 12); only an unoccupied "
+                    "occupied platform/mezzanine is a building (Ch. 12); only an unoccupied "
                     "nonbuilding structure uses Ch. 15 (Table 15.4-1/2, or 15.4.1(1)(a) Table "
                     "12.2-1 for structures similar to buildings)")
     try:

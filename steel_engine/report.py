@@ -2935,10 +2935,11 @@ def _grounding_check(cfg, name, pkg):
                      "clause number is a red flag)")
     head = ("<h3>Source verification</h3>"
             f"<p>Whether the governing provisions of each standard the systems require were verified against the "
-            f"text of the standard. R = {R}; "
-            + ("light-frame walls present &mdash; S100 + S240 required; S400 for the seismic "
-               "system (wind shear walls: S240 B5)." if is_wall else
-               "frame path &mdash; S100 required; S240/S400 only where light-frame walls/straps appear.")
+            f"text of the standard. "
+            + (f"Light-frame walls (R = {R}): AISI S100 and S240 are required, and S400 for the seismic system "
+               "(wind shear walls: S240 B5)." if is_wall else
+               "Frame or component building: AISI S100 governs the members and connections; S240 and S400 apply "
+               "only where light-frame walls or straps appear.")
             + "</p>")
     tail = ("<p class='note'>Source verification incomplete: the items marked MISSING were required for this "
             "building's systems but no provision check or calculation-package evidence was found; verify those "
@@ -3776,6 +3777,16 @@ def _cfs_agent_blob(pkg):
         return json.dumps(pkg or {}).lower()
 
 
+def _cfs_all_bases_waived(pkg):
+    """True when the package has base / anchorage records and every one is waived (existing bases outside the
+    scope): no anchorage to concrete is designed."""
+    recs = [a for a in ((pkg or {}).get("anchorage") or []) + ((pkg or {}).get("bases") or [])
+            + [c for c in ((pkg or {}).get("connections") or [])
+               if isinstance(c, dict) and re.search(r"base|anchor", str(c.get("id", "")), re.I)]
+            if isinstance(a, dict)]
+    return bool(recs) and all(a.get("waived") for a in recs)
+
+
 def _cfs_codes_rows(cfg, pkg):
     portal = _cfs_is_portal(cfg)
     blob = _cfs_agent_blob(pkg)
@@ -3792,8 +3803,9 @@ def _cfs_codes_rows(cfg, pkg):
     scope = (pkg or {}).get("s400_scope")           # the designer's statement of every S400 section used
     rows.append(["AISI S400-20", _pt(scope) if isinstance(scope, str) and scope.strip()
                  else _cfs_s400_status(cfg, pkg)])
-    rows.append(["ACI 318-19 Ch. 17", "anchorage to concrete (anchor design forces handed to the "
-                                      "foundation design)"])
+    if not _cfs_all_bases_waived(pkg):
+        rows.append(["ACI 318-19 Ch. 17", "anchorage to concrete (anchor design forces handed to the "
+                                          "foundation design)"])
     # AWS D1.3 only where sheet steel is welded (arc spot / seam / flare-groove welds or welds to CFS members);
     # welded plate washers and hot-rolled plates are AWS D1.1 work, not D1.3
     if re.search(r"arc[- ]spot|arc[- ]seam|seam weld|puddle weld|flare[- ](?:bevel|groove|v)|\bd1\.3\b|"
@@ -3804,6 +3816,9 @@ def _cfs_codes_rows(cfg, pkg):
         rows.append(["AWS D1.1", "structural welding of hot-rolled steel (plates, HSS)"])
     if re.search(r"aisc\s*360|\bhss\s*\d|\bw\d{1,2}x\d", blob):
         rows.append(["AISC 360-22", "hot-rolled steel components"])
+    for extra in (pkg or {}).get("codes_extra") or []:   # job-specific standards: [standard, used for]
+        if isinstance(extra, (list, tuple)) and len(extra) == 2:
+            rows.insert(1, [_pt(extra[0]), _pt(extra[1])])
     return rows
 
 
@@ -3828,7 +3843,10 @@ def _cfs_building_rows(cfg, res, pkg):
         sysname = _cfs_sys(cfg, pkg)
         lab = (_cfs_sys_row(cfg, sysname) or {}).get("label")
         if sysname == "not_detailed":
-            lab = "steel system not specifically detailed for seismic resistance (Table 12.2-1 row H)"
+            lab = ("steel system not specifically detailed for seismic resistance (SDC A: ASCE 7-22 11.7 and the "
+                   "1.4 minimum lateral force; the Table 12.2-1 coefficients are not used)"
+                   if _cfs_sdc_detail(cfg)[0] == "A" else
+                   "steel system not specifically detailed for seismic resistance (Table 12.2-1 row H)")
         rows.append(["Seismic force-resisting system",
                      _pt(lab or sysname.replace("_", " ")) if (lab or sysname)
                      else "<b>not stated</b>"])
@@ -4138,13 +4156,14 @@ def _cfs_basis_rows(cfg, res, pkg):
         db = pkg.get("diaphragm_basis")
         if isinstance(db, dict):
             rows.append(["diaphragm idealization (&sect;12.3.1)", ("%s%s" % (
-                "" if db.get("flexible_ok", True) else "<b>flexible idealization NOT permitted</b> &mdash; ",
+                "flexible idealization not permitted (&sect;12.3.1.1 / &sect;12.3.1.3); "
+                if db.get("declared") == "flexible" and not db.get("flexible_ok", True) else "",
                 _pt(_drift_basis_clean(db.get("note", ""))))) + "".join(
                 "<br>&bull; %s" % _pt(_drift_basis_clean(w)) for w in db.get("warnings") or [])])
     ts = pkg.get("two_stage_framework")
     if isinstance(ts, dict):
         rows.append(["two-stage procedure (&sect;12.2.3.2)", "; ".join(
-            "%s: %s" % (_html.escape(str(d)), _pt(v.get("status")))
+            "%s: %s" % (_html.escape(str(d)), _pt(str(v.get("status") or "").lower()))
             for d, v in (ts.get("by_direction") or {}).items())
             + "; reaction amplification %s" % _cn(_fnum(ts.get("amplification")))])
     rows.append(["governing lateral hazard", _cfs_governing_hazard(pkg)])
@@ -4691,7 +4710,9 @@ def _cfs_portal_loads(cfg, res, pkg):
     rows = [["Frame tributary width", _ft(cfg.get("spacing_ft"))]]
     wb = pkg.get("wind_basis") or res.get("wind_basis") or {}
     if wb.get("basis"):
-        rows.append(["MWFRS wind basis", _pt(_wind_basis_text(wb.get("basis")))
+        _cc = bool(re.search(r"Ch\.\s*30", str(wb.get("basis")))) and not re.search(r"Ch\.\s*2[78]", str(wb.get("basis")))
+        rows.append(["Wind basis (components and cladding)" if _cc else "MWFRS wind basis",
+                     _pt(_wind_basis_text(wb.get("basis")))
                      + (" (q<sub>h</sub> = %s psf)" % _cn(_fnum(wb.get("qh_psf"))) if wb.get("qh_psf") is not None else "")])
     se = pkg.get("seismic") or res.get("seismic") or {}
     if s.get("W_frame_kip") is not None or se:
@@ -4845,7 +4866,12 @@ def _cfs_portal_design_section(pkg, cfg=None, res=None, name=None):
             rows.append([_pt(a.get("id")), _pt(a.get("selection")) or "<b>PENDING</b>", *cells,
                          _pt(a.get("limit_state")) or "<b>PENDING</b>", _pt(a.get("capacity")) or "<b>PENDING</b>",
                          _cdc_e(a), refs.ref(a.get("cited"))])
-        h.append("<h3>Base anchorage</h3><p>Net uplift (0.9D + 1.0W) is a required case; concrete "
+        h.append("<h3>Base anchorage</h3><p>The existing bases and anchor rods are outside this scope (rows "
+                 "below); no anchorage to concrete is designed here.</p>"
+                 + _ref_table(["Base", "Selection", "V (kip)", "Net uplift T (kip)", "M<sub>base</sub> (kip-in.)",
+                               "Limit state(s)", "Design strength", "D/C", "Ref."], rows, refs)
+                 if all(a.get("waived") for a in anch) else
+                 "<h3>Base anchorage</h3><p>Net uplift (0.9D + 1.0W) is a required case; concrete "
                  "embedment is designed to ACI 318-19 Ch. 17 with the interface forces below.</p>"
                  + _ref_table(["Base", "Selection", "V (kip)", "Net uplift T (kip)", "M<sub>base</sub> (kip-in.)",
                                "Limit state(s)", "Design strength", "D/C", "Ref."], rows, refs))
@@ -4861,7 +4887,7 @@ def _cfs_portal_design_section(pkg, cfg=None, res=None, name=None):
                          "model's values. The frame drawn in the 3D model view is not used for design%s.</p>"
                          % (_pt(cdesc) or "custom frame model",
                             "; its values are not reported here (n.r. = not reported by the design model)" if _nr
-                            else " and its values are not printed"))
+                            else "; the view draws its geometry with the design model's D/C values"))
     return "".join(x for x in h if x)
 
 
@@ -5098,7 +5124,7 @@ _SYM = {"pu": "P<sub>u</sub>", "pr": "P<sub>r</sub>", "mu": "M<sub>u</sub>", "mr
         "phivcp": "&phi;V<sub>cp</sub>", "phivcpg": "&phi;V<sub>cpg</sub>", "phinsa": "&phi;N<sub>sa</sub>",
         "phincb": "&phi;N<sub>cb</sub>", "phincbg": "&phi;N<sub>cbg</sub>", "phinpn": "&phi;N<sub>pn</sub>",
         "phinn": "&phi;N<sub>n</sub>", "phipp": "&phi;P<sub>p</sub>", "phibn": "&phi;B<sub>n</sub>",
-        "phimnlo": "&phi;M<sub>nlo</sub>", "phipnc": "&phi;P<sub>n</sub>", "phimnc": "&phi;M<sub>n</sub>",
+        "phimnlo": "&phi;M<sub>n&#8467;o</sub>", "phipnc": "&phi;P<sub>n</sub>", "phimnc": "&phi;M<sub>n</sub>",
         "rtanfu": "R<sub>t</sub>A<sub>n</sub>F<sub>u</sub>", "ryagfy": "R<sub>y</sub>A<sub>g</sub>F<sub>y</sub>",
         "pn": "P<sub>n</sub>", "ms": "M<sub>s</sub>", "phiv": "&phi;v<sub>n</sub>", "v": "v",
         "interaction": "interaction", "limit": "limit", "theta": "&theta;", "thetamax": "&theta;<sub>max</sub>",
@@ -5450,7 +5476,7 @@ _CFS_PORTAL_SHOWN = {"members", "connections", "anchorage", "schedules", "drift_
                      "design_agent", "report_mode", "materials", "occupancy", "project_title",
                      "detailing", "seismic", "sbmf", "crane", "design_model", "custom_model",
                      "hand_model", "analysis_model", "component_mode", "elf_spot_check",
-                     "elf_self_check", "self_check", "s400_scope"}
+                     "elf_self_check", "self_check", "s400_scope", "codes_extra"}
 # design-process records: QA annex only (never the report body in publication mode)
 _CFS_HARNESS_KEYS = {"rag_grounding", "grounding", "corpus_defects", "rag_quality", "solution_notes",
                      "solution_note", "issues", "issues_log", "brief_notes", "brief", "citation_red_flags",
@@ -5486,7 +5512,7 @@ def _cfs_framework_checks_html(pkg):
             rows.append([_pt(d), _num_or(v.get("K_upper_kip_in")), _num_or(v.get("K_lower_kip_in")),
                          _num_or(v.get("stiffness_ratio")), _num_or(v.get("T_upper_s"), "%.3f"),
                          _num_or(v.get("T_combined_s"), "%.3f"), _num_or(v.get("period_ratio"), "%.2f"),
-                         "<b>%s</b>" % _pt(v.get("status")), _pt("; ".join(v.get("messages") or []))])
+                         "<b>%s</b>" % _pt(str(v.get("status") or "").lower()), _pt("; ".join(v.get("messages") or []))])
         h.append("<h3>Two-stage procedure (ASCE 7-22 &sect;12.2.3.2)</h3>"
                  "<p>(a) K<sub>lower</sub> &ge; 10 K<sub>upper</sub>; (b) T<sub>entire</sub> &le; 1.1 "
                  "T<sub>upper</sub>; (d) upper-portion reactions amplified by "
@@ -5626,8 +5652,12 @@ def _cfs_qa_section(name, root, cfg, res, pkg, annex=None, num=7):
                 return v / lim
             return _fnum(d.get("DC")) if chk == "eave_sway" else None
         ratios = [r for r in (_dr(d) for d in dt) if r is not None]
-        mv.append(["Drift record", "%d rows; worst drift / limit = %s; %d failing, %d without a verdict" % (
-            len(dt), ("%.2f" % max(ratios)) if ratios else "&mdash;", len(ng), len(nov))])
+        if not ratios and dt and all(isinstance(d, dict) and d.get("waived") for d in dt):
+            mv.append(["Drift record", "%d rows, all on the existing structure outside this scope: not applicable"
+                       % len(dt)])
+        else:
+            mv.append(["Drift record", "%d rows; worst drift / limit = %s; %d failing, %d without a verdict" % (
+                len(dt), ("%.2f" % max(ratios)) if ratios else "&mdash;", len(ng), len(nov))])
     th = _find_theta(pkg)
     if th:
         mv.append(["P-&Delta; stability", "&theta;<sub>max,found</sub> = %.3f%s" % (
@@ -5638,7 +5668,7 @@ def _cfs_qa_section(name, root, cfg, res, pkg, annex=None, num=7):
         mv.append(["Strap ductility (S400 E3.4.1)", {True: "PASS", False: "<b>FAIL</b>"}.get(sd.get("ok"), "not evaluated")])
     ts = pkg.get("two_stage_framework")
     if isinstance(ts, dict):
-        mv.append(["Two-stage eligibility", "; ".join("%s: %s" % (_pt(d), _pt(v.get("status")))
+        mv.append(["Two-stage eligibility", "; ".join("%s: %s" % (_pt(d), _pt(str(v.get("status") or "").lower()))
                                                      for d, v in (ts.get("by_direction") or {}).items())])
     for key, what in (("model_vs_tributary_flags", "Model-vs-tributary divergence"),
                       ("drift_flags", "Drift screening flags"), ("stability_flags", "P-&Delta; flags")):
@@ -6033,22 +6063,29 @@ def _cfs_iso_figure(cfg, name, res, pkg, probe=None):
         probe.update(extent=(float(f[:, 0].min()), float(f[:, 0].max()), float(f[:, 1].min()), float(f[:, 1].max())),
                      clipped=[bool(c_.get_clip_on()) for c_ in ax.collections], zoom=zoom)
     if not portal:
+        _ks = min(2, int(cfg.get("stories") or len(cfg.get("heights_ft") or cfg.get("heights") or [0, 0]) or 1))
         _irr = (not V3.has_outline(cfg)) and cfg.get("area_sf") and \
             float(cfg["area_sf"]) < 0.95 * float(cfg["plan_ft"][0]) * float(cfg["plan_ft"][1])
         cap = (("Analysis idealization: the floor plates are drawn as the bounding plan and the wall lines at their "
                 "analysis positions; the wall-line schedules give the actual layout. " if _irr else "")
                + "Wall labels read <code>wall-&lt;dir&gt;-&lt;line&gt;-s&lt;story&gt;</code> (e.g. "
-               "<code>wall-X-%s-s2</code> = X-direction line %s at story 2); hold-downs are "
+               "<code>wall-X-%s-s%d</code> = X-direction line %s at story %d); hold-downs are "
                "<code>hd-&lt;dir&gt;-&lt;line&gt;</code>. Blue = chord studs, grey = tracks, orange = "
-               "panel / strap diagonals." % (_html.escape(cfg["lines_x"][0].name), _html.escape(cfg["lines_x"][0].name)))
+               "panel / strap diagonals." % (_html.escape(cfg["lines_x"][0].name), _ks,
+                                             _html.escape(cfg["lines_x"][0].name), _ks))
     else:
-        cap = ("Element labels: <code>frame-col</code> / <code>frame-raf</code> (columns col_L/col_R%s, "
-               "rafters raf_L/raf_R%s), <code>conn-knee</code> / <code>conn-apex</code> (joints), "
-               "<code>base-anchor</code> (bases). Blue = columns, grey = rafters, purlins and girts, "
-               "orange = X-straps." % (
-                   ", interior columns col_I1%s" % ("&ndash;col_I%d" % (len(xs_) - 2) if len(xs_) > 3 else "")
-                   if len(xs_) > 2 else "",
-                   " (left / right halves of every span)" if len(xs_) > 2 else ""))
+        _secs = {str(e.get("sec") or "") for e in els}
+        _grey = ["rafters"] + [w for w, k in (("purlins", "purlin"), ("girts", "girt"), ("header struts", "header strut"))
+                               if k in _secs]
+        _orng = [w for w, k in (("side-wall X-straps", "X-strap"), ("open-side header X-straps", "header X-strap"),
+                                ("roof X-straps", "roof X-strap")) if k in _secs]
+        cap = ("Element labels: <code>frame-col</code> / <code>frame-raf</code> (the %scolumns and the rafters%s of "
+               "each frame), <code>conn-knee</code> / <code>conn-apex</code> (joints), <code>base-anchor</code> "
+               "(bases). Blue = columns, grey = %s%s." % (
+                   "exterior and interior " if len(xs_) > 2 else "",
+                   ", left and right halves of every span" if len(xs_) > 2 else "",
+                   (", ".join(_grey[:-1]) + " and " + _grey[-1]) if len(_grey) > 1 else _grey[0],
+                   (", orange = " + ", ".join(_orng)) if _orng else ""))
     if cfg.get("model_figure_note"):
         cap = _pt(cfg["model_figure_note"]) + " " + cap
     buf = io.BytesIO()

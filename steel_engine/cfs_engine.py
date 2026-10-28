@@ -222,12 +222,12 @@ def load_screens(cfg):
     arch = (str(cfg.get("arch", "")) + " " + kind).lower()
     platformish = any(w in arch for w in ("platform", "mezzanine", "catwalk"))
     if platformish:
-        out.append("platform/mezzanine: classify per ASCE 7-22 15.1.1 -- an OCCUPIED platform "
+        out.append("platform/mezzanine: classify per ASCE 7-22 15.1.1 -- an occupied platform "
                    "(e.g. storage mezzanine with pickers) is a Ch. 12 building structure "
-                   "(Table 12.2-1 R/Cd/Omega0); Ch. 15 applies to UNOCCUPIED nonbuilding "
+                   "(Table 12.2-1 R/Cd/Omega0); Ch. 15 applies to unoccupied nonbuilding "
                    "structures (15.4.1(1)(a) still permits Table 12.2-1 for building-like "
                    "ones). Document the classification; joist/beam/post schedules with L/360 "
-                   "live-load deflection ARE deliverables")
+                   "live-load deflection are deliverables")
     if N == 1 and storage and not top_is_floor(cfg):
         out.append("single-level model with storage declared but the level is treated as a "
                    "ROOF (D_roof, no live, no storage weight) -- declare structure_kind="

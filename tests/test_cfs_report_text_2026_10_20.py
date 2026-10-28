@@ -43,7 +43,7 @@ def _cells(check):
     (dict(Vu_kip=2.41, phiVsa_kip=7.57, DC=0.319), "Vu = 2.41 kip", "φVsa = 7.57 kip"),
     (dict(Vu_kip=2.41, phiVcb_kip=21.52, DC=0.112), "Vu = 2.41 kip", "φVcb = 21.5 kip"),
     (dict(Vu_kip=2.41, phiVcp_kip=32.29, DC=0.075), "Vu = 2.41 kip", "φVcp = 32.3 kip"),
-    (dict(Mu_kipin=12.6, phiMnlo_kipin=64.59, DC=0.392), "Mu = 12.6 kip-in.", "φMnlo = 64.6 kip-in."),
+    (dict(Mu_kipin=12.6, phiMnlo_kipin=64.59, DC=0.392), "Mu = 12.6 kip-in.", "φMnℓo = 64.6 kip-in."),
     (dict(Pn_kip=6.73, Pu_kip=2.72, DC=0.436), "Pu = 2.72 kip", "Pn = 6.73 kip"),
     (dict(defl_in=0.044, limit_in=0.293, DC=0.15), "Δ = 0.044 in.", "limit = 0.293 in."),
     (dict(theta=0.022, theta_max=0.143, DC=0.153), "θ = 0.022", "θmax = 0.143"),
@@ -215,7 +215,7 @@ def test_existing_frames_wording(tmp_path):
            "members": [dict(id="purlin-1", section="1000Z300-97", capacity="phiMn = 120 kip-in.", DC=0.8,
                             M_design_kipin=96.0, P_design_kip=0.0, V_design_kip=2.0, cited="S100 F2")]}
     html = RPT._cfs_portal_design_section(pkg, {})
-    assert "The frame drawn in the 3D model view is not used for design and its values are not printed." in html
+    assert "The frame drawn in the 3D model view is not used for design; the view draws its geometry with the design model's D/C values." in html
     assert "outline frame" not in html and "bookkeeping" not in html and "engine" not in html
 
 
