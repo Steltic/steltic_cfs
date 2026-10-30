@@ -31,10 +31,15 @@ _CAVEAT_COMMON = (
     "North = +Y. Drag = orbit, scroll = zoom, right-drag = pan, click a member for details.")
 
 
-def _caveat_common(cfg):
-    """The common caveat with the plan north direction of this building (default +Y)."""
+def _caveat_common(cfg, solved_shapes=False):
+    """The common caveat with the plan north direction of this building (default +Y). solved_shapes: the viewer
+    animates combination deflections from real solves (portal frames), so the static-pattern sentence is left out."""
     north = str((cfg or {}).get("plan_north") or "+Y")
-    return _CAVEAT_COMMON.replace("North = +Y.", "North = %s." % north)
+    txt = _CAVEAT_COMMON.replace("North = +Y.", "North = %s." % north)
+    if solved_shapes:
+        txt = txt.replace("Animated shapes are static deflection patterns (per-story drift profiles / combination "
+                          "deflections), not eigenmodes. ", "")
+    return txt
 
 
 def _combo_txt(label):
@@ -606,7 +611,7 @@ def _portal_data(cfg, name, res, pkg):
                        "drawn schematically between frames at their model stations; end-wall framing and "
                        "bracing are not drawn."
                        + note_nf + " Animated shapes are combo deflections from real "
-                       "solves (mode 1 = wind sway, mode 2 = gravity). " + _caveat_common(cfg)),
+                       "solves (mode 1 = wind sway, mode 2 = gravity), not eigenmodes. " + _caveat_common(cfg, True)),
         },
         "nodes": nodes, "fixed": fixed, "elements": elements,
         "modes": modes, "slabs": [], "loads": loads,

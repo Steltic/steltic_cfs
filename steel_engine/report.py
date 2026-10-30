@@ -2886,6 +2886,12 @@ def _grounding_check(cfg, name, pkg):
     sysname = (cfg.get("system") or cfg.get("seis", {}).get("system") or "").lower()
     kind = (cfg.get("structure_kind") or "").lower()
     is_wall = sysname in _WALL_SYSTEMS or kind in ("wall", "podium") or bool((pkg or {}).get("wall_lines"))
+    # stud framing outside a wall system (e.g. a vestibule or end-wall stud wall of a portal building)
+    _has_studs = any(re.search(r"\bstuds?\b", " ".join([str(m.get("id", "")), str(m.get("role") or m.get("label") or "")]
+                                                     + [str(c.get("limit_state") or "") for c in (m.get("checks") or [])
+                                                        if isinstance(c, dict)]), re.I)
+                     for m in list((pkg or {}).get("members") or []) + list((pkg or {}).get("schedules") or [])
+                     if isinstance(m, dict))
     R = cfg.get("seis", {}).get("R", 3)
     try:
         _s = cfg.get("seis", {})
@@ -2909,7 +2915,8 @@ def _grounding_check(cfg, name, pkg):
     row("AISI S240 &mdash; framing rules (studs/track/built-up/bracing/trusses)", is_wall,
         n("engineering_standards_S240") > 0 or cite_s240,
         nl("engineering_standards_S240") + (" + cited in the calculation package" if cite_s240 else ""),
-        na="n/a (no light-frame walls)")
+        na=("n/a as a wall-system check (the SFRS is not a light-frame wall system; the stud framing is designed "
+            "in its member records)" if _has_studs else "n/a (no light-frame walls)"))
     row("AISI S400 &mdash; seismic wall/strap/SBMF capacities + capacity design",
         needs_s400, n("engineering_standards_S400") > 0 or has_cap or cite_s400,
         nl("engineering_standards_S400") + (" + capacity-design record" if has_cap else "")
@@ -4870,7 +4877,9 @@ def _cfs_portal_design_section(pkg, cfg=None, res=None, name=None):
                 h.append("<p class='tnote'><b>%s basis:</b> %s</p>" % (_pt(m.get("id")), _pt(m["limit_state"])))
     conns = [c for c in pkg.get("connections") or [] if isinstance(c, dict)]
     if conns:
-        h.append(_cfs_connections_table(pkg, "Connections &mdash; knee (column-rafter) and ridge (apex)",
+        _apex = any(str(c.get("id", "")).lower().startswith("conn-apex") for c in conns)
+        h.append(_cfs_connections_table(pkg, "Connections &mdash; knee (column-rafter)" +
+                                        (" and ridge (apex)" if _apex else ""),
                                         cfg, custom=custom, seeds=seedc))
     anch = [a for a in pkg.get("anchorage") or [] if isinstance(a, dict)]
     if anch:
@@ -6014,6 +6023,10 @@ def _cfs_iso_figure(cfg, name, res, pkg, probe=None):
                            arrowprops=dict(arrowstyle="-", color=color, lw=1.2,
                                            shrinkA=8, shrinkB=2, alpha=0.9))
 
+    # a ridge joint exists only where the package carries a ridge (apex) connection record
+    _has_apex = any(str(c.get("id", "")).lower().startswith("conn-apex")
+                    for c in ((pkg or {}).get("connections") or []) if isinstance(c, dict))
+
     def _labels():
         out = []
         if not portal:
@@ -6029,16 +6042,21 @@ def _cfs_iso_figure(cfg, name, res, pkg, probe=None):
             for k in range(1, len(z)):
                 out.append(_ann("s%d" % k, (Lx, 0.0, (z[k - 1] + z[k]) / 2.0), (48, 0), "#444444", fs=9))
             return out
-        out.append(_ann("col_L", (0.0, 0.0, He * 0.5), (-55, 0), "#b30000"))
-        out.append(_ann("col_R", (span_x, 0.0, He * 0.5), (55, -10), "#b30000"))
+        # plain-word labels (the model key gives the record names frame-col / frame-raf / conn-knee)
+        out.append(_ann("left column", (0.0, 0.0, He * 0.5), (-55, 0), "#b30000"))
+        out.append(_ann("right column", (span_x, 0.0, He * 0.5), (55, -10), "#b30000"))
         for k, xk in enumerate(xs_[1:-1], 1):
-            out.append(_ann("col_I%d" % k, (xk, 0.0, He * 0.45), (28, -38), "#b30000"))
+            out.append(_ann("interior column %d" % k if len(xs_) > 3 else "interior column",
+                            (xk, 0.0, He * 0.45), (28, -38), "#b30000"))
             out.append(_ann("valley", (xk, 0.0, He), (-10, 48), "#006400", fs=9))
-        out.append(_ann("raf_L", (s1 * 0.30, 0.0, He + 0.60 * (apx[0] - He)), (-20, -55), "#b30000"))
-        out.append(_ann("raf_R", (span_x - sN * 0.28, 0.0, He + 0.55 * (apx[-1] - He)), (60, 25), "#b30000"))
+        out.append(_ann("rafter", (s1 * 0.30, 0.0, He + 0.60 * (apx[0] - He)), (-20, -55), "#b30000"))
+        if len(xs_) > 2 or _has_apex:
+            out.append(_ann("rafter", (span_x - sN * 0.28, 0.0, He + 0.55 * (apx[-1] - He)), (60, 25), "#b30000"))
         out.append(_ann("knee", (0.0, 0.0, He), (-45, 40), "#006400"))
         for k, ak in enumerate(apx):
-            out.append(_ann("apex/ridge" if len(apx) == 1 else "ridge %d" % (k + 1),
+            if not _has_apex:                     # flat frame beam or monoslope: no ridge joint to label
+                break
+            out.append(_ann("ridge" if len(apx) == 1 else "ridge %d" % (k + 1),
                             ((xs_[k] + xs_[k + 1]) / 2.0, 0.0, ak), (0, 55), "#006400"))
         out.append(_ann("base", (0.0, 0.0, 0.0), (-30, -35), "#006400"))
         for j in (0, nf - 1):
@@ -6119,10 +6137,11 @@ def _cfs_iso_figure(cfg, name, res, pkg, probe=None):
         _orng = [w for w, k in (("side-wall X-straps", "X-strap"), ("open-side header X-straps", "header X-strap"),
                                 ("roof X-straps", "roof X-strap")) if k in _secs]
         cap = ("Element labels: <code>frame-col</code> / <code>frame-raf</code> (the %scolumns and the rafters%s of "
-               "each frame), <code>conn-knee</code> / <code>conn-apex</code> (joints), <code>base-anchor</code> "
+               "each frame), <code>conn-knee</code>%s (joints), <code>base-anchor</code> "
                "(bases). Blue = columns, grey = %s%s." % (
                    "exterior and interior " if len(xs_) > 2 else "",
                    ", left and right halves of every span" if len(xs_) > 2 else "",
+                   " / <code>conn-apex</code>" if _has_apex else "",
                    (", ".join(_grey[:-1]) + " and " + _grey[-1]) if len(_grey) > 1 else _grey[0],
                    (", orange = " + ", ".join(_orng)) if _orng else ""))
     if cfg.get("model_figure_note"):
