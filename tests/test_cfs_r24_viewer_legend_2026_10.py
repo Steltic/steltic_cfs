@@ -233,3 +233,10 @@ def test_r26_mixed_gypsum_osb_drift_method_and_collector_dash():
     assert RP._drift_method("gypsum_wall", {"wall_lines": [{"sheathing": "gypsum"}]}) == RP._DRIFT_METHOD["gypsum_wall"]
     assert RP._drift_method("wsp_shearwall", pkg) == RP._DRIFT_METHOD["wsp_shearwall"]
     assert '"see design basis"' not in SRC_R
+
+
+
+def test_r27_collector_column_flat_and_monoslope_labels():
+    assert 'all(r[2] == "&mdash;" for r in rows)' in SRC_R
+    assert "flat frame beam (no ridge)" in SRC_R and "high eave (monoslope)" in SRC_R
+    assert 'r[0] = "Rafter vertical deflection"' in SRC_R
