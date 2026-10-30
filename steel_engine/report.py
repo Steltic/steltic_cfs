@@ -2018,6 +2018,20 @@ _DRIFT_METHOD = {
     "gypsum_wall": "principles of mechanics for gypsum / fiberboard walls (AISI S400-20 E6.4.1.4) "
                    "with the declared apparent shear rigidity",
 }
+_DRIFT_MIXED_GYP = ("AISI S400-20 Eq. E1.4.1.4-1 for the stories sheathed with wood structural panels and principles of "
+                    "mechanics with the declared apparent shear rigidity for the gypsum / fiberboard stories "
+                    "(AISI S400-20 E6.4.1.4)")
+
+
+def _drift_method(sysd, pkg=None):
+    """Deflection method of a direction's wall system; a gypsum-wall building whose wall lines also carry wood
+    structural panels (OSB / plywood) names both methods."""
+    if sysd == "gypsum_wall" and any(re.search(r"\bOSB\b|plywood|wood structural", str(w.get("sheathing") or ""), re.I)
+                                     for w in ((pkg or {}).get("wall_lines") or []) if isinstance(w, dict)):
+        return _DRIFT_MIXED_GYP
+    return _DRIFT_METHOD.get(sysd)
+
+
 _SYS_SHORT = {"wsp_shearwall": "wood-structural-panel shear walls",
               "steelsheet_wall": "steel-sheet shear walls", "strap_braced": "strap-braced walls",
               "gypsum_wall": "gypsum / fiberboard walls", "sbmf": "special bolted moment frames",
@@ -2091,7 +2105,7 @@ def _cfs_drift_section(pkg, cfg=None):
     for dirn in sorted({str(d.get("direction") or "") for d in wall}):
         rows = [d for d in wall if str(d.get("direction") or "") == dirn]
         sysd = _cfs_dir_system(cfg or {}, dirn) if cfg else str(pkg.get("system") or "").lower()
-        meth = _DRIFT_METHOD.get(sysd)
+        meth = _drift_method(sysd, pkg)
         lab = _SYS_SHORT.get(sysd, sysd.replace("_", " ") or "walls")
         if meth:
             txt = ("Single-story deflection by %s, plus the rotation carried up from the stories "
@@ -2451,7 +2465,7 @@ def _cfs_collector_schedule(pkg):
         sel = c.get("selection") if not str(c.get("selection") or "").upper().startswith("SEEDED") \
             else None
         cap = c.get("capacity")
-        rows.append([_pt(c.get("id")), _pt(c.get("line")), _num_or(fw) if fw is not None else "see design basis",
+        rows.append([_pt(c.get("id")), _pt(c.get("line")), _num_or(fw) if fw is not None else "&mdash;",
                      _num_or(dem),
                      _pt(basis) or "&mdash;", _pt(sel) or ("&mdash;" if c.get("DC") is not None
                                                           else "<b>PENDING</b>"),
@@ -4146,7 +4160,7 @@ def _cfs_basis_rows(cfg, res, pkg):
                                                      for d, b in dlb.items())
                      if isinstance(dlb, dict) else _pt(_drift_basis_clean(dlb))])
     if not portal:
-        meth = sorted({_DRIFT_METHOD.get(_cfs_dir_system(cfg, d)) or "the analysis model"
+        meth = sorted({_drift_method(_cfs_dir_system(cfg, d), pkg) or "the analysis model"
                        for d in ("X", "Y")})
         rows.append(["story-drift basis (&sect;12.8.6)",
                      "single-story wall deflection by %s, plus the rotation carried up from the stories "
