@@ -420,10 +420,23 @@ def _portal_data(cfg, name, res, pkg):
         tgt = raf_nodes if lab.startswith("raf") else col_nodes
         for idx in idxs:
             tgt.update((fr.elems[idx][0], fr.elems[idx][1]))
+    # girts on the exterior column lines only (interior columns carry no wall); on an open side only above the
+    # header (cfg["longitudinal_bracing"]["header_bottom_ft"]), none where no header is given
+    _xs = [fr.nodes[t][0] for t in meta["base_nodes"]]
+    _xL, _xR = min(_xs), max(_xs)
+    _open = set((cfg.get("wind") or {}).get("open_sides") or ())
+    _zh = float((cfg.get("longitudinal_bracing") or {}).get("header_bottom_ft") or 0.0) * 12.0
+
+    def _girt_ok(t):
+        x, z = fr.nodes[t]
+        side = "L" if abs(x - _xL) < 1e-6 else "R" if abs(x - _xR) < 1e-6 else None
+        if side is None:
+            return False
+        return side not in _open or (_zh > 0.0 and z >= _zh - 1e-6)
     for j in range(nf - 1):
         for t in sorted(raf_nodes):
             el(nid(j, t), nid(j + 1, t), "beam", "purlin", sched_dc.get("purlin"))
-        for t in sorted(col_nodes - set(meta["base_nodes"])):
+        for t in sorted(t for t in col_nodes - set(meta["base_nodes"]) if _girt_ok(t)):
             el(nid(j, t), nid(j + 1, t), "beam", "girt", sched_dc.get("girt"))
     # longitudinal X-straps (exterior column lines; a multi-span frame's interior columns carry
     # no side wall). Default: both side walls in the two end bays, none across an open side.
@@ -590,7 +603,8 @@ def _portal_data(cfg, name, res, pkg):
                 "lWind": "Wind (per-frame transverse force at eave)",
                 "lSeis": "Seismic E (per-frame force at eave)"},
             "caveat": ("Portal geometry is the analysis model; purlins/girts/straps are "
-                       "drawn schematically between frames at their model stations."
+                       "drawn schematically between frames at their model stations; end-wall framing and "
+                       "bracing are not drawn."
                        + note_nf + " Animated shapes are combo deflections from real "
                        "solves (mode 1 = wind sway, mode 2 = gravity). " + _caveat_common(cfg)),
         },
