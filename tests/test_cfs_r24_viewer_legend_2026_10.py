@@ -188,3 +188,14 @@ def test_codes_table_reads_cfg_materials_for_d11():
 
 def test_low_slope_roof_zones_in_surface_table():
     assert "Roof by distance from the windward edge (Fig. 27.3-1, &theta; &lt; 10&deg;)" in SRC_R
+
+
+def test_no_girts_across_open_side_below_header(monkeypatch):
+    d = _portal(monkeypatch, {"wind": {"open_sides": ("L",)},
+                              "longitudinal_bracing": {"header_bottom_ft": 8.0, "header_bays": {"L": [1]}}})
+    girts = [e for e in d["elements"] if e["sec"] == "girt"]
+    for e in girts:
+        x, _y, z = d["nodes"][str(e["n"][0])]
+        assert not (x == 0.0 and z < 96.0)
+    assert any(d["nodes"][str(e["n"][0])][0] == 240.0 for e in girts) or not girts
+    assert "end-wall framing and bracing are not drawn" in d["meta"]["caveat"]
