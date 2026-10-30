@@ -209,3 +209,17 @@ def test_r25w_engine_text_items():
     assert "NET UPLIFT anchorage" not in pipe
     assert "before the accidental-torsion shift included in the table" in SRC_R
     assert '_pt(str(n)) for n in dict.fromkeys(map(str, notes))' in SRC_R
+
+
+def test_r26_portal_labels_apex_and_caveat():
+    # PNG labels are plain words, the ridge label / conn-apex key / heading only where a ridge record exists
+    assert '_ann("col_L"' not in SRC_R and '_ann("raf_L"' not in SRC_R and '"apex/ridge"' not in SRC_R
+    assert '_has_apex = any(str(c.get("id", "")).lower().startswith("conn-apex")' in SRC_R
+    assert '" and ridge (apex)" if _apex else ""' in SRC_R
+    # portal viewer caveat: one sentence on the animated shapes (solved combination deflections)
+    from steel_engine import cfs_viewer3d as V
+    txt = V._caveat_common({}, True)
+    assert "static deflection patterns" not in txt and "North = +Y." in txt
+    assert "static deflection patterns" in V._caveat_common({})
+    # QA S240 row names the stud framing of a frame building
+    assert "the SFRS is not a light-frame wall system; the stud framing is designed" in SRC_R
