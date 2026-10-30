@@ -223,3 +223,13 @@ def test_r26_portal_labels_apex_and_caveat():
     assert "static deflection patterns" in V._caveat_common({})
     # QA S240 row names the stud framing of a frame building
     assert "the SFRS is not a light-frame wall system; the stud framing is designed" in SRC_R
+
+
+def test_r26_mixed_gypsum_osb_drift_method_and_collector_dash():
+    from steel_engine import report as RP
+    pkg = {"wall_lines": [{"sheathing": "7/16 in. OSB rated sheathing"}, {"sheathing": "1/2 in. gypsum board"}]}
+    m = RP._drift_method("gypsum_wall", pkg)
+    assert "E1.4.1.4-1" in m and "E6.4.1.4" in m
+    assert RP._drift_method("gypsum_wall", {"wall_lines": [{"sheathing": "gypsum"}]}) == RP._DRIFT_METHOD["gypsum_wall"]
+    assert RP._drift_method("wsp_shearwall", pkg) == RP._DRIFT_METHOD["wsp_shearwall"]
+    assert '"see design basis"' not in SRC_R
