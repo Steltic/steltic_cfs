@@ -240,3 +240,10 @@ def test_r27_collector_column_flat_and_monoslope_labels():
     assert 'all(r[2] == "&mdash;" for r in rows)' in SRC_R
     assert "flat frame beam (no ridge)" in SRC_R and "high eave (monoslope)" in SRC_R
     assert 'r[0] = "Rafter vertical deflection"' in SRC_R
+
+
+
+def test_r27_strap_wind_basis_names_rupture():
+    from steel_engine import report as RP
+    t = RP._WIND_WALL_BASIS["strap_braced"]
+    assert "net-section rupture at the strap end" in t and "J6.2" in t and "B5.3" in t
