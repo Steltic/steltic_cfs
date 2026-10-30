@@ -173,7 +173,7 @@ def test_wind_wall_note_names_every_system():
 
 
 def test_qa_sentence_r_per_direction():
-    assert "Light-frame walls (R = {_r_txt})" in SRC_R
+    assert "{_qa_sys_txt(cfg)} (R = {_r_txt})" in SRC_R and "Special bolted moment frames" in SRC_R
 
 
 def test_partition_row_is_the_w_weight():
@@ -199,3 +199,13 @@ def test_no_girts_across_open_side_below_header(monkeypatch):
         assert not (x == 0.0 and z < 96.0)
     assert any(d["nodes"][str(e["n"][0])][0] == 240.0 for e in girts) or not girts
     assert "end-wall framing and bracing are not drawn" in d["meta"]["caveat"]
+
+
+def test_r25w_engine_text_items():
+    assert R._HK.get("ap_g") == "a<sub>p</sub>/g"
+    assert R._qa_sys_txt({"system": "sbmf"}) == "Special bolted moment frames"
+    assert R._qa_sys_txt({"system": "strap_braced", "system_by_dir": {"X": "strap_braced", "Y": "sbmf"}}).startswith("Light-frame walls and")
+    pipe = open(os.path.join(ROOT, "steel_engine", "cfs_pipeline.py"), encoding="utf-8").read()
+    assert "NET UPLIFT anchorage" not in pipe
+    assert "before the accidental-torsion shift included in the table" in SRC_R
+    assert '_pt(str(n)) for n in dict.fromkeys(map(str, notes))' in SRC_R

@@ -1782,7 +1782,7 @@ def _cap_num(x):
     return float(m.group(1).replace(",", "")) if m else None
 
 
-_HK = {"DC": "D/C", "v_unit_plf": "seismic unit shear, &rho;E (plf)",
+_HK = {"DC": "D/C", "v_unit_plf": "seismic unit shear, &rho;E (plf)", "ap_g": "a<sub>p</sub>/g",
        "type_ii_Ca": "Type II shear resistance adjustment factor C<sub>a</sub>",
        "v_unit_over_Ca_plf": "unit shear / C<sub>a</sub> (plf)",
        "phiPn_c": "&phi;P<sub>n</sub> (kip)", "phiMn_c": "&phi;M<sub>n</sub> (kip-in.)",
@@ -2451,7 +2451,8 @@ def _cfs_collector_schedule(pkg):
         sel = c.get("selection") if not str(c.get("selection") or "").upper().startswith("SEEDED") \
             else None
         cap = c.get("capacity")
-        rows.append([_pt(c.get("id")), _pt(c.get("line")), _num_or(fw), _num_or(dem),
+        rows.append([_pt(c.get("id")), _pt(c.get("line")), _num_or(fw) if fw is not None else "see design basis",
+                     _num_or(dem),
                      _pt(basis) or "&mdash;", _pt(sel) or ("&mdash;" if c.get("DC") is not None
                                                           else "<b>PENDING</b>"),
                      _num_or(cap) if _fnum(cap) is not None else (_pt(cap) or "&mdash;"),
@@ -2944,7 +2945,7 @@ def _grounding_check(cfg, name, pkg):
     head = ("<h3>Source verification</h3>"
             f"<p>Whether the governing provisions of each standard the systems require were verified against the "
             f"text of the standard. "
-            + (f"Light-frame walls (R = {_r_txt}): AISI S100 and S240 are required, and S400 for the seismic system "
+            + (f"{_qa_sys_txt(cfg)} (R = {_r_txt}): AISI S100 and S240 are required, and S400 for the seismic system "
                "(wind shear walls: S240 B5)." if is_wall else
                "Frame or component building: AISI S100 governs the members and connections; S240 and S400 apply "
                "only where light-frame walls or straps appear.")
@@ -3795,6 +3796,15 @@ def _cfs_all_bases_waived(pkg):
     return bool(recs) and all(a.get("waived") for a in recs)
 
 
+def _qa_sys_txt(cfg):
+    """'Light-frame walls', 'Special bolted moment frames' or both, for the QA source-verification sentence."""
+    sy = [str(cfg.get("system") or "")] + [str(v) for v in (cfg.get("system_by_dir") or {}).values()]
+    walls = any(x in ("wsp_shearwall", "steelsheet_wall", "gypsum_wall", "strap_braced") for x in sy)
+    sbmf = any(x == "sbmf" for x in sy)
+    return ("Light-frame walls and special bolted moment frames" if walls and sbmf else
+            "Special bolted moment frames" if sbmf else "Light-frame walls")
+
+
 def _cfs_codes_rows(cfg, pkg):
     portal = _cfs_is_portal(cfg)
     blob = _cfs_agent_blob(pkg) + " " + json.dumps((cfg or {}).get("materials") or "", default=str).lower()
@@ -4642,9 +4652,10 @@ def _cfs_wall_demands_section(cfg, res, pkg):
         h.append("<h4>%s direction</h4>" % _html.escape(str(dirn)) + _table(
             ["Line", "Story", "V (kip)", "v (plf)"], rows))
         for t in dd.get("transfers", []):
-            h.append("<p class='tnote'><b>Transfer:</b> line %s is absent at story %s: %.1f kip to %s (%s) "
-                     "&mdash; %s</p>" % (_pt(t["line"]), _pt(t["story"]), t["V_kip"], _pt(t["to"]),
-                                         _pt(t.get("note")), _pt(t["basis"])))
+            h.append("<p class='tnote'><b>Transfer:</b> line %s is absent at story %s: %.1f kip of analysis shear "
+                     "(before the accidental-torsion shift included in the table) to %s (%s) &mdash; %s</p>"
+                     % (_pt(t["line"]), _pt(t["story"]), t["V_kip"], _pt(t["to"]),
+                        _pt(t.get("note")), _pt(t["basis"])))
     return "".join(h)
 
 
@@ -5777,13 +5788,13 @@ def _cfs_write_qa_annex(name, cfg, res, pkg, root, qa_num=7):
         parts.append("<h2>Analysis screening notes</h2><p>Screens the analysis raises for the engineer to evaluate; "
                      "the evaluation recorded in the calculation package follows each group.</p>")
         if notes:
-            parts.append("<ul>%s</ul>" % "".join("<li>%s</li>" % _html.escape(str(n)) for n in dict.fromkeys(map(str, notes))))
+            parts.append("<ul>%s</ul>" % "".join("<li>%s</li>" % _pt(str(n)) for n in dict.fromkeys(map(str, notes))))
             rsn = (pkg or {}).get("analysis_screen_evaluation")
             if rsn:
                 parts.append("<p><b>Evaluation:</b> %s</p>" % _pt(rsn))
         if gate:
             parts.append("<h3>Wall-line forces: semi-rigid / rigid model vs tributary distribution</h3><ul>%s</ul>" % "".join(
-                "<li>%s</li>" % _html.escape(str(n)) for n in dict.fromkeys(map(str, gate))))
+                "<li>%s</li>" % _pt(str(n)) for n in dict.fromkeys(map(str, gate))))
             rsl = (pkg or {}).get("model_vs_tributary_flags_resolution")
             parts.append("<p><b>Evaluation:</b> %s</p>" % (_pt(rsl) if rsl else
                          "the wall lines are designed for the forces of the diaphragm analysis adopted (Section 2)."))

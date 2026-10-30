@@ -564,7 +564,7 @@ def enumerate_combos(cfg):
                 out.append(dict(label="1.2D+1.0W%s%s+%s+(0.5Lr or 0.3S or 0.5R)" % (dirn, sgn, Ls),
                                 D=1.2, L=fL, Lr=0.5, S=0.3, R=0.5, W=1.0, dir=dirn, sign=sgn))
                 out.append(dict(label="0.9D+1.0W%s%s" % (dirn, sgn), D=0.9, W=1.0,
-                                dir=dirn, sign=sgn, role="NET UPLIFT anchorage case"))
+                                dir=dirn, sign=sgn, role="net-uplift anchorage case"))
     # 2.3.6 overstrength pair (combos 6 & 7 with Emh): BOTH the additive and the
     # counteracting case are REQUIRED for collectors/transfer/anchorage (rho NOT applied
     # to Omega_0-level E, 12.3.4.1 item 5). One pair per direction when Omega_0 differs.
