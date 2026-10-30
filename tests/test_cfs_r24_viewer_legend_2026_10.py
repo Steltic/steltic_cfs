@@ -247,3 +247,13 @@ def test_r27_strap_wind_basis_names_rupture():
     from steel_engine import report as RP
     t = RP._WIND_WALL_BASIS["strap_braced"]
     assert "net-section rupture at the strap end" in t and "J6.2" in t and "B5.3" in t
+
+
+def test_r28_component_job_section_headings_and_w_basis():
+    import report as RP
+    assert RP._cfs_component_job({"structure_kind": "purlin"})
+    assert not RP._cfs_component_job({"structure_kind": "portal"})
+    src = open(RP.__file__, encoding="utf-8").read()
+    assert '"Purlin and girt loads" if _cfs_component_job(cfg) else "Frame loads"' in src
+    assert '"Purlin and girt design" if _cfs_component_job(cfg) else "Frame design"' in src
+    assert '("; %s" % _pt(se_["W_frame_basis"]))' in src
