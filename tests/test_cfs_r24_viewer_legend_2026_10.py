@@ -257,3 +257,9 @@ def test_r28_component_job_section_headings_and_w_basis():
     assert '"Purlin and girt loads" if _cfs_component_job(cfg) else "Frame loads"' in src
     assert '"Purlin and girt design" if _cfs_component_job(cfg) else "Frame design"' in src
     assert '("; %s" % _pt(se_["W_frame_basis"]))' in src
+
+
+def test_r28_strap_wind_basis_cites_j6_correctly():
+    src = SRC_R
+    assert "J6.1 \"\n                    \"for bolted" not in src and "J6.2 for screwed, J6.1" not in src
+    assert "tension rupture J6.2, with shear rupture" in src and "block shear J6.3 at bolted ends" in src
