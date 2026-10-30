@@ -4055,7 +4055,7 @@ def _cfs_basis_rows(cfg, res, pkg):
                 _cn(_fnum(rho)) if _fnum(rho) is not None else _pt(rho),
                 " &mdash; applied to the strength demands; not to drift (&sect;12.3.4.1)"
                 if not portal else "",
-                ("<br>Basis: %s" % (_cn(rj) if isinstance(rj, (dict, list)) else _pt(rj))) if rj else "")])
+                ("; basis: %s" % (_cn(rj) if isinstance(rj, (dict, list)) else _pt(rj))) if rj else "")])
         hl = _cfs_height_limit(cfg)
         if hl:
             rows.append(["Height limit (Table 12.2-1)", hl])
