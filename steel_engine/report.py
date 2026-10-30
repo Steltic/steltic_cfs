@@ -4109,7 +4109,7 @@ def _cfs_basis_rows(cfg, res, pkg):
         se_ = _cfs_portal_seis(pkg, res)
         Wf = _fnum(se_.get("W_frame_kip") if se_.get("W_frame_kip") is not None else s.get("W_frame_kip"))
         rows.append(["Seismic weight per frame (&sect;12.7.2)", "W = %s kip%s" % (
-            _cn(Wf), ("<br>%s" % _pt(se_["W_frame_basis"])) if se_.get("W_frame_basis") else "")])
+            _cn(Wf), ("; %s" % _pt(se_["W_frame_basis"])) if se_.get("W_frame_basis") else "")])
         if se_.get("V_kip") is not None and se_.get("Cs") is not None:
             rows.append(["ELF (&sect;12.8), per frame", "V = C<sub>s</sub>W = %s &times; %s = %s kip%s" % (
                 _cn(_fnum(se_["Cs"]), 4), _cn(Wf), _cn(_fnum(se_["V_kip"])),
@@ -4755,11 +4755,17 @@ def _wind_basis_text(s):
     return s.replace("pressure equation, NOT in qh", "pressure equation, not in qh")
 
 
+def _cfs_component_job(cfg):
+    """A purlin / girt component job on an existing frame (structure_kind "purlin"): the portal sections 3-4 carry
+    the purlin and girt loads and design, and the frame records are the existing frame outside the scope."""
+    return str((cfg or {}).get("structure_kind", "")).lower() in ("purlin", "girt", "component")
+
+
 def _cfs_portal_loads(cfg, res, pkg):
     """Section 3 of the portal report: the frame loads (wind pressures for both internal-pressure
     cases, seismic per frame, load cases); load values are in the design basis."""
     s = cfg.get("seis") or {}
-    h = ["<h2>3. Frame loads</h2>"]
+    h = ["<h2>3. %s</h2>" % ("Purlin and girt loads" if _cfs_component_job(cfg) else "Frame loads")]
     rows = [["Frame tributary width", _ft(cfg.get("spacing_ft"))]]
     wb = pkg.get("wind_basis") or res.get("wind_basis") or {}
     if wb.get("basis"):
@@ -4860,7 +4866,7 @@ def _cfs_portal_design_section(pkg, cfg=None, res=None, name=None):
     seedc = {c.get("id"): c for c in seeds.get("connections") or []}
     seeda = {a.get("id"): a for a in seeds.get("anchorage") or []}
     seedd = {d.get("check"): d for d in seeds.get("drift_table") or [] if isinstance(d, dict)}
-    h = ["<h2>4. Frame design</h2>"]
+    h = ["<h2>4. %s</h2>" % ("Purlin and girt design" if _cfs_component_job(cfg) else "Frame design")]
     _legend_at = None
     if custom:
         _legend_at = len(h)
@@ -4905,8 +4911,10 @@ def _cfs_portal_design_section(pkg, cfg=None, res=None, name=None):
     conns = [c for c in pkg.get("connections") or [] if isinstance(c, dict)]
     if conns:
         _apex = any(str(c.get("id", "")).lower().startswith("conn-apex") for c in conns)
-        h.append(_cfs_connections_table(pkg, "Connections &mdash; knee (column-rafter)" +
-                                        (" and ridge (apex)" if _apex else ""),
+        h.append(_cfs_connections_table(pkg, ("Connections &mdash; existing frame knee (column-rafter)" +
+                                         (" and ridge (apex)" if _apex else "") + ", outside this scope")
+                                        if _cfs_component_job(cfg) else
+                                        ("Connections &mdash; knee (column-rafter)" + (" and ridge (apex)" if _apex else "")),
                                         cfg, custom=custom, seeds=seedc))
     anch = [a for a in pkg.get("anchorage") or [] if isinstance(a, dict)]
     if anch:
