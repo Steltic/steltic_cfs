@@ -5176,8 +5176,9 @@ _WIND_WALL_BASIS = {
                        "&phi;<sub>v</sub> = 0.60 (E2.3.2); alternatively AISI S240-20 B5.2.2.3.2",
     "gypsum_wall": "AISI S240-20 B5.2.2.3.4, Table B5.2.2.3-3 (gypsum) / B5.2.2.3.5 (fiberboard), "
                    "&phi;<sub>v</sub> = 0.65 (B5.2.3); S400 Table E6.3-1 is for seismic loads only",
-    "strap_braced": "strap tension yielding T<sub>n</sub> = A<sub>g</sub>F<sub>y</sub> (AISI S400-20 E3.3.1, "
-                    "AISI S100-16 D2) with the resistance factor of S400 E3.3.2 / S240 B5.3",
+    "strap_braced": "AISI S240-20 B5.3: the lesser of strap tension yielding T<sub>n</sub> = A<sub>g</sub>F<sub>y</sub> "
+                    "(AISI S100-16 D2) and net-section rupture at the strap end (S100 D3 and J6.2 for screwed, J6.1 "
+                    "for bolted connections, &phi; per Table J6-1); the seismic design follows S400 E3.3 / E3.4",
 }
 
 
