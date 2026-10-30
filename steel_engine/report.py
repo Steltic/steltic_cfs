@@ -2471,13 +2471,19 @@ def _cfs_collector_schedule(pkg):
                                                           else "<b>PENDING</b>"),
                      _num_or(cap) if _fnum(cap) is not None else (_pt(cap) or "&mdash;"),
                      _cdc_e(c), refs.ref(c.get("cited"))])
-    return ("<h3>Collector schedule</h3><p>Analysis force = the diaphragm design force carried "
-            "along the collector run (ASCE 7-22 &sect;12.10.1.1, with &Omega;<sub>0</sub> per "
-            "&sect;12.10.2.1 in SDC C&ndash;F); the <i>design force</i> is the force the D/C is "
-            "computed on and its basis is stated per row.</p>"
-            + _ref_table(["ID", "Line", "Analysis force (kip)", "Design force (kip)",
-                          "Design basis", "Selection", "Design strength", "D/C", "Ref."],
-                         rows, refs))
+    head = ["ID", "Line", "Analysis force (kip)", "Design force (kip)",
+            "Design basis", "Selection", "Design strength", "D/C", "Ref."]
+    if rows and all(r[2] == "&mdash;" for r in rows):      # no run force recorded: the design force carries the basis
+        head = head[:2] + head[3:]
+        rows = [r[:2] + r[3:] for r in rows]
+        intro = ("<p>The <i>design force</i> is the collector force the D/C is computed on (ASCE 7-22 &sect;12.10.1.1, "
+                 "with &Omega;<sub>0</sub> per &sect;12.10.2.1 in SDC C&ndash;F); its basis is stated per row.</p>")
+    else:
+        intro = ("<p>Analysis force = the diaphragm design force carried "
+                 "along the collector run (ASCE 7-22 &sect;12.10.1.1, with &Omega;<sub>0</sub> per "
+                 "&sect;12.10.2.1 in SDC C&ndash;F); the <i>design force</i> is the force the D/C is "
+                 "computed on and its basis is stated per row.</p>")
+    return "<h3>Collector schedule</h3>" + intro + _ref_table(head, rows, refs)
 
 
 def _gravity_basis_note(gf):
@@ -3896,9 +3902,16 @@ def _cfs_building_rows(cfg, res, pkg):
                 len(cfg["spans"]), spans, _ft(cfg.get("eave_ft")),
                 ", ".join(_ft(s_.get("apex_ft")) for s_ in cfg["spans"]))])
         else:
-            rows.append(["Frame geometry", "%s span, %s eave, %s apex%s" % (
-                _ft(cfg.get("span_ft")), _ft(cfg.get("eave_ft")), _ft(cfg.get("apex_ft")),
-                " (monoslope)" if cfg.get("monoslope") else "")])
+            _ap, _ev = _fnum(cfg.get("apex_ft")), _fnum(cfg.get("eave_ft"))
+            if cfg.get("monoslope"):
+                _geo = "%s span, %s low eave, %s high eave (monoslope)" % (
+                    _ft(cfg.get("span_ft")), _ft(cfg.get("eave_ft")), _ft(cfg.get("apex_ft")))
+            elif _ap is not None and _ev is not None and abs(_ap - _ev) < 1e-6:
+                _geo = "%s span, %s eave, flat frame beam (no ridge)" % (_ft(cfg.get("span_ft")), _ft(cfg.get("eave_ft")))
+            else:
+                _geo = "%s span, %s eave, %s apex" % (_ft(cfg.get("span_ft")), _ft(cfg.get("eave_ft")),
+                                                     _ft(cfg.get("apex_ft")))
+            rows.append(["Frame geometry", _geo])
         rows.append(["Frame spacing / building length", "%s / %s" % (
             _ft(cfg.get("spacing_ft")), _ft(cfg.get("length_ft")) if cfg.get("length_ft") else "not stated")])
         rows.append(["Base fixity", _pt(cfg.get("base", "pinned"))])
@@ -5012,6 +5025,10 @@ def _cfs_serviceability_table(pkg, custom=False, seedd=None):
         if custom and sd and _same(v, sd.get("value_in", sd.get("value"))):
             r[1] = "%s <i>(frame drawn in the 3D model view, not used for design)</i>" % r[1]
         r[0] = _drift_check_label(d.get("check"))
+        if d.get("check") == "apex_deflection" and not any(
+                str(c.get("id", "")).lower().startswith("conn-apex")
+                for c in (pkg.get("connections") or []) if isinstance(c, dict)):
+            r[0] = "Rafter vertical deflection"            # flat frame beam or monoslope: no ridge (apex) joint
         rows.append(r)
     return ("<h3>Serviceability and seismic drift</h3>"
             + _table(["Check", "Value", "Criterion / limit", "D/C", "Status"], rows))
