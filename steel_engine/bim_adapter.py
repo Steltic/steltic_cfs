@@ -128,6 +128,14 @@ def walls(cfg, pkg):
     exact={(str(r.get("direction")),str(r.get("line"))):parse_ranges(r.get("braced_bays_ft")) for r in pkg.get("braced_bay_layout",[])}
     for direction,key in (("X","lines_x"),("Y","lines_y")):
         for line in cfg.get(key,[]):
+            # WallLine.pos may be fitted for tributary-area analysis. A separate
+            # plan position, when supplied, governs physical coordinates only.
+            position_key = direction + "-" + str(line.name)
+            plan_positions = cfg.get("line_plan_pos_ft", {})
+            plan_pos = float(plan_positions.get(position_key, line.pos))
+            if not math.isfinite(plan_pos):
+                raise ValueError("Non-finite physical wall position: " + position_key)
+            position_source = "cfg.py#/line_plan_pos_ft/" + position_key if position_key in plan_positions else "cfg.py WallLine.pos"
             # Optional explicit layout retained on WallLine, keyed by story.
             located=getattr(line,"segment_positions_ft",None) or {}
             for story,segs in sorted(line.segments.items()):
@@ -144,16 +152,16 @@ def walls(cfg, pkg):
                         ranges=None
                         source="range/length/count mismatch"
                 entry={"id":"cfs:wall:%s:%s:story:%d"%(direction,line.name,story),"direction":direction,"line":str(line.name),
-                       "position_in":float(line.pos)*12,"story":story,"base_z_in":levels[story-1],"segments_in":[[float(v)*12 for v in s] for s in segs],"range_source":source}
+                       "position_in":plan_pos*12,"analysis_position_in":float(line.pos)*12,"position_source":position_source,"story":story,"base_z_in":levels[story-1],"segments_in":[[float(v)*12 for v in s] for s in segs],"range_source":source}
                 evidence.append(entry)
                 if not segs: continue
                 if ranges is None:
                     unresolved.append(entry["id"]); continue
                 for si,((a,b),(length,height)) in enumerate(zip(ranges,segs),1):
-                    a*=12; b*=12; p=float(line.pos)*12; z=levels[story-1]; top=z+float(height)*12
+                    a*=12; b*=12; p=plan_pos*12; z=levels[story-1]; top=z+float(height)*12
                     points=[[a,p,z],[b,p,z],[b,p,top],[a,p,top]] if direction=="X" else [[p,a,z],[p,b,z],[p,b,top],[p,a,top]]
                     panels.append({"id":entry["id"]+":segment:"+str(si),"kind":"wall_segment","status":"candidate","vertices":points,
-                                   "thickness":None,"material_id":None,"geometry_basis":source})
+                                   "thickness":None,"material_id":None,"geometry_basis":source,"position_source":position_source})
     findings=[]
     if unresolved: findings.append(issue("wall_segment_positions","Supply actual along-line segment ranges; schematic distribution is not physical set-out",unresolved))
     return {"engine_version":"wall_line physical declarations; no spring solve", "analysis":{"nodes":[],"elements":[],"comparison":{"status":"not_applicable","source":"Wall spring model is not physical geometry"}},

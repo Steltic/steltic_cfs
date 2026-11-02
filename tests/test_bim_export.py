@@ -257,6 +257,12 @@ def test_cfs_uncapped_frames_and_wall_ranges():
     assert line.length(1)==8
     p=adapter.walls({"heights_ft":[10],"lines_x":[line]}, {})
     assert p["physical"]["panels"][0]["vertices"]==[[48,120,0],[144,120,0],[144,120,120],[48,120,120]]
+    physical=adapter.walls({"heights_ft":[10],"lines_x":[line],"line_plan_pos_ft":{"X-A":84}}, {})
+    assert physical["physical"]["panels"][0]["vertices"]==[[48,1008,0],[144,1008,0],[144,1008,120],[48,1008,120]]
+    assert physical["layout_evidence"]["wall_lines"][0]["analysis_position_in"]==120
+    assert line.pos==10  # physical correction must not move the analysis model
+    with pytest.raises(ValueError, match="Non-finite physical"):
+        adapter.walls({"heights_ft":[10],"lines_x":[line],"line_plan_pos_ft":{"X-A":float('nan')}}, {})
     unknown=adapter.walls({"heights_ft":[10],"lines_x":[WL.WallLine("A",10,{1:[(8,10)]})]}, {})
     assert unknown["physical"]["panels"]==[]
     assert unknown["findings"][0]["code"]=="wall_segment_positions"
