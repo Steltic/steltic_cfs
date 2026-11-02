@@ -2079,6 +2079,13 @@ def check(name, root=None, pkg=None, verbose=True):
         _stamp(root, path, issues)
     if verbose:
         _print(name, issues)
+    if path is not None:
+        import bim_export
+        bim_issues = bim_export.after_consistency(root, _dcfg, issues)
+        if verbose:
+            for message in bim_issues:
+                print("[BIM] " + message)
+        issues = issues + bim_issues
     return issues
 
 

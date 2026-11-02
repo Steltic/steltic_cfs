@@ -576,6 +576,8 @@ def _completion_gate(ws):
         elif rep.stat().st_mtime + 1e-6 < cp.stat().st_mtime:
             probs.append("report.html is older than the package -- re-render with "
                          "report.build_report(name) so the deliverable shows the final values")
+        from steel_engine.bim_export import completion_issues as _bim_completion_issues
+        probs.extend(_bim_completion_issues(jd))
     except Exception as e:
         return ["completion gate could not read the calc package: %s" % e]
     return probs[:14]

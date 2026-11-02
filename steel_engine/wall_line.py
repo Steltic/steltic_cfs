@@ -110,11 +110,15 @@ class WallLine(object):
                      and the shear is transferred to the neighbouring lines (12.3.3.4).
     COLLINEAR lines (same position) are supported: they share the position's tributary
     width, split per story in proportion to sheathed length."""
-    def __init__(self, name, pos_ft, segments, trib_scale=1.0, wall_props=None, base_story=None):
+    def __init__(self, name, pos_ft, segments, trib_scale=1.0, wall_props=None, base_story=None,
+                 segment_positions_ft=None):
         self.name, self.pos, self.segments = name, float(pos_ft), segments
         self.trib_scale = float(trib_scale)
         self.wall_props = wall_props
         self.base_story = None if base_story is None else int(base_story)
+        # Physical set-out only; analysis continues to use the unchanged lengths.
+        # {story: [(start_along_line_ft, end_along_line_ft), ...]} in segment order.
+        self.segment_positions_ft = segment_positions_ft
 
     def length(self, story):
         return sum(L for (L, h) in (self.segments.get(story) or []))
