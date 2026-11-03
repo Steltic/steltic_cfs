@@ -188,3 +188,6 @@ gates → consistency → report → offer optimisation (opt-in; after an optimi
 new schedules and WAIT for the user before updating the report). You MAY sanity-check a derived
 number against the CFS_REFERENCE answer key, but every reported number must come from YOUR
 RAG-grounded derivation on THIS building.
+
+
+Physical fastener quantities: a count label on one cylinder or bounding box does not create the selected bolt/anchor/screw pattern. Export the distinct located occurrences, preserving the actual checked count, sizes, spacing, supporting faces and load path. Do not remove or lower count metadata to hide missing hardware; reconcile any true metadata error against the actual completed connection calculation.
