@@ -833,3 +833,6 @@ floor trusses; don't force a catalog joist past the table.
 Ex7 (one-or-two-sided sheet), Ex12 (core enlistment up to 6x12/line), Ex17
 (frame spacing 8-24 ft agent-selected), Ex30 (clear span not required) — the
 gold solutions' judgment calls are now explicit brief language.
+
+
+Physical fastener quantities: a count label on one cylinder or bounding box does not create the selected bolt/anchor/screw pattern. Export the distinct located occurrences, preserving the actual checked count, sizes, spacing, supporting faces and load path. Do not remove or lower count metadata to hide missing hardware; reconcile any true metadata error against the actual completed connection calculation.
