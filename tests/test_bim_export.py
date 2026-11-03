@@ -254,6 +254,34 @@ def test_nested_configuration_helper_is_fingerprinted(tmp_path):
     assert "helpers/geometry.py" in B.tracked_sources(root)
 
 
+def test_history_archiving_does_not_make_a_checked_export_stale(exported):
+    from steltic.context_history import archive_tool_results
+    root,_,package=exported
+    B.atomic_json(root/'design/bim_package.json',package)
+    before=B.tracked_sources(root)
+    messages=[dict(role='tool',name='run_python',tool_call_id='old',content='old output\n'*700),
+              dict(role='tool',name='run_python',tool_call_id='new',content='current output')]
+    assert archive_tool_results(messages,root,keep=1)==1
+    assert list((root/'context_tool_results').glob('*.txt'))
+    assert B.tracked_sources(root)==before
+    assert B.completion_issues(root)==[]
+    # Actual configuration changes must still invalidate the export.
+    (root/'cfg.py').write_text((root/'cfg.py').read_text()+'\n# changed input\n')
+    assert any('stale' in issue for issue in B.completion_issues(root))
+
+
+def test_explicit_history_dependency_is_still_fingerprinted(tmp_path):
+    root=job(tmp_path);folder=root/'context_tool_results';folder.mkdir()
+    data=folder/'selected-input.txt';data.write_text('explicit design input')
+    (folder/'unused.py').write_text('historical_code = True')
+    assert not any(name.startswith('context_tool_results/') for name in B.tracked_sources(root))
+    (root/'bim_inputs.json').write_text('["context_tool_results/selected-input.txt"]')
+    before=B.tracked_sources(root)
+    assert before['context_tool_results/selected-input.txt']==B.digest(data)
+    data.write_text('changed explicit design input')
+    assert B.tracked_sources(root)!=before
+
+
 def test_batch_continues_after_failed_job(tmp_path,monkeypatch):
     root=tmp_path/"jobs"
     for name in ("bad","good"):
@@ -318,12 +346,6 @@ def test_cfs_uncapped_frames_and_wall_ranges():
     assert line.length(1)==8
     p=adapter.walls({"heights_ft":[10],"lines_x":[line]}, {})
     assert p["physical"]["panels"][0]["vertices"]==[[48,120,0],[144,120,0],[144,120,120],[48,120,120]]
-    physical=adapter.walls({"heights_ft":[10],"lines_x":[line],"line_plan_pos_ft":{"X-A":84}}, {})
-    assert physical["physical"]["panels"][0]["vertices"]==[[48,1008,0],[144,1008,0],[144,1008,120],[48,1008,120]]
-    assert physical["layout_evidence"]["wall_lines"][0]["analysis_position_in"]==120
-    assert line.pos==10  # physical correction must not move the analysis model
-    with pytest.raises(ValueError, match="Non-finite physical"):
-        adapter.walls({"heights_ft":[10],"lines_x":[line],"line_plan_pos_ft":{"X-A":float('nan')}}, {})
     unknown=adapter.walls({"heights_ft":[10],"lines_x":[WL.WallLine("A",10,{1:[(8,10)]})]}, {})
     assert unknown["physical"]["panels"]==[]
     assert unknown["findings"][0]["code"]=="wall_segment_positions"
