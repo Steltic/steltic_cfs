@@ -55,8 +55,10 @@ your own analysis scripts; drive the framework instead.
 > `cfs_engine.run` / `wall_line` / `cfs_sections.gross_props` / `cfs_systems`; the deliverables
 > come from the pipeline.
 >
-> 🆕 **Design FRESH under the user's exact building name.** `jobs/` is normally EMPTY — do NOT look
-> for an example or prior-job cfg. Compose a new `cfg` from the user's brief, register it, pass THIS
+> 🆕 **Design FRESH under the user's exact building name.** Older local jobs may exist, but are not inputs.
+> Do not list, read, import or copy sibling jobs, their conversations, configurations, calculations or physical
+> layouts unless the user explicitly names a prior job to reuse. This applies to file tools and `run_python`.
+> Compose a new `cfg` from the user's brief, register it, pass THIS
 > name to `design_and_report`.
 >
 > 🚫 **Scope.** Storage racks (ASCE 7 Ch. 15 / RMI MH16.1) are OUT OF SCOPE of this module — say so
@@ -248,8 +250,8 @@ inches — fix the cfg BEFORE chasing numbers.
 ## Workflow — folder, wall plan, pipeline, then design (no user-review pause)
 **0. Make a solution folder INSIDE the removable jobs area.** `write_file("jobs/<name>/cfg.py", ...)`
 where `<name>` is the user's building name (verbatim; else make one up and say so). Write
-`jobs/<name>/cfg.py` FIRST (a top-level `cfg = dict(...)`) and build FROM it. The operator wipes
-`jobs/` between jobs. If the user names a spec file, `read_file` it FIRST; if empty/missing, STOP
+`jobs/<name>/cfg.py` FIRST (a top-level `cfg = dict(...)`) and build FROM it. Existing local jobs
+are retained; do not inspect them for a fresh design. If the user names a spec file, `read_file` it FIRST; if empty/missing, STOP
 and say so.
 
 **0a. CLASSIFY the structure and STATE THE RESOLVED WALL PLAN (hard requirement).** Set
