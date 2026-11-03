@@ -11,6 +11,7 @@ A MOCK model (model == "MOCK") runs a short scripted sequence that exercises the
 import json, os, time, hashlib
 import httpx
 from . import config, contract
+from .context_history import archive_tool_results
 from .sandbox import is_blocked
 
 
@@ -905,9 +906,14 @@ def _resume_preamble(ws, building):
         if p.exists():
             src = p.read_text(encoding="utf-8", errors="replace")[:20000]
             return ("RESUME -- a previous design for this building exists. Below is its saved cfg.py: read it, keep "
-                    "what is sound, apply any requested change, then re-run pipeline.design_and_report (a FILLED "
-                    "package is backed up to design/calc_package_cfs.json.filled.bak; pipeline.merge_fills(name) "
-                    "carries the fills back) and update design/calc_package_cfs.json.\n\nEXISTING cfg.py:\n```python\n%s\n```\n\n" % src)
+                    "what is sound and inspect its saved analysis/calculations. Reuse valid results while their "
+                    "structural inputs remain unchanged. If model, loads, supports, selections or engineering assumptions "
+                    "change, or saved analysis is incomplete/invalid, re-run pipeline.design_and_report and recompute "
+                    "affected capacities in design/calc_package_cfs.json. A filled package is backed up to "
+                    "design/calc_package_cfs.json.filled.bak; pipeline.merge_fills(name) carries still-valid fills back. "
+                    "For export/report corrections, reconcile the physical data with the checked design and refresh "
+                    "consistency/export/report without rerunning unchanged analysis merely to refresh files."
+                    "\n\nEXISTING cfg.py:\n```python\n%s\n```\n\n" % src)
     except Exception:
         pass
     return ""
@@ -996,10 +1002,13 @@ def run_design(ws, executor, base_url, api_key, model, building, brief, max_tok=
                     _heal_tool_calls(m["tool_calls"])   # a cut-off call saved by an older version would 400 forever
             if brief:                       # a NEW instruction -> continue the SAME design interactively
                 messages.append({"role": "user", "content":
-                    brief + "\n\n(Apply this change to the existing design: edit jobs/" + building +
-                    "/cfg.py, re-run pipeline.design_and_report for fresh demands, re-derive the affected "
-                    "AISI capacities/schedules into design/calc_package_cfs.json, run consistency.check, then re-render with "
-                    "report.build_report. Keep everything else as-is.)"})
+                    brief + "\n\n(Continue the saved job " + building + ". Preserve valid analysis and calculation "
+                    "records while their model, loads, supports, member/connection selections and engineering assumptions "
+                    "remain unchanged. If those inputs change, or analysis is unfinished/invalid, edit cfg.py, re-run "
+                    "pipeline.design_and_report and re-derive the affected AISI capacities/schedules. For physical-export "
+                    "or report corrections, reconcile geometry with the checked design and use normal consistency/export/"
+                    "report APIs; do not rerun unchanged analysis merely to refresh files. Finish all actual required checks, "
+                    "then run consistency.check and report.build_report. Never edit source fingerprints or readiness flags.)"})
                 yield {"type": "status", "text": f"continuing '{building}' with your new instruction ({len(messages)} messages in context)"}
             else:                           # empty brief -> plain resume of an interrupted run
                 yield {"type": "status", "text": f"resumed '{building}' from saved conversation ({len(messages)} messages)"}
@@ -1066,6 +1075,7 @@ def run_design(ws, executor, base_url, api_key, model, building, brief, max_tok=
             yield {"type": "error", "text": f"call budget reached ({config.MAX_CALLS} model calls) -- run aborted"}
             return
         _prune_rag(messages, config.RAG_KEEP_RECENT)
+        archive_tool_results(messages, ws.jobs / building)
         _save_conv(conv_path, messages)
         if searches >= config.RAG_SEARCH_SOFTCAP and not nudged:
             nudged = True
