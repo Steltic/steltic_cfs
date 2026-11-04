@@ -160,6 +160,15 @@ def _sse(ev: dict) -> str:
     return "data: " + json.dumps(ev) + "\n\n"
 
 
+def _physical_jobs(request):
+    current_user(request)
+    return config.SESSIONS_DIR / get_sid(request) / 'jobs'
+
+
+from .physical_api import router as physical_router
+app.include_router(physical_router(_physical_jobs))
+
+
 def _clean_images(raw, max_files: int = 3, max_bytes: int = 5 * 1024 * 1024) -> list:
     """Validate optional base64 data-URL images from the client: keep at most `max_files`, each whose
     decoded size is <= `max_bytes`. Returns [{name, type, data_url}]. Anything malformed is dropped."""

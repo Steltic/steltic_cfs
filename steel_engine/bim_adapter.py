@@ -153,6 +153,9 @@ def walls(cfg, pkg):
                         source="range/length/count mismatch"
                 entry={"id":"cfs:wall:%s:%s:story:%d"%(direction,line.name,story),"direction":direction,"line":str(line.name),
                        "position_in":plan_pos*12,"analysis_position_in":float(line.pos)*12,"position_source":position_source,"story":story,"base_z_in":levels[story-1],"segments_in":[[float(v)*12 for v in s] for s in segs],"range_source":source}
+                if getattr(line,'bim_native_segments_ft',{}).get(story):
+                    entry['checked_equivalent_segments_ft']=line.bim_native_segments_ft[story]
+                    entry['physical_bay_basis']='physical_inputs.json explicit contiguous subdivisions; no stiffness or design recalculation'
                 evidence.append(entry)
                 if not segs: continue
                 if ranges is None:
