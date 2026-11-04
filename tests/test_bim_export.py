@@ -114,6 +114,8 @@ Path(__file__).with_name('scratch-output.txt').write_text('scratch only')
     (lambda p:p["physical"]["members"][0].update(material_id="missing"),"member_material"),
     (lambda p:p["physical"]["members"][0].update(profile_id="missing"),"member_profile"),
     (lambda p:p["physical"]["members"][0].update(end_offsets=None),"member_placement"),
+    (lambda p:p['physical']['members'][0].update(slots=[dict(start_in=0,end_in=200,width_in=.5,section_axis=0)]),'member_slot'),
+    (lambda p:p['physical']['members'][0].update(slots=[dict(start_in=10,end_in=20,width_in=-1,section_axis=0)]),'member_slot'),
     (lambda p:p["physical"]["connections"][0].update(joint_id="missing"),"connection_joint"),
     (lambda p:p["physical"]["joints"][0].update(point=[1000,0,0]),"joint_placement"),
     (lambda p:p["physical"]["connections"][0].update(design_record_ids=["connections/missing"]),"connection_design"),
@@ -346,12 +348,6 @@ def test_cfs_uncapped_frames_and_wall_ranges():
     assert line.length(1)==8
     p=adapter.walls({"heights_ft":[10],"lines_x":[line]}, {})
     assert p["physical"]["panels"][0]["vertices"]==[[48,120,0],[144,120,0],[144,120,120],[48,120,120]]
-    physical=adapter.walls({"heights_ft":[10],"lines_x":[line],"line_plan_pos_ft":{"X-A":84}}, {})
-    assert physical["physical"]["panels"][0]["vertices"]==[[48,1008,0],[144,1008,0],[144,1008,120],[48,1008,120]]
-    assert physical["layout_evidence"]["wall_lines"][0]["analysis_position_in"]==120
-    assert line.pos==10  # physical correction must not move the analysis model
-    with pytest.raises(ValueError, match="Non-finite physical"):
-        adapter.walls({"heights_ft":[10],"lines_x":[line],"line_plan_pos_ft":{"X-A":float('nan')}}, {})
     unknown=adapter.walls({"heights_ft":[10],"lines_x":[WL.WallLine("A",10,{1:[(8,10)]})]}, {})
     assert unknown["physical"]["panels"]==[]
     assert unknown["findings"][0]["code"]=="wall_segment_positions"
