@@ -107,3 +107,17 @@ def test_portal_clause_requires_real_flanking_columns_base_and_named_hss():
         if mutation=='source':c['source_record_selections'][0]['text']='No anchors required'
         if mutation=='malformed':prop['axis']=[None,None]
         assert any(f['code']=='source_record_selection' for f in connection_component_findings(p)),mutation
+
+
+def test_portal_selections_are_accepted_by_the_shipped_package_schema():
+    import json
+    from pathlib import Path
+    import jsonschema
+    from steel_engine import bim_contract
+    schema=json.loads(Path(bim_contract.__file__).with_name('bim_package.schema.json').read_text())
+    selection=schema['$defs']['connection']['properties']['source_record_selections']['items']
+    validator=jsonschema.Draft202012Validator(selection)
+    for c in portal_fixture()['physical']['connections']:
+        entry=c['source_record_selections'][0]
+        assert not list(validator.iter_errors(entry))
+        assert list(validator.iter_errors(dict(entry,clause='unlabelled arbitrary subset')))

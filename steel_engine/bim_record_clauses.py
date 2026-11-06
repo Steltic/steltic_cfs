@@ -1,6 +1,8 @@
 """Exact, exhaustive applications of explicitly labelled source clauses.
 
-A schedule may specify different hardware at the base and upper floors. The
+A schedule may specify different hardware at the base, upper floors or
+exterior-column/interior-HSS bases. These labels also exist in the package
+schema; the located member proof below remains mandatory. The
 original record remains immutable. An occurrence can select an exact clause,
 provided every clause has a located application and each selection is valid.
 Unlabelled or partially parsed records cannot use this mechanism.
