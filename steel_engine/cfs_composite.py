@@ -8,7 +8,7 @@ module binds the finished parts into ONE project deliverable without re-designin
 
     <root>/compose.json           the engineer's declaration (parts, set-out, interface)
     <root>/report.html            cover (parts, set-out, interface record) + every part report
-    <root>/viewer_3d.html         index of the part viewers (viewer_3d_<id>.html)
+    <root>/viewer_3d.html         index of the part viewers (viewer_3d_<id>.html; qa_annex_<id>.html where a part has one)
     <root>/design/composite.json  manifest: part hashes, set-out, interface (read by openBIM)
 
 ``compose.json``::
@@ -137,6 +137,9 @@ def build(root, jobs_dir=None):
         h, b = split_report(need["report"].read_text(encoding="utf-8"), "%s/report.html" % p["job"])
         head = head or h
         b = b.replace("href='viewer_3d.html'", "href='viewer_3d_%s.html'" % p["id"])
+        if (pr / "qa_annex.html").is_file():                 # the part's QA annex travels with the project report under the part letter
+            b = b.replace("href='qa_annex.html'", "href='qa_annex_%s.html'" % p["id"])
+            shutil.copyfile(pr / "qa_annex.html", root / ("qa_annex_%s.html" % p["id"]))
         bodies.append("<hr class='part'><p class='part'>PART %s &mdash; %s</p>%s" % (p["id"], esc(p["title"]), b))
         shutil.copyfile(need["viewer"], root / ("viewer_3d_%s.html" % p["id"]))
         dc, rid = worst_dc(pkg)

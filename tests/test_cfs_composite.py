@@ -58,6 +58,17 @@ def test_build_binds_parts_into_one_report_and_manifest(tmp_path):
     assert m["interface"]["clear_gaps"][0]["required_in"] == 6.25 and m["interface_record"]["rows"][1]["separation_in"] == 6.25
 
 
+def test_part_qa_annex_travels_under_the_part_letter(tmp_path):
+    root, jobs = project(tmp_path)
+    rep = jobs / "P_A" / "report.html"
+    rep.write_text(rep.read_text(encoding="utf-8").replace("</body>", "<p><a href='qa_annex.html'>qa_annex.html</a></p></body>"), encoding="utf-8")
+    (jobs / "P_A" / "qa_annex.html").write_text("<html><body>annex A</body></html>", encoding="utf-8")
+    CC.build(root, jobs)
+    text = (root / "report.html").read_text(encoding="utf-8")
+    assert "href='qa_annex_A.html'>qa_annex.html</a>" in text and "href='qa_annex.html'" not in text
+    assert "annex A" in (root / "qa_annex_A.html").read_text(encoding="utf-8") and not (root / "qa_annex_B.html").exists()
+
+
 def test_part_reports_are_not_altered(tmp_path):
     root, jobs = project(tmp_path)
     before = {n: (jobs / n / "report.html").read_bytes() for n in ("P_A", "P_B")}
