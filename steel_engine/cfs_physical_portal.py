@@ -510,6 +510,59 @@ class PortalModel(object):
                     jid = r.joint("J:%s:%s" % (mid, "A" if end == "start" else "B"), P, 1, ends=[(mid, end)], attachments=[(host, t_, o_)])
                     r.instance("C:%s:%s" % (mid, "A" if end == "start" else "B"), jid, tpl, P, [0.0, sg, 0.0], [0.0, 0.0, 1.0], dict(strut=mid, column=host), [rec], 1, family="strut end connection")
 
+    # ---- hanger posts under the rafters (monorail / equipment supports carried by the frames) ----
+    def hangers(self):
+        r = self.r
+        for hp in self.pd.get("hanger_posts") or []:
+            x = float(need(hp, "x_ft", "hanger post")) * 12.0
+            L = float(need(hp, "drop_ft", "hanger post")) * 12.0
+            cn = need(hp, "connection", "hanger post"); rec = need(hp, "record", "hanger post")
+            tp = float(need(cn, "plate_t_in", "hanger connection"))
+            prof, p = self.built_up(dict(section=need(hp, "section", "hanger post"), n=int(hp.get("n", 2)), interconnect=dict(gap_in=tp)))
+            d = p["depth"]; dr = self.rp["depth"]
+            it = need(hp, "interface", "hanger post")
+            iid = "IF:%s" % it["id"]
+            if iid not in getattr(self, "_ifaces", set()):
+                r.m.record("interfaces", dict(id=iid, scope="delegated", responsible_party=need(it, "responsible_party", "interface"), representation=need(it, "representation", "interface"), detail_ref=need(it, "detail_ref", "interface")))
+                self._ifaces = getattr(self, "_ifaces", set()) | {iid}
+            npb, db, gauge, pitch = int(need(cn, "n_post_bolts", "hanger connection")), float(need(cn, "bolt_d_in", "hanger connection")), float(need(cn, "gauge_in", "hanger connection")), float(need(cn, "pitch_in", "hanger connection"))
+            nrb = int(need(cn, "n_rafter_bolts", "hanger connection")); ncb, dcb = int(need(cn, "n_clamp_bolts", "hanger connection")), float(need(cn, "clamp_bolt_d_in", "hanger connection"))
+            for fi in sorted(self.rafters):
+                host = next((q for q in self.rafters[fi] if min(q[1][0], q[2][0]) - 1e-6 <= x <= max(q[1][0], q[2][0]) + 1e-6), None)
+                if host is None:
+                    raise PhysicalDesignError("hanger post at x = %g ft is not under a rafter of frame %d" % (x / 12.0, fi))
+                hid, lo, hi_ = host
+                f = (x - lo[0]) / (hi_[0] - lo[0])
+                Pt = lerp(lo, hi_, f); Pb = add(Pt, Z, -L)
+                mid = r.member("HP%02d:%d" % (fi, int(round(x))), "hanger_post", [Pb, Pt], prof, hp["material"], Y, 1, [rec], frame=fi, role=hp.get("role") or "hanger post", reference_line="section centroid")
+                # top: hanger plate between the post webs and the webs of the rafter pair, bolted to both
+                away = lo if math.dist(lo, Pt) > 1.0 else hi_
+                dv = unit([away[0] - Pt[0], 0.0, away[2] - Pt[2]])
+                rows = max(1, npb // 2)
+                Lp = dr / 2.0 + 2.0 + (rows - 1) * pitch + 2.0
+                parts = [box("hanger-plate", "hanger_plate", cn["plate_material"], [-d / 2.0, -tp / 2.0, -Lp], [d, tp, Lp + dr / 2.0], role="hanger plate between the webs", thickness_in=tp)]
+                for i in range(rows):
+                    for j, sg in enumerate((-1.0, 1.0), 1):
+                        parts.append(cyl("bolt-p-%d-%d" % (i + 1, j), "bolt", cn["bolt_material"], [sg * gauge / 2.0, -tp / 2.0 - 0.75, -(dr / 2.0 + 2.0 + i * pitch)], Y, tp + 1.5, db / 2.0, diameter_in=db, role="post webs to hanger plate"))
+                for i in range(nrb):
+                    a = 3.0 + (i // 2) * 3.0
+                    nx, nz = -dv[2], dv[0]
+                    sgn = -1.0 if i % 2 == 0 else 1.0
+                    parts.append(cyl("bolt-r-%d" % (i + 1), "bolt", cn["bolt_material"], [a * dv[0] + sgn * 2.5 * nx, -tp / 2.0 - 0.75, a * dv[2] + sgn * 2.5 * nz], Y, tp + 1.5, db / 2.0, diameter_in=db, role="hanger plate to rafter webs"))
+                receivers = [dict(id="post", kind="member", axis=[[0.0, 0.0, -24.0], [0.0, 0.0, 0.0]]), dict(id="rafter", kind="member", axis=[[0.0, 0.0, 0.0], r6([12.0 * dv[0], 0.0, 12.0 * dv[2]])])]
+                tpl = r.template("HANGER-TOP", parts, receivers, [rec], "%g in. hanger plate between the webs: %d x %g in. bolts to the post, %d x %g in. bolts to the rafter webs" % (tp, 2 * rows, db, nrb, db))
+                t_, o_ = self.att(self.axis[hid], Pt)
+                jt = r.joint("J:%s:top" % mid, Pt, 1, ends=[(mid, "end")], attachments=[(hid, t_, o_)])
+                r.instance("C:%s:top" % mid, jt, tpl, Pt, [1.0, 0.0, 0.0], Y, dict(post=mid, rafter=hid), [rec], 1, family="hanger post top connection")
+                # bottom: clamp plate and bolts to the supported runway (by others)
+                parts = [box("clamp-plate", "clamp_plate", cn["plate_material"], [-4.0, -3.0, -tp], [8.0, 6.0, tp], role="runway clamp plate", thickness_in=tp)]
+                for i in range(ncb):
+                    parts.append(cyl("bolt-c-%d" % (i + 1), "bolt", cn["bolt_material"], [(-2.5 if i % 2 == 0 else 2.5), (-1.5 if i < 2 else 1.5), -tp - 1.5], Z, tp + 2.0, dcb / 2.0, diameter_in=dcb, role="clamp bolts to the runway beam flange"))
+                receivers = [dict(id="post", kind="member", axis=[[0.0, 0.0, 0.0], [0.0, 0.0, 24.0]]), dict(id="runway", kind="interface")]
+                tpl = r.template("HANGER-BOTTOM", parts, receivers, [rec], "Clamp plate with %d x %g in. bolts to the top flange of the runway beam" % (ncb, dcb))
+                jb = r.joint("J:%s:bottom" % mid, Pb, 1, ends=[(mid, "start")])
+                r.instance("C:%s:bottom" % mid, jb, tpl, Pb, [1.0, 0.0, 0.0], Y, dict(post=mid, runway=iid), [rec], 1, family="hanger post runway connection")
+
     def wall_normal(self, A, B, hi):
         return [-1.0, 0.0, 0.0] if A[0] <= self.xmid else [1.0, 0.0, 0.0]
 
@@ -541,6 +594,8 @@ class PortalModel(object):
             self.straps()
         if self.pd.get("struts"):
             self.struts()
+        if self.pd.get("hanger_posts"):
+            self.hangers()
         eaves = sorted({round(c[2][2], 3) for fi in frames for c in self.columns[fi]})
         top = max(round(q[2][2], 3) for fi in frames for q in self.rafters[fi])
         tops = [z for z in eaves if z < top - 1e-6] + [top]
