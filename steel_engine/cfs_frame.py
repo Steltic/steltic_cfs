@@ -1032,7 +1032,8 @@ def _open_cases(cfg, qk, G, th, h, span_ft, xr, warns):
                 zones = [(a, b, qk * G * cn) for a, b, cn in segs]
                 dirx = 1.0 if side == "L" else -1.0
                 edge = []
-                if fascia > 0 and th <= 5.0:            # 27.3.2: fascia = inverted parapet
+                if fascia > 0 and (th <= 5.0 or w.get("fascia_any_slope")):    # 27.3.2: fascia = inverted parapet (theta <= 5 deg;
+                    # opt-in wind['fascia_any_slope'] applies the same horizontal fascia force on a steeper free roof, as for a sign strip)
                     Fw = 1.5 * qk * fascia * kip * dirx
                     Fl = 1.0 * qk * fascia * kip * dirx
                     edge = [("L", Fw), ("R", Fl)] if side == "L" else [("R", Fw), ("L", Fl)]

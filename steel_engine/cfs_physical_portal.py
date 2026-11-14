@@ -69,16 +69,28 @@ class PortalModel(object):
         if n == 1:
             return base, p
         gap = float((sel.get("interconnect") or {}).get("gap_in", 0.0))
-        name = "%dx%s" % (n, base)
+        boxed = sel.get("arrangement") == "box"
+        sp = sel.get("pair_spacing_in")
+        if sp:
+            p["pair_spacing"] = float(sp)
+        name = "%dx%s%s%s" % (n, base, "/box" if boxed else "", "@%g" % float(sp) if sp else "")
         if name not in self.r.profiles:
-            t = p["t"]
+            t = p["t"]; B = p["flange"]
             comps = []
-            for u in self.pair_offsets(n, p["flange"], gap):
-                comps.append(dict(profile_id=base, rotation_deg=180.0, offset=[round(u - gap / 2.0 - t / 2.0, 6), 0.0]))
-                comps.append(dict(profile_id=base, rotation_deg=0.0, offset=[round(u + gap / 2.0 + t / 2.0, 6), 0.0]))
-            self.r.m.profile(name, "built_up", {}, components=comps,
-                             designation="%d x %s in %d back-to-back pairs side by side%s" % (n, base, n // 2, ", webs of each pair %g in. apart" % gap if gap else ""),
-                             source=dict(kind="engine_section_catalog", name=base, basis="Back-to-back pairs side by side with flange tips touching; in-plane properties are n times the single channel"))
+            for u in self.pair_offsets(n, B, gap, sp):
+                if boxed:                       # toe to toe: the webs are the outer faces, the lips meet at the seam plane u
+                    comps.append(dict(profile_id=base, rotation_deg=0.0, offset=[round(u - gap / 2.0 - B + t / 2.0, 6), 0.0]))
+                    comps.append(dict(profile_id=base, rotation_deg=180.0, offset=[round(u + gap / 2.0 + B - t / 2.0, 6), 0.0]))
+                else:
+                    comps.append(dict(profile_id=base, rotation_deg=180.0, offset=[round(u - gap / 2.0 - t / 2.0, 6), 0.0]))
+                    comps.append(dict(profile_id=base, rotation_deg=0.0, offset=[round(u + gap / 2.0 + t / 2.0, 6), 0.0]))
+            if boxed:
+                des = "%d x %s in %d toe-to-toe box(es)%s%s" % (n, base, n // 2, " side by side" if n > 2 else "", ", lips %g in. apart on batten plates" % gap if gap else "")
+                basis = "Toe-to-toe boxes; in-plane properties are n times the single channel, each box acts on its own out of plane"
+            else:
+                des = "%d x %s in %d back-to-back pairs side by side%s%s" % (n, base, n // 2, ", webs of each pair %g in. apart" % gap if gap else "", ", pairs at %g in. centres" % float(sp) if sp else "")
+                basis = "Back-to-back pairs side by side%s; in-plane properties are n times the single channel" % ("" if sp else " with flange tips touching")
+            self.r.m.profile(name, "built_up", {}, components=comps, designation=des, source=dict(kind="engine_section_catalog", name=base, basis=basis))
             self.r.profiles.add(name)
         return name, p
 
@@ -114,6 +126,8 @@ class PortalModel(object):
         by_frame = defaultdict(list)
         for c in cands:
             by_frame[int(c["id"].split(":")[2])].append(c)
+        if self.fr.get("canopy"):
+            return self.canopy_frames(by_frame)
         ex = self.fr.get("existing")
         if ex:
             # existing shell of a component design: the frame members are context, shown as outline envelopes; nothing of them is designed here
@@ -174,14 +188,190 @@ class PortalModel(object):
                 else:
                     raise PhysicalDesignError("portal frame %d: joint at %s joins %s; no connection family covers it" % (fi, P, kinds))
 
+    # ---- open canopy: box columns on fixed bases, continuous rafter over the column heads, knee braces ----
+    def free_end(self, mid, end, P, level, reason):
+        jid = self.r.joint("J:%s:%s" % (mid, "tipA" if end == "start" else "tipB"), P, level, ends=[(mid, end)])
+        self.r.decl["joint_dispositions"].append(dict(joint_id=jid, kind="free_end", reason=reason))
+
+    def weld(self, pid, material, origin, size, leg, role, **kw):
+        return box(pid, "fillet_weld", material, origin, size, role=role, leg_in=leg, **kw)
+
+    def canopy_frames(self, by_frame):
+        r = self.r; fr = self.fr
+        cprof, cp = self.built_up(need(fr, "column", "frame")); rprof, rp = self.built_up(need(fr, "rafter", "frame")); kprof, kp = self.built_up(need(fr, "knee_brace", "frame"))
+        self.cp, self.rp, self.kp = cp, rp, kp
+        self.ncol, self.nraf, self.nkb = int(fr["column"]["n"]), int(fr["rafter"]["n"]), int(fr["knee_brace"]["n"])
+        self.gcol, self.graf, self.gkb = [float((fr[k].get("interconnect") or {}).get("gap_in", 0.0)) for k in ("column", "rafter", "knee_brace")]
+        self.box_u = self.pair_offsets(self.ncol, cp["flange"], self.gcol)          # seam planes of the column boxes
+        for fi in sorted(by_frame):
+            cs = by_frame[fi]
+            rafs = [c for c in cs if c["kind"] == "rafter"]
+            pts = sorted([[float(v) for v in q] for c in rafs for q in c["axis"]], key=lambda q: q[0])
+            A, B = pts[0], pts[-1]
+            rid = "FR%02d:raf" % fi
+            r.member(rid, "rafter", [A, B], rprof, fr["rafter"]["material"], Y, 1, [need(fr["rafter"], "record", "rafter")], analysis_ids=sorted({a for c in rafs for a in c["analysis_ids"]}), frame=fi, role="canopy rafter, continuous over the column heads",
+                     reference_line="section centroid")
+            self.rafters[fi].append((rid, A, B)); self.axis[rid] = (A, B)
+            self.interconnect(rid, (A, B), fr["rafter"], rp, fi, False)
+            for end, P in (("start", A), ("end", B)):
+                self.free_end(rid, end, P, 1, "Rafter overhang tip: free end of the cantilever beyond the column")
+            dr = unit([B[0] - A[0], 0.0, B[2] - A[2]])
+            for c in cs:
+                if c["kind"] != "column":
+                    continue
+                label = c["id"].split(":")[4]
+                P0, P1 = [float(v) for v in c["axis"][0]], [float(v) for v in c["axis"][1]]
+                mid = "FR%02d:%s" % (fi, label)
+                r.member(mid, "column", [P0, P1], cprof, fr["column"]["material"], Y, 0, [need(fr["column"], "record", "column")], analysis_ids=c["analysis_ids"], frame=fi, role="canopy column (box), fixed base", reference_line="section centroid")
+                lo, hi = (P0, P1) if P0[2] <= P1[2] else (P1, P0)
+                self.columns[fi].append((mid, lo, hi)); self.axis[mid] = (P0, P1)
+                e_lo, e_hi = ("start", "end") if P0[2] <= P1[2] else ("end", "start")
+                self.battens(mid, lo, hi)
+                jb = r.joint("J:FR%02d:%d:0" % (fi, int(round(lo[0]))), lo, 0, ends=[(mid, e_lo)])
+                self.base_fixed(fi, jb, lo, mid)
+                t_, o_ = self.att((A, B), hi)
+                jh = r.joint("J:FR%02d:%d:%d" % (fi, int(round(hi[0])), int(round(hi[2]))), hi, 1, ends=[(mid, e_hi)], attachments=[(rid, t_, o_)])
+                self.head(fi, jh, hi, mid, rid, dr)
+            for c in cs:
+                if c["kind"] != "knee_brace":
+                    continue
+                label = c["id"].split(":")[4]
+                P0, P1 = [float(v) for v in c["axis"][0]], [float(v) for v in c["axis"][1]]
+                kid = "FR%02d:%s" % (fi, label)
+                r.member(kid, "knee_brace", [P0, P1], kprof, fr["knee_brace"]["material"], Y, 1, [need(fr["knee_brace"], "record", "knee brace")], analysis_ids=c["analysis_ids"], frame=fi, role="knee brace", reference_line="section centroid")
+                self.axis[kid] = (P0, P1)
+                self.interconnect(kid, (P0, P1), fr["knee_brace"], kp, fi, False)
+                for end, P, Q in (("start", P0, P1), ("end", P1, P0)):
+                    dk = unit([Q[0] - P[0], 0.0, Q[2] - P[2]])
+                    col = next((m_ for m_, lo, hi in self.columns[fi] if abs(lo[0] - P[0]) < 0.5 and lo[2] - 0.5 <= P[2] <= hi[2] + 0.5), None)
+                    host = col or rid
+                    t_, o_ = self.att(self.axis[host], P)
+                    jid = r.joint("J:%s:%s" % (kid, "A" if end == "start" else "B"), P, 1, ends=[(kid, end)], attachments=[(host, t_, o_)])
+                    self.kb_end(fi, jid, P, kid, end, host, bool(col), dk, dr)
+
+    def battens(self, mid, lo, hi):
+        """Batten plates between the lips of each column box, welded to both lips, at both seams."""
+        r = self.r; sel = self.fr["column"]; bt = need(sel, "batten", "column"); cp = self.cp
+        L = math.dist(lo, hi); sp = float(need(bt, "spacing_in", "batten")); Lb = float(bt.get("length_in", 4.0)); tp = float(need(bt, "plate_t_in", "batten")); leg = float(bt.get("weld_leg_in", 0.125))
+        m = max(1, int(math.ceil((L - 48.0) / sp - 1e-9)))
+        xs = [24.0 + (L - 48.0) * i / m for i in range(m + 1)]
+        zc = cp["depth"] / 2.0 - cp["t"] - 0.45
+        parts = []
+        for i, x in enumerate(xs, 1):
+            for k, u in enumerate(self.box_u, 1):
+                for j, sg in enumerate((-1.0, 1.0), 1):
+                    parts.append(box("batten-%02d-%d-%d" % (i, k, j), "spacer_plate", bt["plate_material"], [x - Lb / 2.0, u - tp / 2.0, sg * zc - 0.6], [Lb, tp, 1.2], role="batten plate between the lips of a column box", thickness_in=tp))
+                    for w_, sy in enumerate((-1.0, 1.0), 1):
+                        parts.append(self.weld("weld-%02d-%d-%d-%d" % (i, k, j, w_), bt["weld_material"], [x - Lb / 2.0, u + sy * tp / 2.0 - (leg if sy < 0 else 0.0), sg * zc - leg / 2.0], [Lb, leg, leg], leg, "batten plate to channel lip"))
+        receivers = [dict(id="member", kind="member", axis=[[0.0, 0.0, 0.0], [L, 0.0, 0.0]])]
+        tpl = r.template("BOX-BATTEN", parts, receivers, [sel["record"]], "%g in. batten plates between the lips of each box at both seams, %g in. long at %g in. o.c. maximum (%d stations), %g in. fillet welds to both lips" % (tp, Lb, sp, len(xs), leg))
+        jid = r.joint("J:%s:battens" % mid, lo, 0, attachments=[(mid, self.att(self.axis[mid], lo)[0], [0.0, 0.0, 0.0])])
+        r.instance("C:%s:battens" % mid, jid, tpl, lo, unit([hi[i] - lo[i] for i in range(3)]), Y, dict(member=mid), [sel["record"]], 0, family="built-up member interconnection")
+
+    def base_fixed(self, fi, jid, P, mid):
+        r = self.r; bs = need(self.fr, "base", "frame"); cp = self.cp
+        tp = float(need(bs, "plate_t_in", "base")); pw, pl = [float(v) for v in need(bs, "plate_in", "base")]
+        d, na, emb = float(need(bs, "anchor_d_in", "base")), int(need(bs, "n_anchors", "base")), float(need(bs, "embed_in", "base"))
+        sx, sy = [float(v) for v in need(bs, "anchor_pattern_in", "base")]
+        tf, hf, leg = float(need(bs, "fin_t_in", "base")), float(need(bs, "fin_h_in", "base")), float(need(bs, "weld_leg_in", "base"))
+        legp = float(bs.get("perimeter_weld_leg_in", leg))
+        depth, B = cp["depth"], cp["flange"]
+        parts = [box("base-plate", "base_plate", bs["plate_material"], [-pw / 2.0, -pl / 2.0, -tp], [pw, pl, tp], role="base plate", thickness_in=tp)]
+        cols = max(1, na // 2)
+        for i in range(na):
+            x = (-1.0 if i % 2 == 0 else 1.0) * sx / 2.0
+            y = 0.0 if cols == 1 else (-sy / 2.0 + (i // 2) * sy / (cols - 1))
+            parts.append(cyl("anchor-%d" % (i + 1), "anchor_rod", bs["anchor_material"], [x, y, -tp - emb], Z, emb + tp + 3.0, d / 2.0, diameter_in=d, role="anchor rod"))
+        xw = depth / 2.0 - cp["t"] - 0.45
+        for k, u in enumerate(self.box_u, 1):
+            parts.append(box("fin-%d" % k, "fin_plate", bs["plate_material"], [-depth / 2.0 - 1.0, u - tf / 2.0, 0.0], [depth + 2.0, tf, hf], role="base fin plate between the lips of a column box", thickness_in=tf))
+            for j, sg in enumerate((-1.0, 1.0), 1):
+                for w_, s2 in enumerate((-1.0, 1.0), 1):
+                    parts.append(self.weld("weld-fin-%d-%d-%d" % (k, j, w_), bs["weld_material"], [sg * xw - leg / 2.0, u + s2 * tf / 2.0 - (leg if s2 < 0 else 0.0), 1.0], [leg, leg, hf - 1.0], leg, "fin plate to channel lip"))
+            w1 = B + self.gcol / 2.0
+            for j, (ox, oy, lx, ly) in enumerate(((-depth / 2.0 - legp, u - w1, legp, 2.0 * w1), (depth / 2.0, u - w1, legp, 2.0 * w1), (-depth / 2.0, u - w1 - legp, depth, legp), (-depth / 2.0, u + w1, depth, legp)), 1):
+                parts.append(self.weld("weld-base-%d-%d" % (k, j), bs["weld_material"], [ox, oy, 0.0], [lx, ly, legp], legp, "column box to base plate, all round"))
+        receivers = [dict(id="column", kind="member", axis=[[0.0, 0.0, 0.0], [0.0, 0.0, 24.0]]), dict(id="foundation", kind="interface")]
+        tpl = r.template("BASE-FIXED", parts, receivers, [bs["record"]], "Fixed column base: %g in. base plate on %d x %g in. anchor rods, one %g in. fin plate per column box welded to the four lips over %g in., column welded to the base plate all round" % (tp, na, d, tf, hf))
+        r.instance("C:FR%02d:base:%d" % (fi, int(round(P[0]))), jid, tpl, P, [1.0, 0.0, 0.0], Y, dict(column=mid, foundation=self.foundation()), [bs["record"]], 0, family="column base")
+
+    def head(self, fi, jid, P, mid, rid, dr):
+        """Head plate of each column box: welded between the lips of the box, bolted between the webs of a rafter pair."""
+        r = self.r; js = need(self.fr, "head", "frame"); cp, rp = self.cp, self.rp
+        tg, d = float(need(js, "plate_t_in", "head")), float(need(js, "bolt_d_in", "head"))
+        rows, gauge, pitch = int(need(js, "rows", "head")), float(need(js, "gauge_in", "head")), float(need(js, "pitch_in", "head"))
+        leg, Lw = float(need(js, "weld_leg_in", "head")), float(need(js, "weld_len_in", "head"))
+        nrm = [-dr[2], 0.0, dr[0]]
+        a0 = cp["depth"] / 2.0 + 3.0
+        Lleg = a0 + (rows - 1) * pitch + 2.0
+        xw = cp["depth"] / 2.0 - cp["t"] - 0.45
+        parts = []
+        for k, u in enumerate(self.box_u, 1):
+            o = [-Lleg * dr[0] - rp["depth"] / 2.0 * nrm[0], u - tg / 2.0, -Lleg * dr[2] - rp["depth"] / 2.0 * nrm[2]]
+            parts.append(box("head-rafter-%d" % k, "gusset_plate", js["plate_material"], o, [2.0 * Lleg, tg, rp["depth"]], x_axis=dr, y_axis=Y, role="head plate between the webs of a rafter pair", thickness_in=tg))
+            parts.append(box("head-column-%d" % k, "gusset_plate", js["plate_material"], [-cp["depth"] / 2.0 - 1.0, u - tg / 2.0, 0.0], [Lw + 2.0, tg, cp["depth"] + 2.0], x_axis=[0.0, 0.0, -1.0], y_axis=Y,
+                             role="head plate between the lips of a column box", thickness_in=tg))
+            for side, sg in (("a", 1.0), ("b", -1.0)):
+                parts += self.leg_bolts("%s%d" % (side, k), u, [sg * v for v in dr], nrm, a0, rows, pitch, gauge, d, js["bolt_material"], "rafter webs to head plate")
+            for j, sx_ in enumerate((-1.0, 1.0), 1):
+                for w_, s2 in enumerate((-1.0, 1.0), 1):
+                    parts.append(self.weld("weld-%d-%d-%d" % (k, j, w_), js["weld_material"], [sx_ * xw - leg / 2.0, u + s2 * tg / 2.0 - (leg if s2 < 0 else 0.0), -1.0 - Lw], [leg, leg, Lw], leg, "head plate to channel lip"))
+        receivers = [dict(id="column", kind="member", axis=[[0.0, 0.0, -24.0], [0.0, 0.0, 0.0]]), dict(id="rafter", kind="member", axis=[[-12.0 * dr[0], 0.0, -12.0 * dr[2]], [12.0 * dr[0], 0.0, 12.0 * dr[2]]])]
+        tpl = r.template("HEAD", parts, receivers, [js["record"]], "One %g in. head plate per column box welded to the four lips over %g in. (%g in. fillet welds), %d x %g in. bolts through the webs of each rafter pair each side of the column (2 lines at %g in., %d rows at %g in.)" % (
+            tg, Lw, leg, 2 * rows, d, gauge, rows, pitch))
+        r.instance("C:FR%02d:head:%d" % (fi, int(round(P[0]))), jid, tpl, P, [1.0, 0.0, 0.0], Y, dict(column=mid, rafter=rid), [js["record"]], 1, family="column head connection")
+
+    def kb_end(self, fi, jid, P, kid, end, host, at_column, dk, dr):
+        r = self.r; ks = need(self.fr, "kb_end", "frame"); cp, rp, kp = self.cp, self.rp, self.kp
+        tg, d = float(need(ks, "plate_t_in", "kb_end")), float(need(ks, "bolt_d_in", "kb_end"))
+        nb, nr = int(need(ks, "n_bolts_brace", "kb_end")), int(need(ks, "n_bolts_rafter", "kb_end"))
+        leg, Lw = float(need(ks, "weld_leg_in", "kb_end")), float(need(ks, "weld_len_in", "kb_end"))
+        nk = [-dk[2], 0.0, dk[0]]
+        gauge = max(2.5, kp["depth"] - 3.0); rows = max(1, nb // 2); pitch = 3.0
+        if at_column:
+            a0 = (cp["depth"] / 2.0) / max(abs(dk[0]), 0.2) + 2.5
+        else:
+            a0 = (rp["depth"] / 2.0) / max(abs(dk[0] * (-dr[2]) + dk[2] * dr[0]), 0.2) + 2.5
+        Lg = a0 + (rows - 1) * pitch + 2.0
+        xw = cp["depth"] / 2.0 - cp["t"] - 0.45
+        parts = []
+        for k, u in enumerate(self.box_u, 1):
+            o = [-(kp["depth"] / 2.0 + 1.0) * nk[0], u - tg / 2.0, -(kp["depth"] / 2.0 + 1.0) * nk[2]]
+            parts.append(box("gusset-brace-%d" % k, "gusset_plate", ks["plate_material"], o, [Lg, tg, kp["depth"] + 2.0], x_axis=dk, y_axis=Y, role="knee brace gusset between the webs of a brace pair", thickness_in=tg))
+            parts += self.leg_bolts("k%d" % k, u, dk, nk, a0, rows, pitch, gauge, d, ks["bolt_material"], "brace webs to gusset plate")
+            if at_column:
+                parts.append(box("fin-%d" % k, "fin_plate", ks["plate_material"], [cp["depth"] / 2.0 + 1.0, u - tg / 2.0, -Lw / 2.0], [Lw, tg, cp["depth"] + 2.0], x_axis=[0.0, 0.0, 1.0], y_axis=Y, role="fin plate between the lips of a column box", thickness_in=tg))
+                for j, sx_ in enumerate((-1.0, 1.0), 1):
+                    for w_, s2 in enumerate((-1.0, 1.0), 1):
+                        parts.append(self.weld("weld-%d-%d-%d" % (k, j, w_), ks["weld_material"], [sx_ * xw - leg / 2.0, u + s2 * tg / 2.0 - (leg if s2 < 0 else 0.0), -Lw / 2.0], [leg, leg, Lw], leg, "fin plate to channel lip"))
+            else:
+                nrm = [-dr[2], 0.0, dr[0]]
+                rr = max(1, nr // 2); L2 = (rr - 1) * pitch / 2.0 + 2.5
+                o2 = [-L2 * dr[0] - rp["depth"] / 2.0 * nrm[0], u - tg / 2.0, -L2 * dr[2] - rp["depth"] / 2.0 * nrm[2]]
+                parts.append(box("gusset-rafter-%d" % k, "gusset_plate", ks["plate_material"], o2, [2.0 * L2, tg, rp["depth"]], x_axis=dr, y_axis=Y, role="knee brace gusset between the webs of a rafter pair", thickness_in=tg))
+                parts += self.leg_bolts("r%d" % k, u, dr, nrm, -(rr - 1) * pitch / 2.0, rr, pitch, max(2.5, rp["depth"] - 5.0), d, ks["bolt_material"], "rafter webs to gusset plate")
+        hax = [[0.0, 0.0, -6.0], [0.0, 0.0, 6.0]] if at_column else [[-6.0 * dr[0], 0.0, -6.0 * dr[2]], [6.0 * dr[0], 0.0, 6.0 * dr[2]]]
+        receivers = [dict(id="brace", kind="member", axis=[[0.0, 0.0, 0.0], [24.0 * dk[0], 0.0, 24.0 * dk[2]]]), dict(id="host", kind="member", axis=hax)]
+        if at_column:
+            basis = "Knee brace to column: one %g in. fin plate per column box welded to the four lips over %g in. (%g in. fillet welds), %d x %g in. bolts through the webs of each brace pair" % (tg, Lw, leg, nb, d)
+        else:
+            basis = "Knee brace to rafter: one %g in. gusset per rafter pair with %d x %g in. bolts through the rafter webs and %d x %g in. bolts through the webs of the brace pair" % (tg, nr, d, nb, d)
+        rec = ks.get("record_column" if at_column else "record_rafter") or need(ks, "record", "kb_end")
+        tpl = r.template("KB-END-COLUMN" if at_column else "KB-END-RAFTER", parts, receivers, [rec], basis)
+        r.instance("C:%s:%s" % (kid, "A" if end == "start" else "B"), jid, tpl, P, [1.0, 0.0, 0.0], Y, dict(brace=kid, host=host), [rec], 1, family="knee brace end connection")
+
     @staticmethod
-    def pair_offsets(n, b, gap=0.0):
-        """Out-of-plane positions of the mid-plane between the two webs of each back-to-back pair."""
+    def pair_offsets(n, b, gap=0.0, sp=None):
+        """Out-of-plane positions of the mid-plane between the two webs of each back-to-back pair (or of the seam plane of each toe-to-toe box).
+        sp: centre-to-centre spacing of the pairs where they are set apart to line up with another member (default: flange tips touching)."""
         m = max(1, n // 2)
-        return [(k - (m - 1) / 2.0) * (2.0 * b + gap) for k in range(m)]
+        return [(k - (m - 1) / 2.0) * (sp or (2.0 * b + gap)) for k in range(m)]
 
     def half_width(self, n, p, gap):
-        return p["flange"] if n < 2 else (n // 2) * (2.0 * p["flange"] + gap) / 2.0
+        if n < 2:
+            return p["flange"]
+        m = n // 2
+        return (m - 1) * (p.get("pair_spacing") or (2.0 * p["flange"] + gap)) / 2.0 + p["flange"] + gap / 2.0
 
     def interconnect(self, mid, axis, sel, p, fi, col):
         """Spacer plates and bolts that make each back-to-back pair act as one I-section."""
@@ -196,7 +386,7 @@ class PortalModel(object):
         xs = [18.0 + (L - 36.0) * i / m for i in range(m + 1)]
         parts = []
         for i, x in enumerate(xs, 1):
-            for k, u in enumerate(self.pair_offsets(n, p["flange"], gap), 1):
+            for k, u in enumerate(self.pair_offsets(n, p["flange"], gap, p.get("pair_spacing")), 1):
                 if gap > 0:
                     parts.append(box("spacer-%02d-%d" % (i, k), "spacer_plate", ic["plate_material"], [x - 2.0, u - gap / 2.0, -(gauge + 3.0) / 2.0], [4.0, gap, gauge + 3.0], role="spacer plate between the webs of a pair", thickness_in=gap))
                 for j, sg in enumerate((-1.0, 1.0), 1):
@@ -292,6 +482,7 @@ class PortalModel(object):
         prof, p = self.zee(need(sel, "section", key)); dp = p["depth"]
         lap = float(sel.get("lap_ft", 0.0)) * 12.0
         sp = float(need(sel, "spacing_ft", key)) * 12.0
+        ovh = float(sel.get("overhang_ft", 0.0)) * 12.0         # the lines run on as cantilevers beyond the end frames
         frames = sorted(hosts_by_frame)
         tag0 = "PU" if kind == "purlin" else "GI"
         lines = []
@@ -324,8 +515,8 @@ class PortalModel(object):
                     mids, axes = {}, {}
                     for bi in run:
                         fa, fb = frames[bi - 1], frames[bi]
-                        A = add(Pf[fa], Y, -lap if bi > run[0] else 0.0)
-                        B = add(Pf[fb], Y, lap if bi < run[-1] else 0.0)
+                        A = add(Pf[fa], Y, -lap if bi > run[0] else (-ovh if bi == 1 else 0.0))
+                        B = add(Pf[fb], Y, lap if bi < run[-1] else (ovh if bi == len(frames) - 1 else 0.0))
                         mid = r.member("%s:B%02d" % (line, bi), kind, [A, B], prof, sel["material"], ly, 1, [need(sel, "record", key)], bay=bi, line=si, role="roof purlin" if kind == "purlin" else "wall girt",
                                        reference_line="section centroid", host_line=hi + 1)
                         mids[bi] = mid; axes[mid] = (A, B); line_mids[bi] = (mid, A, B)
@@ -340,9 +531,17 @@ class PortalModel(object):
                             for m_, rid in ((before, "before"), (after, "after")):
                                 t_, o_ = self.att(axes[m_], P); atts.append((m_, t_, o_)); bind[rid] = m_
                         elif after:
-                            ends.append((after, "start")); bind["after"] = after
+                            if ovh and k == 0:
+                                t_, o_ = self.att(axes[after], P); atts.append((after, t_, o_)); self.free_end(after, "start", axes[after][0], 1, "Cantilever tip of the %s beyond the end frame" % kind)
+                            else:
+                                ends.append((after, "start"))
+                            bind["after"] = after
                         else:
-                            ends.append((before, "end")); bind["before"] = before
+                            if ovh and k == len(frames) - 1:
+                                t_, o_ = self.att(axes[before], P); atts.append((before, t_, o_)); self.free_end(before, "end", axes[before][1], 1, "Cantilever tip of the %s beyond the end frame" % kind)
+                            else:
+                                ends.append((before, "end"))
+                            bind["before"] = before
                         tpl = self.support_template(key, kind, sel, bool(before), bool(after), lap, off, dp, p["t"], host_p, host_n)
                         jid = r.joint("J:%s:F%02d" % (line, fi), P, 1, ends=ends, attachments=atts)
                         cid = r.instance("C:%s:F%02d" % (line, fi), jid, tpl, P, Y, nrm, bind, [sel["record"]], 1, family="%s support" % kind)
@@ -430,7 +629,7 @@ class PortalModel(object):
         hw = self.half_width(host_n, host_p, gap)
         rad_s = float(sel.get("screw_d_in", 0.216)) / 2.0
         flanges = []
-        for u in (self.pair_offsets(host_n, host_p["flange"], gap) if host_n > 1 else [0.0]):
+        for u in (self.pair_offsets(host_n, host_p["flange"], gap, host_p.get("pair_spacing")) if host_n > 1 else [0.0]):
             flanges += [u - gap / 2.0 - host_p["flange"] / 2.0, u + gap / 2.0 + host_p["flange"] / 2.0] if host_n > 1 else [host_p["flange"] / 2.0]
         parts.append(box("sole", "sole_plate", sel["cleat_material"], [-hw, -dp / 2.0, -3.0], [2.0 * hw, tc, 6.0], role="cleat sole plate across the outside flanges of the frame member", thickness_in=tc))
         for i, x in enumerate(flanges, 1):
@@ -644,6 +843,8 @@ class PortalModel(object):
         names = ["Eave" if len(tops) == 2 else "Eave %d" % i for i in range(1, len(tops))] + ["Apex" if len(tops) > 1 else "Roof"]
         if len(tops) == 2 and abs(tops[0] - tops[1]) < 1e-6:
             tops, names = tops[:1], ["Roof"]
+        if self.fr.get("canopy") and len(tops) == 3:
+            names = ["Low eave", "High eave", "Roof edge"]
         levels = [dict(level=0, name="Base", elevation_in=0.0)] + [dict(level=i, name=names[i - 1], elevation_in=z) for i, z in enumerate(tops, 1)]
         grids = [dict(id="F%d" % fi, label=str(fi), direction="V", points_in=[[xs[0], ys[fi - 1], 0.0], [xs[-1], ys[fi - 1], 0.0]]) for fi in frames] + \
                 [dict(id="C%s" % chr(65 + i), label=chr(65 + i), direction="U", points_in=[[x, ys[0], 0.0], [x, ys[-1], 0.0]]) for i, x in enumerate(xs)]
