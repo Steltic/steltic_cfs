@@ -23,6 +23,16 @@ solved (``bim_adapter.portal``), so the physical columns and rafters are the ana
       "record_dispositions": [...]
     }
 
+Other frame forms (field lists in contract/BIM_EXPORT.md and in the builders below):
+
+    "frame": {"existing": {...}}                    existing shell of a component design: context members, delegated joints
+    "frame": {"canopy": true, "knee_brace", "head", "kb_end", "base": {fixed base ...}}      box columns, continuous rafter, knee braces
+    "frame": {"sbmf": true, "column": {"hss": {"h", "b", "t"}}, "rafter" (two channels, "interconnect": {"gap_in": column width}),
+              "joint": {"bolt_d_in", "a_in", "b_in", "c_in", "record", "record_interior"},
+              "splice": {"at_ft": [...], plate and bolt set-out, "record"},                  # optional shipping splices at analysis nodes
+              "base": {pinned plate, anchors on the column centreline, "weld_leg_in", "weld_material"}}
+                                                    cold-formed steel special bolted moment frames (AISI S400 E4), one or more bays
+
 Coordinates are inches, Z up; frames stand in X-Z planes at y = frame position.  Bay k lies between frames k and k + 1.
 """
 import math
@@ -128,6 +138,8 @@ class PortalModel(object):
             by_frame[int(c["id"].split(":")[2])].append(c)
         if self.fr.get("canopy"):
             return self.canopy_frames(by_frame)
+        if self.fr.get("sbmf"):
+            return self.sbmf_frames(by_frame)
         ex = self.fr.get("existing")
         if ex:
             # existing shell of a component design: the frame members are context, shown as outline envelopes; nothing of them is designed here
@@ -187,6 +199,144 @@ class PortalModel(object):
                     self.apex(fi, jid, P, es)
                 else:
                     raise PhysicalDesignError("portal frame %d: joint at %s joins %s; no connection family covers it" % (fi, P, kinds))
+
+    # ---- special bolted moment frames: one-piece hollow columns between the webs of two beam channels, eight bolts per joint, pinned bases ----
+    def sbmf_frames(self, by_frame):
+        r = self.r; fr = self.fr
+        cs_ = need(fr, "column", "frame"); h = need(cs_, "hss", "column")
+        cprof = need(cs_, "section", "column")
+        if cprof not in r.profiles:
+            r.m.profile(cprof, "rhs", dict(h=float(h["h"]), b=float(h["b"]), t=float(h["t"])), designation=cprof,
+                        source=dict(kind="engine_section_catalog", name=cprof, basis="AISC shapes database, ASTM A500 design wall thickness (0.93 times nominal)"))
+            r.profiles.add(cprof)
+        cp = dict(depth=float(h["h"]), flange=float(h["b"]), t=float(h["t"]), lip=0.0, half_width=float(h["b"]) / 2.0)
+        rprof, rp = self.built_up(need(fr, "rafter", "frame"))
+        self.cp, self.rp = cp, rp
+        self.ncol, self.nraf = 1, int(fr["rafter"]["n"])
+        self.gcol, self.graf = 0.0, float((fr["rafter"].get("interconnect") or {}).get("gap_in", 0.0))
+        for fi in sorted(by_frame):
+            cs = by_frame[fi]
+            rafs = [c for c in cs if c["kind"] == "rafter"]
+            pts = sorted([[float(v) for v in q] for c in rafs for q in c["axis"]], key=lambda q: q[0])
+            A, B = pts[0], pts[-1]
+            L = math.dist(A, B)
+            for q in pts:                                        # one beam, one piece in the model: every analysis node must lie on the line A-B
+                t_ = sum((q[i] - A[i]) * (B[i] - A[i]) for i in range(3)) / L ** 2
+                if math.dist(q, lerp(A, B, t_)) > 0.05:
+                    raise PhysicalDesignError("bolted moment frame %d: the beam is not straight between its ends (node at %s); use a flat or single-slope beam" % (fi, q))
+            dr = unit([B[0] - A[0], 0.0, B[2] - A[2]])
+            sp = fr.get("splice")
+            cuts = sorted(float(v) * 12.0 for v in (sp or {}).get("at_ft") or [])
+            nodes = [A] + [lerp(A, B, (x - A[0]) / (B[0] - A[0])) for x in cuts] + [B]
+            pieces = []
+            for c in rafs:                                      # a splice inside an analysis element would split its design record between two pieces
+                x0, x1 = min(q[0] for q in c["axis"]), max(q[0] for q in c["axis"])
+                if any(x0 + 0.05 < float(n_[0]) < x1 - 0.05 for n_ in nodes[1:-1]):
+                    raise PhysicalDesignError("bolted moment frame %d: a beam splice must stand at an analysis node (mid-bay or column), not inside the element %s" % (fi, c["id"]))
+            for k in range(len(nodes) - 1):
+                Pa, Pb = nodes[k], nodes[k + 1]
+                pid = "FR%02d:raf" % fi if len(nodes) == 2 else "FR%02d:raf%d" % (fi, k + 1)
+                aids = sorted({a for c in rafs for a in c["analysis_ids"] if min(q[0] for q in c["axis"]) >= Pa[0] - 0.05 and max(q[0] for q in c["axis"]) <= Pb[0] + 0.05})
+                if not aids:
+                    raise PhysicalDesignError("bolted moment frame %d: a beam splice must stand at an analysis node (mid-bay or column)" % fi)
+                r.member(pid, "rafter", [Pa, Pb], rprof, fr["rafter"]["material"], Y, 1, [need(fr["rafter"], "record", "rafter")], analysis_ids=aids, frame=fi,
+                         role="moment frame beam: two channels, one each side of the columns", reference_line="section centroid")
+                self.rafters[fi].append((pid, Pa, Pb)); self.axis[pid] = (Pa, Pb)
+                pieces.append((pid, Pa, Pb))
+            for k in range(len(pieces) - 1):
+                Pj = pieces[k][2]
+                js_ = r.joint("J:FR%02d:%d:%d" % (fi, int(round(Pj[0])), int(round(Pj[2]))), Pj, 1, ends=[(pieces[k][0], "end"), (pieces[k + 1][0], "start")])
+                self.beam_splice(fi, js_, Pj, pieces[k][0], pieces[k + 1][0], dr)
+            used = set()
+            for c in sorted((c for c in cs if c["kind"] == "column"), key=lambda c: float(c["axis"][0][0])):
+                label = c["id"].split(":")[4]
+                P0, P1 = [float(v) for v in c["axis"][0]], [float(v) for v in c["axis"][1]]
+                mid = "FR%02d:%s" % (fi, label)
+                if mid in self.axis:
+                    mid = "%s%s" % (mid, c["id"].split(":")[5])
+                r.member(mid, "column", [P0, P1], cprof, cs_["material"], Y, 0, [need(cs_, "record", "column")], analysis_ids=c["analysis_ids"], frame=fi, role="moment frame column, pinned base, no splice", reference_line="section centroid")
+                lo, hi = (P0, P1) if P0[2] <= P1[2] else (P1, P0)
+                self.columns[fi].append((mid, lo, hi)); self.axis[mid] = (P0, P1)
+                e_lo, e_hi = ("start", "end") if P0[2] <= P1[2] else ("end", "start")
+                jb = r.joint("J:FR%02d:%d:0" % (fi, int(round(lo[0]))), lo, 0, ends=[(mid, e_lo)])
+                self.base_sbmf(fi, jb, lo, mid)
+                end = "start" if math.dist(hi, A) < 0.05 else ("end" if math.dist(hi, B) < 0.05 else None)
+                if end:
+                    used.add(end)
+                    rid = pieces[0][0] if end == "start" else pieces[-1][0]
+                    jh = r.joint("J:FR%02d:%d:%d" % (fi, int(round(hi[0])), int(round(hi[2]))), hi, 1, ends=[(mid, e_hi), (rid, end)])
+                    self.sbmf_joint(fi, jh, hi, mid, rid, dr, dr if end == "start" else neg(dr), False)
+                else:
+                    rid, Pa, Pb = next(q for q in pieces if q[1][0] - 0.05 <= hi[0] <= q[2][0] + 0.05)
+                    t_, o_ = self.att((Pa, Pb), hi)
+                    jh = r.joint("J:FR%02d:%d:%d" % (fi, int(round(hi[0])), int(round(hi[2]))), hi, 1, ends=[(mid, e_hi)], attachments=[(rid, t_, o_)])
+                    self.sbmf_joint(fi, jh, hi, mid, rid, dr, dr, True)
+            for end, P, q in (("start", A, pieces[0]), ("end", B, pieces[-1])):
+                if end not in used:
+                    self.free_end(q[0], end, P, 1, "Beam end beyond the last column")
+
+    def base_sbmf(self, fi, jid, P, mid):
+        r = self.r; bs = need(self.fr, "base", "frame"); cp = self.cp
+        tp = float(need(bs, "plate_t_in", "base")); pw, pl = [float(v) for v in need(bs, "plate_in", "base")]
+        d, na, emb = float(need(bs, "anchor_d_in", "base")), int(need(bs, "n_anchors", "base")), float(need(bs, "embed_in", "base"))
+        leg = float(need(bs, "weld_leg_in", "base")); gx = float(bs.get("anchor_gauge_in", 4.0))
+        h, b = cp["depth"], cp["flange"]
+        parts = [box("base-plate", "base_plate", bs["plate_material"], [-pw / 2.0, -pl / 2.0, -tp], [pw, pl, tp], role="base plate", thickness_in=tp)]
+        ya = (b / 2.0 + pl / 2.0) / 2.0
+        per = max(1, na // 2)
+        for i in range(na):
+            sy = -1.0 if i % 2 == 0 else 1.0
+            x = 0.0 if per == 1 else (-gx / 2.0 + (i // 2) * gx / (per - 1))
+            parts.append(cyl("anchor-%d" % (i + 1), "anchor_rod", bs["anchor_material"], [x, sy * ya, -tp - emb], Z, emb + tp + 3.0, d / 2.0, diameter_in=d, role="anchor rod"))
+        for j, (ox, oy, lx, ly) in enumerate(((-h / 2.0 - leg, -b / 2.0, leg, b), (h / 2.0, -b / 2.0, leg, b), (-h / 2.0, -b / 2.0 - leg, h, leg), (-h / 2.0, b / 2.0, h, leg)), 1):
+            parts.append(self.weld("weld-base-%d" % j, bs["weld_material"], [ox, oy, 0.0], [lx, ly, leg], leg, "column to base plate, all round"))
+        receivers = [dict(id="column", kind="member", axis=[[0.0, 0.0, 0.0], [0.0, 0.0, 24.0]]), dict(id="foundation", kind="interface")]
+        tpl = r.template("BASE-PINNED-HSS", parts, receivers, [bs["record"]],
+                         "Pinned column base: %g in. base plate %g in. x %g in. on %d x %g in. anchor rods set on the column centreline across the frame (%g in. apart in the plane of the frame), column welded to the plate all round (%g in. fillet)"
+                         % (tp, pw, pl, na, d, gx, leg))
+        r.instance("C:FR%02d:base:%d" % (fi, int(round(P[0]))), jid, tpl, P, [1.0, 0.0, 0.0], Y, dict(column=mid, foundation=self.foundation()), [bs["record"]], 0, family="column base")
+
+    def beam_splice(self, fi, jid, P, ra, rb, dr):
+        """Web splice of the two beam channels: one plate on the outside of each web, bolts each side of the splice line."""
+        r = self.r; sp = need(self.fr, "splice", "frame"); rp = self.rp
+        tp, d = float(need(sp, "plate_t_in", "splice")), float(need(sp, "bolt_d_in", "splice"))
+        Lp, dp = [float(v) for v in need(sp, "plate_in", "splice")]
+        rows, gauge, pitch = int(need(sp, "rows", "splice")), float(need(sp, "gauge_in", "splice")), float(need(sp, "pitch_in", "splice"))
+        nrm = [-dr[2], 0.0, dr[0]]
+        parts = []
+        for k, sy in enumerate((-1.0, 1.0), 1):
+            yw = sy * (self.graf / 2.0 + rp["t"])                 # outside face of the web of this channel (the flanges turn outward)
+            y0 = yw if sy > 0 else yw - tp
+            o = [-Lp / 2.0 * dr[0] - dp / 2.0 * nrm[0], y0, -Lp / 2.0 * dr[2] - dp / 2.0 * nrm[2]]
+            parts.append(box("splice-plate-%d" % k, "splice_plate", sp["plate_material"], o, [Lp, tp, dp], x_axis=dr, y_axis=Y, role="web splice plate", thickness_in=tp))
+            for side, sg in (("a", -1.0), ("b", 1.0)):
+                for i, gx in enumerate((-gauge / 2.0, gauge / 2.0), 1):
+                    for j in range(rows):
+                        u, v = sg * Lp / 4.0 + gx, (j - (rows - 1) / 2.0) * pitch
+                        yb = min(yw, yw - sy * rp["t"], yw + sy * tp) - 0.75
+                        parts.append(cyl("bolt-%d%s-%d-%d" % (k, side, i, j + 1), "bolt", sp["bolt_material"], [u * dr[0] + v * nrm[0], yb, u * dr[2] + v * nrm[2]], Y, rp["t"] + tp + 1.5, d / 2.0, diameter_in=d,
+                                         role="beam web to splice plate"))
+        receivers = [dict(id="rafter1", kind="member", axis=[[-24.0 * dr[0], 0.0, -24.0 * dr[2]], [0.0, 0.0, 0.0]]), dict(id="rafter2", kind="member", axis=[[0.0, 0.0, 0.0], [24.0 * dr[0], 0.0, 24.0 * dr[2]]])]
+        tpl = r.template("BEAM-SPLICE", parts, receivers, [sp["record"]], "Web splice: one %g in. plate %g in. x %g in. on each channel web, %d x %g in. bolts each side of the splice in each web (2 lines at %g in., %d rows at %g in.)"
+                         % (tp, dp, Lp, 2 * rows, d, gauge, rows, pitch))
+        r.instance("C:FR%02d:splice:%d" % (fi, int(round(P[0]))), jid, tpl, P, [1.0, 0.0, 0.0], Y, dict(rafter1=ra, rafter2=rb), [sp["record"]], 1, family="beam splice")
+
+    def sbmf_joint(self, fi, jid, P, mid, rid, dr, into, interior=False):
+        """Eight bolts through the two beam webs and the two walls of the column; the bolt group centre is the joint point."""
+        r = self.r; js = need(self.fr, "joint", "frame"); cp, rp = self.cp, self.rp
+        rec = js.get("record_interior") if (interior and js.get("record_interior")) else js["record"]
+        d, a, b, c = [float(need(js, k, "joint")) for k in ("bolt_d_in", "a_in", "b_in", "c_in")]
+        nrm = [-dr[2], 0.0, dr[0]]
+        Lb = cp["flange"] + 2.0 * rp["t"] + 2.5
+        parts = []
+        for i, sx in enumerate((-1.0, 1.0), 1):
+            for j, v in enumerate((-(b / 2.0 + a), -b / 2.0, b / 2.0, b / 2.0 + a), 1):
+                o = [sx * c / 2.0 * dr[0] + v * nrm[0], -Lb / 2.0, sx * c / 2.0 * dr[2] + v * nrm[2]]
+                parts.append(cyl("bolt-%d-%d" % (i, j), "bolt", js["bolt_material"], o, Y, Lb, d / 2.0, diameter_in=d, role="beam webs to column walls, snug-tight"))
+        receivers = [dict(id="column", kind="member", axis=[[0.0, 0.0, -24.0], [0.0, 0.0, 0.0]]), dict(id="rafter", kind="member", axis=[[0.0, 0.0, 0.0], [24.0 * into[0], 0.0, 24.0 * into[2]]])]
+        tpl = r.template(("SBMF-JOINT-I" if interior else "SBMF-JOINT") if into is dr else "SBMF-JOINT-R", parts, receivers, [rec],
+                         "8 x %g in. snug-tight high-strength bolts through both beam webs and both walls of the column: two vertical lines %g in. apart, four bolts in each line at %g in., %g in. and %g in." % (d, c, a, b, a))
+        r.instance("C:FR%02d:joint:%d" % (fi, int(round(P[0]))), jid, tpl, P, [1.0, 0.0, 0.0], Y, dict(column=mid, rafter=rid), [rec], 1, family="bolted moment connection")
 
     # ---- open canopy: box columns on fixed bases, continuous rafter over the column heads, knee braces ----
     def free_end(self, mid, end, P, level, reason):
@@ -368,6 +518,8 @@ class PortalModel(object):
         return [(k - (m - 1) / 2.0) * (sp or (2.0 * b + gap)) for k in range(m)]
 
     def half_width(self, n, p, gap):
+        if p.get("half_width") is not None:
+            return p["half_width"]
         if n < 2:
             return p["flange"]
         m = n // 2
@@ -681,7 +833,7 @@ class PortalModel(object):
             parts.append(cyl("scr-%02d" % (i + 1), "screw", sel["screw_material"], [1.5 + row * 0.75, (col - (per - 1) / 2.0) * (w - 1.0) / max(1, per - 1), 0.2], [0.0, 0.0, -1.0], 0.8, rad, role="strap end to frame member"))
         receivers = [dict(id="strap", kind="member", axis=[[0.0, 0.0, 0.0], [12.0, 0.0, 0.0]]),
                      dict(id="host", kind="member", axis=[[r6([-3.0 * hx])[0], r6([-3.0 * hy])[0], -zoff], [r6([3.0 * hx])[0], r6([3.0 * hy])[0], -zoff]])]
-        tpl = r.template("STRAP-END", parts, receivers, [rec], "%d screws through the strap end into the outside flanges of the frame member" % n)
+        tpl = r.template("STRAP-END", parts, receivers, [rec], "%d screws through the strap end into the %s" % (n, "face of the frame member" if self.fr.get("sbmf") else "outside flanges of the frame member"))
         t_, o_ = self.att(self.axis[host], P)
         jid = r.joint("%s:%s" % (mid, "A" if end == "start" else "B"), P, 1, ends=[(mid, end)], attachments=[(host, t_, o_)])
         r.instance("C:%s:%s" % (mid, "A" if end == "start" else "B"), jid, tpl, P, xa, ya, dict(strap=mid, host=host), [rec], 1, family="strap end connection")

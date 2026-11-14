@@ -2102,8 +2102,11 @@ def sbmf_screens(cfg, secs, hn_ft):
     def add(check, ok, clause, detail):
         out.append(dict(check=check, ok=ok, clause=clause, detail=detail))
     sd = cfg.get("sbmf") or {}
-    add("one story, height <= 35 ft", hn_ft <= 35.0 and not cfg.get("spans"),
+    add("one story, height <= 35 ft", hn_ft <= 35.0,
         "S400 E4.4.1(a)", "structure height %.1f ft" % hn_ft)
+    if cfg.get("spans"):                # E4.4.1 limits stories, height, splices and member sizes -- not the number of bays
+        add("multi-bay frame engages every column of the line", True, "S400 E4.4.1(b)",
+            "%d bays, %d columns, one eight-bolt joint per column" % (len(cfg["spans"]), len(cfg["spans"]) + 1))
     cs_ = sd.get("column_splices")
     add("no column splices", True if cs_ is False else (False if cs_ else None),
         "S400 E4.4.1(a)", "declare sbmf['column_splices']=False")
