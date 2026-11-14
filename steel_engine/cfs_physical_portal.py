@@ -264,6 +264,7 @@ class PortalModel(object):
         frames = sorted(hosts_by_frame)
         tag0 = "PU" if kind == "purlin" else "GI"
         lines = []
+        geo = {}
         for hi in range(len(hosts_by_frame[frames[0]])):
             _m0, A0, B0 = hosts_by_frame[frames[0]][hi]
             Lh = math.dist(A0, B0)
@@ -278,6 +279,7 @@ class PortalModel(object):
                 for om in sel.get("omit") or []:            # door / opening bays: no member on the lines below the opening head
                     if abs(self.columns[frames[0]][int(om["line"]) - 1][1][0] - A0[0]) < 1.0 and zline < float(om.get("below_ft", 1e9)) * 12.0:
                         skip.update(int(b) for b in om["bays"])
+                line_mids = {}
                 runs, cur = [], []
                 for bi in range(1, len(frames)):
                     if bi in skip:
@@ -295,7 +297,7 @@ class PortalModel(object):
                         B = add(Pf[fb], Y, lap if bi < run[-1] else 0.0)
                         mid = r.member("%s:B%02d" % (line, bi), kind, [A, B], prof, sel["material"], ly, 1, [need(sel, "record", key)], bay=bi, line=si, role="roof purlin" if kind == "purlin" else "wall girt",
                                        reference_line="section centroid", host_line=hi + 1)
-                        mids[bi] = mid; axes[mid] = (A, B)
+                        mids[bi] = mid; axes[mid] = (A, B); line_mids[bi] = (mid, A, B)
                     for k in range(run[0] - 1, run[-1] + 1):       # frame index k (0-based) borders bays k and k + 1
                         fi = frames[k]
                         before, after = mids.get(k), mids.get(k + 1)
@@ -320,7 +322,56 @@ class PortalModel(object):
                                 jl = r.joint("J:%s:F%02d:lap%s" % (line, fi, "B" if sg > 0 else "A"), Q, 1, ends=[(m_, end)], attachments=[(other, t_, o_)])
                                 r.shared(jl, [cid], "Lap end bolted through both nested webs by the lap bolts of this support assembly")
                 lines.append(line)
+                geo.setdefault(hi, []).append(dict(si=si, Pf=Pf, mids=line_mids, nrm=nrm))
+        if sel.get("bridging"):
+            for hi, glines in sorted(geo.items()):
+                self.bridging(kind, sel, hi, glines, frames, dp, need(sel["bridging"], "record", "bridging"))
         return lines
+
+    def bridging(self, kind, sel, hi, glines, frames, dp, rec):
+        """Discrete brace lines: a flat strap on each flange crossing every purlin / girt of a host line, in every bay."""
+        r = self.r; bg = sel["bridging"]
+        w, t = float(need(bg, "width_in", "bridging")), float(need(bg, "t_in", "bridging"))
+        prof = r.flat(w, t)
+        nl, ns, rad = int(need(bg, "n_lines", "bridging")), int(need(bg, "n_screws", "bridging")), float(need(bg, "screw_d_in", "bridging")) / 2.0
+        glines = sorted(glines, key=lambda g_: g_["si"])
+        nrm = glines[0]["nrm"]
+        for bi in range(1, len(frames)):
+            fa, fb = frames[bi - 1], frames[bi]
+            present = [g_ for g_ in glines if bi in g_["mids"]]
+            if len(present) < 2:
+                continue
+            for j in range(1, nl + 1):
+                f = j / (nl + 1.0)
+                for flange, sg in (("O", 1.0), ("I", -1.0)):
+                    zoff = sg * (dp / 2.0 + t / 2.0)
+                    pts = [add(lerp(g_["Pf"][fa], g_["Pf"][fb], f), nrm, zoff) for g_ in present]
+                    A, B = pts[0], pts[-1]
+                    xa = unit([B[i] - A[i] for i in range(3)])
+                    ya = unit(cross(nrm, xa))                 # strap width direction; local z = xa x ya = nrm
+                    mid = r.member("BG:%s:H%d:B%02d:L%d%s" % ("PU" if kind == "purlin" else "GI", hi + 1, bi, j, flange), "bridging", [A, B], prof, bg["material"], ya, 1, [rec], bay=bi, host_line=hi + 1,
+                                   role="%s brace strap" % kind, reference_line="strap centreline", plane="roof" if kind == "purlin" else "wall", flange="outer" if sg > 0 else "inner")
+                    parts, receivers, bind = [], [dict(id="strap", kind="member", axis=[[0.0, 0.0, 0.0], [math.dist(A, B), 0.0, 0.0]])], dict(strap=mid)
+                    for i, (g_, P) in enumerate(zip(present, pts), 1):
+                        x = math.dist(A, P)
+                        for k in range(ns):
+                            parts.append(cyl("scr-%02d-%d" % (i, k + 1), "screw", bg["screw_material"], [x + (k - (ns - 1) / 2.0) * 0.75, 0.0, sg * 0.2], [0.0, 0.0, -sg], 0.6, rad, role="brace strap to %s flange" % kind))
+                        mm, MA, MB = g_["mids"][bi]
+                        hy = sum((MB[q] - MA[q]) * ya[q] for q in range(3)); hy = 1.0 if hy >= 0 else -1.0
+                        receivers.append(dict(id="m%d" % i, kind="member", axis=[[r6([x])[0], -6.0 * hy, -zoff], [r6([x])[0], 6.0 * hy, -zoff]])); bind["m%d" % i] = mm
+                    tpl = r.template("%s-BRIDGING" % kind.upper(), parts, receivers, [rec], "%g in. x %.4f in. flat strap across the %s flanges of %d %ss, %d screws to each flange" % (w, t, "outer" if sg > 0 else "inner", len(present), kind, ns))
+                    ja = jb = None
+                    for end, P, g_ in (("start", A, present[0]), ("end", B, present[-1])):
+                        mm, MA, MB = g_["mids"][bi]
+                        t_, o_ = self.att((MA, MB), P)
+                        jid = r.joint("J:%s:%s" % (mid, "A" if end == "start" else "B"), P, 1, ends=[(mid, end)], attachments=[(mm, t_, o_)])
+                        if end == "start":
+                            ja = jid
+                        else:
+                            jb = jid
+                    cid = r.instance("C:%s" % mid, ja, tpl, A, xa, ya, bind, [rec], 1, family="%s brace line" % kind)
+                    r.shared(jb, [cid], "Far end of the brace strap, fastened by the last screw group of this brace-line assembly")
+
 
     def support_template(self, key, kind, sel, before, after, lap, off, dp, tw, host_p, host_n):
         """Local frame: x along the purlin / girt, y along the outward normal of the frame member, z along the frame member."""
@@ -439,11 +490,14 @@ class PortalModel(object):
             d = float(need(sel, "bolt_d_in", "strut"))
             hw = self.half_width(self.ncol, self.cp, self.gcol)
             rec = need(sel, "record", "strut")
-            parts = [box("clip", "clip_angle", sel["clip_material"], [0.0, -p["depth"] / 2.0 + 0.5, p["t"] / 2.0], [3.0, p["depth"] - 1.0, 0.25], role="strut end clip on the column", thickness_in=0.25)]
-            for j, yy in enumerate((-p["depth"] / 4.0, p["depth"] / 4.0), 1):
-                parts.append(cyl("bolt-%d" % j, "bolt", sel["bolt_material"], [1.5, yy, -0.5], Z, 1.25, d / 2.0, diameter_in=d, role="strut web to clip"))
+            nbt = int(sel.get("n_bolts", 2)); ncol_b = max(1, (nbt + 1) // 2)
+            parts = [box("clip", "clip_angle", sel["clip_material"], [0.0, -p["depth"] / 2.0 + 0.5, p["t"] / 2.0], [1.5 + 2.5 * ncol_b, p["depth"] - 1.0, 0.25], role="strut end clip on the column", thickness_in=0.25)]
+            for k_ in range(ncol_b):
+                for j, yy in enumerate((-p["depth"] / 4.0, p["depth"] / 4.0), 1):
+                    if 2 * k_ + j <= nbt:
+                        parts.append(cyl("bolt-%d-%d" % (k_ + 1, j), "bolt", sel["bolt_material"], [1.5 + 2.5 * k_, yy, -0.5], Z, 1.25, d / 2.0, diameter_in=d, role="strut web to clip"))
             receivers = [dict(id="strut", kind="member", axis=[[0.0, 0.0, 0.0], [12.0, 0.0, 0.0]]), dict(id="column", kind="member", axis=[[-hw, -3.0, 0.0], [-hw, 3.0, 0.0]])]
-            tpl = r.template("STRUT-END", parts, receivers, [rec], "Strut end: clip on the column pack with 2 x %g in. bolts through the strut web" % d)
+            tpl = r.template("STRUT-END", parts, receivers, [rec], "Strut end: clip on the column pack with %d x %g in. bolts through the strut web" % (nbt, d))
             bays = sel.get("bays") or list(range(1, len(frames)))
             for bay in bays:
                 fa, fb = frames[int(bay) - 1], frames[int(bay)]
