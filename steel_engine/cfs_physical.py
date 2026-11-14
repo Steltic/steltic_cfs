@@ -155,6 +155,27 @@ class Recorder(object):
             self.profiles.add(name)
         return name
 
+    def built_up(self, base, n, arrangement="box", gap=0.0):
+        """n channels as n/2 toe-to-toe boxes (or back-to-back pairs) side by side; returns (profile id, parsed base section)."""
+        base = self.channel(base); p = cfs_sections.parse_designator(base)
+        if int(n) < 2:
+            return base, p
+        boxed = arrangement == "box"
+        name = "%dx%s%s" % (n, base, "/box" if boxed else "")
+        if name not in self.profiles:
+            t, B = p["t"], p["flange"]; m = int(n) // 2
+            comps = []
+            for k in range(m):
+                u = (k - (m - 1) / 2.0) * (2.0 * B + gap)
+                if boxed:
+                    comps += [dict(profile_id=base, rotation_deg=0.0, offset=[round(u - gap / 2.0 - B + t / 2.0, 6), 0.0]), dict(profile_id=base, rotation_deg=180.0, offset=[round(u + gap / 2.0 + B - t / 2.0, 6), 0.0])]
+                else:
+                    comps += [dict(profile_id=base, rotation_deg=180.0, offset=[round(u - gap / 2.0 - t / 2.0, 6), 0.0]), dict(profile_id=base, rotation_deg=0.0, offset=[round(u + gap / 2.0 + t / 2.0, 6), 0.0])]
+            self.m.profile(name, "built_up", {}, components=comps, designation="%d x %s in %d %s" % (n, base, m, "toe-to-toe box(es)" if boxed else "back-to-back pair(s)"),
+                           source=dict(kind="engine_section_catalog", name=base, basis="Built-up of identical channels; strong-axis properties are n times the single channel"))
+            self.profiles.add(name)
+        return name, p
+
     def envelope(self, designation, width, depth):
         name = "ENV-%gx%g" % (width, depth)
         if name not in self.profiles:
@@ -245,7 +266,7 @@ class WallModel(object):
         tr = need(st, "track", key)
         tname = r.channel(need(tr, "section", key + " track")); tmat = need(tr, "material", key + " track")
         tt = cfs_sections.parse_designator(tname)["t"]
-        zb, zt = self.L[k - 1], self.L[k] - self.zone(k)
+        zb, zt = self.L[k - 1], self.L[k] - self.zone(k) - float(st.get("top_drop_in", 0.0))       # top_drop_in: a panel that stands under a beam
         base = "W:%s:S%d" % (key, k)
         tracks = {}
         top = st.get("top_track") or tr                     # the collector selection where the top track is the collector (one or two nested plies)
@@ -685,7 +706,7 @@ class WallModel(object):
                 d = float(need(rd, "d_in", "rod"))
                 z0 = self.L[k - 1] + (6.0 if (k > 1 and prev is not None) else 0.0)       # a rod starts at the base of its own line (stepped foundations)
                 top = (k == max(by_story)) or not any((sj, tj) == (si, tag) for sj, tj, _s, _r in by_story.get(k + 1, []))
-                z1 = (self.L[k] - self.zone(k) + 3.0) if top else (self.L[k] + 6.0)
+                z1 = (self.tracks[(key, k, "TT")]["z"] + 3.0) if top else (self.L[k] + 6.0)        # above the top track of the line (a panel under a beam stops below it)
                 mid = r.member("R:%s:G%d%s:S%d" % (key, si, tag, k), "tie_rod", [self.pt(P0, u, s, z0), self.pt(P0, u, s, z1)], r.round(d), rd["material"], [u[0], u[1], 0.0], k - 1,
                                [rd["record"]], storey=k, wall_line=key, role="continuous tie-down rod", reference_line="rod centreline")
                 bt = self.tracks[(key, k, "BT")]
@@ -832,6 +853,8 @@ class WallModel(object):
                     rods[k] = got
             if rods:
                 self.rods(key, line, rods)
+        for pl in pd.get("post_lines", []):
+            self.post_line(pl)
         for fl in pd.get("floors", []):
             self.floor(fl)
         grids = []
@@ -839,10 +862,83 @@ class WallModel(object):
             P0, u, n, Lw = self.frame(line)
             if line.get("grid", True):
                 grids.append(dict(id=key, label=key.split(":")[1], direction="V" if line["direction"] == "X" else "U", points_in=[r6(P0), r6(self.pt(P0, u, Lw, 0.0))]))
-        levels = [dict(level=i, name=("Foundation" if i == 0 else "Roof" if i == self.N else "Level %d" % (i + 1)), elevation_in=round(z, 6)) for i, z in enumerate(self.L)]
+        top_name = pd.get("top_level_name") or "Roof"            # a platform's top level is a floor deck, not a roof
+        levels = [dict(level=i, name=("Foundation" if i == 0 else top_name if i == self.N else "Level %d" % (i + 1)), elevation_in=round(z, 6)) for i, z in enumerate(self.L)]
         self.r.decl["reference_system"] = dict(basis="Wall-line worklines and floor datums of the completed design; wall studs are centred on the line", levels=levels, grids=grids)
         cov = need(pd, "coverage", "root")
         self.r.decl["coverage"] = {k: dict(complete=True, basis=need(cov, k, "coverage")) for k in ("primary_members", "secondary_members", "openings", "connections")}
+
+    # ---- open post-and-beam line under a floor (platforms): posts on base plates, one beam per bay on the post caps ----
+    def post_line(self, pl):
+        """{"id", "direction", "pos_ft", "level", "posts_ft": [...], "post": {"section", "n", "arrangement", "material", "record"},
+            "beam": {"section", "n", "arrangement", "material", "record"},
+            "base": {"plate_in": [a, b], "plate_t_in", "plate_material", "anchor_d_in", "n_anchors", "anchor_material", "embed_in", "record"},
+            "cap": {"plate_in": [a, b], "plate_t_in", "plate_material", "n_bolts", "bolt_d_in", "bolt_material", "record"}}
+        Each beam is registered as a joist support under the key "<id>/<bay>" (bays numbered from 1)."""
+        r = self.r
+        key = need(pl, "id", "post line"); k = int(need(pl, "level", "post line")); lvl = k - 1
+        xs = [float(v) * 12.0 for v in need(pl, "posts_ft", key)]
+        line = dict(direction=need(pl, "direction", key), pos_ft=need(pl, "pos_ft", key), start_ft=xs[0] / 12.0, end_ft=xs[-1] / 12.0)
+        P0, u, n, Lw = self.frame(line)
+        ps, bm, bs, cap = need(pl, "post", key), need(pl, "beam", key), need(pl, "base", key), need(pl, "cap", key)
+        pprof, pp = r.built_up(need(ps, "section", "post"), int(ps.get("n", 2)), ps.get("arrangement", "box"))
+        bprof, bp = r.built_up(need(bm, "section", "beam"), int(bm.get("n", 2)), bm.get("arrangement", "box"))
+        ztop = self.L[k] - self.zone(k)                       # top of the beams = underside of the joists
+        zb = ztop - bp["depth"]
+        tc = float(need(cap, "plate_t_in", "cap")); cw, cl = [float(v) for v in need(cap, "plate_in", "cap")]
+        nb, db = int(need(cap, "n_bolts", "cap")), float(need(cap, "bolt_d_in", "cap"))
+        tp = float(need(bs, "plate_t_in", "base")); pw, plen = [float(v) for v in need(bs, "plate_in", "base")]
+        na, da, emb = int(need(bs, "n_anchors", "base")), float(need(bs, "anchor_d_in", "base")), float(need(bs, "embed_in", "base"))
+        fid = self.foundation()
+        # templates (local x along the line, y across it, z up)
+        bparts = [box("base-plate", "base_plate", bs["plate_material"], [-pw / 2.0, -plen / 2.0, -tp], [pw, plen, tp], role="post base plate", thickness_in=tp)]
+        for i in range(na):
+            x = (-1.0 if i % 2 == 0 else 1.0) * (pw / 2.0 - 1.75)
+            y = 0.0 if na <= 2 else (-1.0 if i < 2 else 1.0) * (plen / 2.0 - 1.75)
+            bparts.append(cyl("anchor-%d" % (i + 1), "anchor_rod", bs["anchor_material"], [x, y, -tp - emb], Z, emb + tp + 2.0, da / 2.0, diameter_in=da, role="post base anchor"))
+        nsb, nsc = int(bs.get("n_screws", 0)), int(cap.get("n_screws", 0))
+        hw = pp["depth"] / 2.0
+        for j in range(nsb):
+            bparts.append(cyl("scr-%d" % (j + 1), "screw", bs["screw_material"], [(-1.0 if j % 2 == 0 else 1.0) * (hw + 0.2), 0.0, 1.0 + 1.0 * (j // 2)], [1.0 if j % 2 == 0 else -1.0, 0.0, 0.0], 0.8, float(bs["screw_d_in"]) / 2.0, role="base shoe to post web"))
+        btpl = r.template("POST-BASE", bparts, [dict(id="post", kind="member", axis=[[0.0, 0.0, 0.0], [0.0, 0.0, 12.0]]), dict(id="foundation", kind="interface")], [bs["record"]],
+                          "Post base: %g in. base plate with a formed shoe fastened to the post with %d screws, %d x %g in. anchors into the slab" % (tp, nsb, na, da))
+        posts = []
+        for i, x in enumerate(xs, 1):
+            A, B = self.pt(P0, u, x - xs[0], self.L[lvl]), self.pt(P0, u, x - xs[0], zb - tc)
+            mid = r.member("%s:P%02d" % (key, i), "post", [A, B], pprof, ps["material"], u, lvl, [need(ps, "record", "post")], storey=k, post_line=key, role="platform post", reference_line="section centroid")
+            posts.append((mid, A, B))
+            jb = r.joint("%s:B" % mid, A, lvl, ends=[(mid, "start")])
+            r.instance("C:%s:base" % mid, jb, btpl, A, u, n, dict(post=mid, foundation=fid), [bs["record"]], lvl, family="post base")
+        beams = []
+        for i in range(len(xs) - 1):
+            A, B = self.pt(P0, u, xs[i] - xs[0], zb + bp["depth"] / 2.0), self.pt(P0, u, xs[i + 1] - xs[0], zb + bp["depth"] / 2.0)
+            mid = r.member("%s:B%02d" % (key, i + 1), "beam", [A, B], bprof, bm["material"], n, lvl, [need(bm, "record", "beam")], storey=k, post_line=key, bay=i + 1, role="platform beam", reference_line="section centroid")
+            beams.append((mid, A, B))
+            self.tracks[("%s/%d" % (key, i + 1), k, "TT")] = dict(id=mid, z=zb + bp["depth"] / 2.0, P0=[A[0], A[1], 0.0], u=u, n=n, length=xs[i + 1] - xs[i], t=bp["depth"])
+        for i, (pid, A, B) in enumerate(posts):
+            left = beams[i - 1] if i > 0 else None; right = beams[i] if i < len(beams) else None
+            parts = [box("cap-plate", "cap_plate", cap["plate_material"], [-cw / 2.0, -cl / 2.0, 0.0], [cw, cl, tc], role="post cap plate under the beam ends", thickness_in=tc)]
+            sides = ([-1.0] if left else []) + ([1.0] if right else [])
+            per = max(1, nb // max(1, 2 * len(sides)))
+            for sg in sides:
+                for j in range(per):
+                    for q, sy in enumerate((-1.0, 1.0), 1):
+                        parts.append(cyl("bolt-%s-%d-%d" % ("L" if sg < 0 else "R", j + 1, q), "bolt", cap["bolt_material"], [sg * (1.5 + 2.5 * j), sy * (cl / 2.0 - 1.25), -0.5], Z, tc + 1.5, db / 2.0, diameter_in=db, role="beam bottom flange to cap plate"))
+            for j in range(nsc):
+                parts.append(cyl("scr-%d" % (j + 1), "screw", cap["screw_material"], [(-1.0 if j % 2 == 0 else 1.0) * (hw + 0.2), 0.0, -1.0 - 1.0 * (j // 2)], [1.0 if j % 2 == 0 else -1.0, 0.0, 0.0], 0.8, float(cap["screw_d_in"]) / 2.0, role="cap sleeve to post web"))
+            receivers = [dict(id="post", kind="member", axis=[[0.0, 0.0, -12.0], [0.0, 0.0, 0.0]])]; bind = dict(post=pid)
+            hz = tc + bp["depth"] / 2.0
+            if left:
+                receivers.append(dict(id="beam_left", kind="member", axis=[[-12.0, 0.0, hz], [0.0, 0.0, hz]])); bind["beam_left"] = left[0]
+            if right:
+                receivers.append(dict(id="beam_right", kind="member", axis=[[0.0, 0.0, hz], [12.0, 0.0, hz]])); bind["beam_right"] = right[0]
+            tpl = r.template("POST-CAP", parts, receivers, [cap["record"]], "Post cap: %g in. cap plate with a formed sleeve fastened to the post with %d screws, %d x %g in. bolts through the bottom flanges of each beam end" % (tc, nsc, 2 * per, db))
+            jt = r.joint("%s:T" % pid, B, lvl, ends=[(pid, "end")])
+            cid = r.instance("C:%s:cap" % pid, jt, tpl, B, u, n, bind, [cap["record"]], lvl, family="post cap")
+            ends = ([(left[0], "end")] if left else []) + ([(right[0], "start")] if right else [])
+            Pj = left[2] if left else right[1]
+            jb_ = r.joint("%s:beams" % pid, Pj, lvl, ends=ends)
+            r.shared(jb_, [cid], "Beam end(s) seated on the post cap plate and bolted by the located bolts of this cap assembly")
 
 
 # --------------------------------------------------------------------------------------------
