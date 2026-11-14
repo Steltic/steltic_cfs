@@ -1032,7 +1032,8 @@ def _open_cases(cfg, qk, G, th, h, span_ft, xr, warns):
                 zones = [(a, b, qk * G * cn) for a, b, cn in segs]
                 dirx = 1.0 if side == "L" else -1.0
                 edge = []
-                if fascia > 0 and th <= 5.0:            # 27.3.2: fascia = inverted parapet
+                if fascia > 0 and (th <= 5.0 or w.get("fascia_any_slope")):    # 27.3.2: fascia = inverted parapet (theta <= 5 deg;
+                    # opt-in wind['fascia_any_slope'] applies the same horizontal fascia force on a steeper free roof, as for a sign strip)
                     Fw = 1.5 * qk * fascia * kip * dirx
                     Fl = 1.0 * qk * fascia * kip * dirx
                     edge = [("L", Fw), ("R", Fl)] if side == "L" else [("R", Fw), ("L", Fl)]
@@ -1226,7 +1227,15 @@ def snow_pm(cfg):
 
 
 def _partial_segments(cfg):
-    """7.5 partial-load spans [(x0_in, x1_in)] for monoslopes / overhang cantilevers."""
+    """7.5 partial-load spans [(x0_in, x1_in)] for monoslopes / overhang cantilevers, and for the spans of a
+    continuous multi-span rafter."""
+    spans = cfg.get("spans") or []
+    if len(spans) > 1 and cfg.get("partial_snow_spans"):
+        segs, x = [], 0.0
+        for sp in spans:
+            L = float(sp["span_ft"]) * 12.0
+            segs.append((x, x + L)); x += L
+        return segs
     th, _h, span_ft, (x_lo, x_hi), oh = _roof_geometry(cfg)
     span_in = span_ft * 12.0
     segs = [(0.0, span_in)]
@@ -1263,6 +1272,12 @@ def snow_case_names(cfg):
     if cfg.get("truss_roof"):
         names += ["S_unb_L", "S_unb_R"]
         return names, notes
+    if len(cfg.get("spans") or []) > 1 and cfg.get("partial_snow_spans"):
+        # opt-in: gable slopes of 2.38 to 30.3 deg are exempt from 7.5, but a continuous rafter over interior
+        # columns can be checked for span-by-span loading when the engineer asks for it
+        names += ["S_part_%d" % k for k in range(len(_partial_segments(cfg)))]
+        notes.append("7.5.1 partial loading of the continuous multi-span rafter (cfg partial_snow_spans): full "
+                     "balanced snow on one span with half the balanced snow on the other spans, each span in turn")
     if 2.38 <= th <= 30.2:
         names += ["S_unb_L", "S_unb_R"]
     else:
@@ -2087,8 +2102,11 @@ def sbmf_screens(cfg, secs, hn_ft):
     def add(check, ok, clause, detail):
         out.append(dict(check=check, ok=ok, clause=clause, detail=detail))
     sd = cfg.get("sbmf") or {}
-    add("one story, height <= 35 ft", hn_ft <= 35.0 and not cfg.get("spans"),
+    add("one story, height <= 35 ft", hn_ft <= 35.0,
         "S400 E4.4.1(a)", "structure height %.1f ft" % hn_ft)
+    if cfg.get("spans"):                # E4.4.1 limits stories, height, splices and member sizes -- not the number of bays
+        add("multi-bay frame engages every column of the line", True, "S400 E4.4.1(b)",
+            "%d bays, %d columns, one eight-bolt joint per column" % (len(cfg["spans"]), len(cfg["spans"]) + 1))
     cs_ = sd.get("column_splices")
     add("no column splices", True if cs_ is False else (False if cs_ else None),
         "S400 E4.4.1(a)", "declare sbmf['column_splices']=False")

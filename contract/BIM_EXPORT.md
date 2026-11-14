@@ -512,3 +512,92 @@ gate. They do not verify cover requirements, development length, lap class or
 capacity. Receiver bindings retain member/panel/interface type even if IDs collide.
 Use openBIM 0.8.48 or later to retain these host relationships and bond references
 in IFC and drawings.
+
+## Native CFS physical model from structured selections (`physical_design`, version 1)
+
+A completed CFS job carries the engineer's structured physical selections in
+`design/calc_package_cfs.json#/physical_design` (`schema: steltic.cfs_physical_design`,
+`version: 1`, `kind: "wall" | "portal"`). `steel_engine/cfs_physical.py` turns them into the
+full declaration set of `physical_inputs.json`: every member, panel and opening as a located
+occurrence, every selected fastener, plate, weld and anchor as a located solid in a versioned
+assembly template, and every occurrence linked to the calculation record that selected it.
+
+```python
+import cfs_physical, physical_inputs
+cfs_physical.build(job)                    # after the report is rendered: the viewer is fingerprinted
+physical_inputs.bind_checked_design(job)   # then the ordinary consistency run exports design/bim_package.json
+```
+
+The builder is a recorder, not a designer. It never sizes a member, chooses a spacing,
+calculates a capacity or reads a selection out of prose; a missing selection raises
+`PhysicalDesignError` naming the field. The field lists are the module docstrings:
+
+* `kind: "wall"` (`cfs_physical.WallModel`): wall lines by story (studs, tracks, sheathed or
+  strap-braced segments, chord packs, tie-down rods, anchors, wall-to-floor shear screws),
+  openings with headers and jambs, floors and roofs by joist zone. Options: `through_segments_ft`
+  (an interrupted wall whose upper chords and rods pass through), `uplift_tie` (a strap on every
+  stud), `top_drop_in` (panel under a beam), and top-level `post_lines` (box posts on base plates
+  with one beam per bay on post caps, the beams acting as joist supports `PL:<id>/<bay>`).
+* `kind: "portal"` (`cfs_physical_portal.PortalModel`): frames taken member by member from the
+  analysed planar frame (`bim_adapter.portal`), brackets, bases, purlins, girts, flange braces,
+  strap bracing by column line, struts and hanger posts. `frame` has four forms:
+  * built-up channel packs with gusset brackets and pinned cleat bases (default);
+  * `frame.existing`: an existing shell shown as context members with delegated joints
+    (component designs);
+  * `frame.canopy`: toe-to-toe box columns with batten plates on fixed bases, one continuous
+    rafter over welded head plates, knee braces, purlin overhangs;
+  * `frame.sbmf`: cold-formed steel special bolted moment frames (AISI S400 E4), see below.
+
+Every unlinked design record needs a `record_dispositions` entry (`not_applicable`,
+`delegated` with an interface, or `covered_by_assembly` with entity ids); the builder adds the
+ones it can derive and leaves the rest to the engineer.
+
+### Special bolted moment frames (`frame.sbmf`)
+
+```json
+"frame": {"sbmf": true,
+  "column": {"section": "HSS12X12X1/2", "n": 1, "hss": {"h": 12.0, "b": 12.0, "t": 0.465}, "material": "A500C", "record": "members/frame-col"},
+  "rafter": {"section": "1600S350-118", "n": 2, "material": "SS55", "record": "members/frame-raf", "interconnect": {"gap_in": 12.0}},
+  "joint":  {"bolt_d_in": 1.0, "a_in": 3.0, "b_in": 6.0, "c_in": 6.25, "bolt_material": "A325",
+             "record": "connections/conn-knee", "record_interior": "connections/conn-valley"},
+  "splice": {"at_ft": [30.0, 50.0], "plate_t_in": 0.25, "plate_in": [18.0, 13.0], "plate_material": "A572-50",
+             "bolt_d_in": 0.75, "bolt_material": "A325", "rows": 3, "gauge_in": 3.0, "pitch_in": 4.5, "record": "connections/conn-apex"},
+  "base":   {"plate_t_in": 1.0, "plate_in": [14.0, 24.0], "plate_material": "A572-50", "anchor_d_in": 1.0, "n_anchors": 4,
+             "anchor_material": "F1554-55", "embed_in": 15.0, "weld_leg_in": 0.3125, "weld_material": "E70", "record": "anchorage/base-anchor"}}
+```
+
+The column is one hollow section (profile family `rhs`) from the pinned base to the beam. The
+beam is two lipped channels with their webs on the two column faces (`interconnect.gap_in` =
+column width), straight over the whole frame; a beam that is not straight between its ends is
+refused. Each column carries one eight-bolt group through both beam webs and both column
+walls, set out by the `a`, `b`, `c` spacings of AISI S400 Table E4.3.3-1; interior columns of
+a multi-bay frame use `record_interior`. `splice.at_ft` cuts the beam into shipping pieces at
+analysis nodes only. The engine screens of `cfs_frame.sbmf_screens` follow E4.4.1: one story,
+35 ft, no column splices, pinned bases, one beam and one column size per frame. The number of
+bays is not limited; a multi-bay frame is reported as engaging every column of its line.
+
+## Composite CFS projects (`steel_engine/cfs_composite.py`)
+
+Some projects are two structures standing side by side, or one inside the other, behind a
+seismic joint: a moment-frame shop with a free-standing braced mezzanine, a high bay with an
+office wing. Each structure is a complete CFS job of its own kind. A composite project binds
+the finished jobs into one deliverable without re-designing anything.
+
+`<project>/compose.json` (`schema: steltic.cfs_composite`, `version: 1`) names the parts
+(single-letter id, job, title, `origin_in` = plan position of the part's own origin in the
+project system; parts are not rotated) and the interface: a statement, the supplementary
+record of one part that derives the required separation, and the clear gaps to be held
+(`a`/`b` part selections by member kind and position, plan `axis`, `stated_in`,
+`required_key` = the row key of the record that holds the required separation).
+
+```
+python -m cfs_composite <project> [jobs_dir]
+```
+
+writes `report.html` (project cover with the composition table, the clear-gap table and the
+interface record repeated verbatim, followed by every part report in full),
+`viewer_3d.html` with `viewer_3d_<id>.html`, and `design/composite.json` (part hashes,
+set-out, interface with `required_in` resolved). It refuses an unfinished part, a physical
+package that belongs to another building, and a stated gap smaller than the record requires.
+Steltic openBIM (`python -m steltic_openbim.cfs_composite`) then delivers one drawing set and
+one IFC model for the project and checks them against the certified parts and this manifest.

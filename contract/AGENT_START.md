@@ -853,6 +853,19 @@ member splits, repetitions, walls and reservations, and `bim_assemblies` for ver
 local parts with a rigid transform and actual receiving-member bindings at EVERY joint.
 Templates do not excuse missing hardware, counts, materials or receiver geometry.
 
+For a completed CFS wall or portal design, record your selections once as the structured
+`physical_design` block of `calc_package_cfs.json` and let `cfs_physical.build(job)` declare
+every occurrence from it (see "Native CFS physical model from structured selections" in
+`contract/BIM_EXPORT.md`). The builder records what you selected; it does not size, space or
+check anything, and it stops with the name of any selection you left out. Render the report
+first, then build, then `physical_inputs.bind_checked_design(job)` and the consistency run.
+
+Two structures separated by a seismic joint (a frame building with a free-standing
+mezzanine, a high bay with an office wing) are two jobs, each complete, bound afterwards
+with `cfs_composite` and a `compose.json` that states the set-out of each part and the
+clear gaps of the joint. Put the separation calculation (ASCE 7-22 12.12.2) in a
+supplementary record of one part; the project cover and the openBIM check read it from there.
+
 Reuse information already in the user's brief, IFC handoff, configuration and selected
 design records. Ask only for the remaining choices. Each request needs an explicit
 proposal and bindings to the affected fields. Proposed information remains provisional
