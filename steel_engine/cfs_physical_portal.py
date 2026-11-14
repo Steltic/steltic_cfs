@@ -82,6 +82,15 @@ class PortalModel(object):
             self.r.profiles.add(name)
         return name, p
 
+    def existing_profile(self, ex):
+        name = "EXISTING-%gx%g" % (float(ex["width_in"]), float(ex["depth_in"]))
+        if name not in self.r.profiles:
+            self.r.m.profile(name, "box_envelope", dict(width=float(ex["width_in"]), depth=float(ex["depth_in"])), designation=need(ex, "designation", "existing frame"), scope="delegated",
+                             basis="Outline of the existing frame member for context; the section is not surveyed and is not designed here",
+                             source=dict(kind="design_envelope", name=ex["designation"], basis="Outline of the existing frame member; flange width as assumed for purlin bearing"))
+            self.r.profiles.add(name)
+        return name
+
     def zee(self, name):
         if name not in self.r.profiles:
             p = cfs_sections.parse_designator(name)
@@ -105,10 +114,24 @@ class PortalModel(object):
         by_frame = defaultdict(list)
         for c in cands:
             by_frame[int(c["id"].split(":")[2])].append(c)
-        cprof, cp = self.built_up(need(self.fr, "column", "frame")); rprof, rp = self.built_up(need(self.fr, "rafter", "frame"))
-        self.cp, self.rp = cp, rp
-        self.ncol, self.nraf = int(self.fr["column"]["n"]), int(self.fr["rafter"]["n"])
-        self.gcol, self.graf = [float((self.fr[k].get("interconnect") or {}).get("gap_in", 0.0)) for k in ("column", "rafter")]
+        ex = self.fr.get("existing")
+        if ex:
+            # existing shell of a component design: the frame members are context, shown as outline envelopes; nothing of them is designed here
+            cprof = rprof = self.existing_profile(ex)
+            cp = rp = dict(depth=float(ex["depth_in"]), flange=float(ex["width_in"]), t=0.0, lip=0.0)
+            self.cp, self.rp = cp, rp
+            self.ncol = self.nraf = 0
+            self.gcol = self.graf = 0.0
+            iid = "IF:%s" % ex["interface"]["id"]
+            declared = {i_.get("id") for i_ in (self.pkg.get("bim") or {}).get("interfaces", [])}        # the calculation package may already declare it
+            if iid not in declared:
+                r.m.record("interfaces", dict(id=iid, scope="existing", responsible_party=need(ex["interface"], "responsible_party", "existing interface"),
+                                              representation=need(ex["interface"], "representation", "existing interface"), detail_ref=need(ex["interface"], "detail_ref", "existing interface")))
+        else:
+            cprof, cp = self.built_up(need(self.fr, "column", "frame")); rprof, rp = self.built_up(need(self.fr, "rafter", "frame"))
+            self.cp, self.rp = cp, rp
+            self.ncol, self.nraf = int(self.fr["column"]["n"]), int(self.fr["rafter"]["n"])
+            self.gcol, self.graf = [float((self.fr[k].get("interconnect") or {}).get("gap_in", 0.0)) for k in ("column", "rafter")]
         for fi in sorted(by_frame):
             ends = defaultdict(list)             # rounded point -> [(member id, end, kind, other point)]
             nlab = defaultdict(int)
@@ -119,22 +142,30 @@ class PortalModel(object):
                 if nlab[label] > 1:
                     label = "%s%s" % (label, c["id"].split(":")[5])
                 col = c["kind"] == "column"
-                sel = self.fr["column"] if col else self.fr["rafter"]
+                sel = (dict(material=ex["material"], record=ex["column_record"] if col else ex["rafter_record"])) if ex else (self.fr["column"] if col else self.fr["rafter"])
                 A, B = [float(v) for v in c["axis"][0]], [float(v) for v in c["axis"][1]]
                 mid = "FR%02d:%s" % (fi, label)
                 r.member(mid, "column" if col else "rafter", [A, B], cprof if col else rprof, sel["material"], Y, 0 if col else 1, [need(sel, "record", "frame member")],
-                         analysis_ids=c["analysis_ids"], frame=fi, role="portal column" if col else "portal rafter", reference_line="section centroid")
+                         analysis_ids=c["analysis_ids"], frame=fi, role=("existing column" if col else "existing rafter") if ex else ("portal column" if col else "portal rafter"), reference_line="section centroid",
+                         **({"scope": "existing_context"} if ex else {}))
                 lo, hi = (A, B) if A[2] <= B[2] else (B, A)          # hosts are set out from their lower end
                 (self.columns if col else self.rafters)[fi].append((mid, lo, hi))
                 self.axis[mid] = (A, B)
-                self.interconnect(mid, (A, B), sel, cp if col else rp, fi, col)
+                if not ex:
+                    self.interconnect(mid, (A, B), sel, cp if col else rp, fi, col)
                 for end, P, Q in (("start", A, B), ("end", B, A)):
                     ends[tuple(round(v, 3) for v in P)].append((mid, end, "column" if col else "rafter", Q, P))
             for pt, es in sorted(ends.items()):
                 P = list(es[0][4])
                 kinds = sorted(e[2] for e in es)
                 jid = r.joint("J:FR%02d:%d:%d" % (fi, int(round(P[0])), int(round(P[2]))), P, 0 if P[2] < 1.0 else 1, ends=[(e[0], e[1]) for e in es])
-                if kinds == ["column"] and P[2] < 1.0:
+                if ex:
+                    what = "base" if (kinds == ["column"] and P[2] < 1.0) else ("knee" if "column" in kinds else "apex")
+                    r.m.record("connections", dict(id="C:FR%02d:existing:%d:%d" % (fi, int(round(P[0])), int(round(P[2]))), joint_id=jid, scope="delegated", design_record_ids=r.link([need(ex["records"], what, "existing records")]), parts=[],
+                                                   level=0 if what == "base" else 1, responsible_party=ex["interface"]["responsible_party"], detail_ref=ex["interface"]["detail_ref"],
+                                                   representation="Existing %s of the existing frame; not surveyed and not part of this component design" % ("column base and anchorage" if what == "base" else what + " connection"),
+                                                   interface_id=iid, family="existing frame %s" % ("base" if what == "base" else "joint")))
+                elif kinds == ["column"] and P[2] < 1.0:
                     self.base(fi, jid, P, es[0])
                 elif "column" in kinds and "rafter" in kinds:
                     self.knee(fi, jid, P, es, "valley" if (kinds.count("rafter") == 2 and "valley" in self.fr) else "knee")
@@ -384,6 +415,17 @@ class PortalModel(object):
             for i, x in enumerate((-(lap - 1.5), lap - 1.5), 1):
                 for j, yy in enumerate((-dp / 4.0, dp / 4.0), 1):
                     parts.append(cyl("bolt-l-%d-%d" % (i, j), "bolt", sel["bolt_material"], [x, yy, -0.75], Z, 1.5, d / 2.0, diameter_in=d, role="lap end, through both nested webs"))
+        if host_n == 0:                                     # existing frame member: new cleat bolted to the existing flange, nothing else added to it
+            for j, xx in enumerate((-2.0, 2.0), 1):
+                parts.append(cyl("bolt-h-%d" % j, "bolt", sel["bolt_material"], [xx, -dp / 2.0 - 0.75, 1.5], [0.0, 1.0, 0.0], 1.5, d / 2.0, diameter_in=d, role="cleat to the existing flange"))
+            receivers = [dict(id="host", kind="member", axis=[[0.0, -off, -3.0], [0.0, -off, 3.0]])]
+            if before:
+                receivers.append(dict(id="before", kind="member", axis=[[-12.0, 0.0, 0.0], [lap if after else 0.0, 0.0, 0.0]]))
+            if after:
+                receivers.append(dict(id="after", kind="member", axis=[[-lap if before else 0.0, 0.0, 0.0], [12.0, 0.0, 0.0]]))
+            basis = "%s support on the existing frame: %g in. cleat bolted to the existing flange with 2 x %g in. bolts, 2 x %g in. bolts through the %s web%s and the cleat%s" % (
+                kind.capitalize(), tc, d, d, kind, "s" if before and after else "", "; %ss lapped %g in. each side of the frame and bolted through both nested webs with 2 bolts at each lap end" % (kind, lap) if (before and after and lap > 0) else "")
+            return self.r.template("%s-SUPPORT-EXISTING" % kind.upper(), parts, receivers, [sel["record"]], basis)
         gap = self.gcol if kind == "girt" else self.graf
         hw = self.half_width(host_n, host_p, gap)
         rad_s = float(sel.get("screw_d_in", 0.216)) / 2.0
