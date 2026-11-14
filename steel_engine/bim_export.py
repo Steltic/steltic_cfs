@@ -238,9 +238,18 @@ def run_worker(command, cwd, env, timeout):
         return subprocess.CompletedProcess(command,proc.returncode,stdout,stderr)
 
 
-def replay(job, output=None, timeout=120):
+def replay_timeout(root):
+    """Seconds allowed for the isolated export worker: 120 s (STELTIC_BIM_REPLAY_TIMEOUT) plus 30 s per MB of declared physical model.
+    A light-frame building with every stud, screw and joint declared runs to tens of MB and cannot be exported in a fixed 120 s."""
+    base = float(os.environ.get("STELTIC_BIM_REPLAY_TIMEOUT", "120"))
+    declared = Path(root)/"physical_inputs.json"
+    return base + (30.0*declared.stat().st_size/1.0e6 if declared.is_file() else 0.0)
+
+
+def replay(job, output=None, timeout=None):
     """Export a completed job in isolation. Existing design artifacts are read only."""
     root = Path(job).resolve()
+    timeout = replay_timeout(root) if timeout is None else timeout
     if not (root/"cfg.py").is_file(): raise ValueError("Job needs cfg.py")
     output = Path(output).resolve() if output else root/"design"/"bim_package.json"
     before = tracked_sources(root)

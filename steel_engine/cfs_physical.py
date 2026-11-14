@@ -38,7 +38,8 @@ selection raises ``PhysicalDesignError`` naming the field -- nothing is defaulte
                   "sheathing": {"thickness_in", "material", "records": [...]},
                   "zones": [{"id", "x_ft": [x0, x1], "y_ft": [y0, y1], "span": "X" | "Y",
                              "joist": {"section", "material", "spacing_in", "record"}      # C-joist, or an open-web truss as
-                                      | {"envelope": {"width_in", "depth_in"}, "designation", "material", "spacing_in", "record"},
+                                      | {"envelope": {"width_in", "depth_in"}, "designation", "material", "spacing_in", "record"}
+                                      | {"section" (bottom chord), "top_section", "rise_ft", "truss_supplier", ...}      # gable truss: chords located, webs delegated
                              "supports": ["X:S", "X:M1"], "bearing_record": "connections/<id>",
                              "uplift_record": "connections/<id>" (optional)}]}],
       "foundation": {"responsible_party": str, "detail_ref": {"id", "revision"}},
@@ -88,8 +89,10 @@ def neg(v):
 
 
 def cyl(pid, kind, material, origin, axis, length, radius, **parameters):
-    return dict(id=pid, kind=kind, material_id=material, parameters=parameters,
-                geometry=dict(type="cylinder", origin=r6(origin), axis=r6(axis), length=float(length), radius=float(radius)))
+    geometry = dict(type="cylinder", origin=r6(origin), axis=r6(axis), length=float(length), radius=float(radius))
+    if radius <= 0.15:
+        geometry["segments"] = 6            # screws are drawn as hexagonal prisms: tens of thousands of them per building
+    return dict(id=pid, kind=kind, material_id=material, parameters=parameters, geometry=geometry)
 
 
 def box(pid, kind, material, origin, size, x_axis=(1.0, 0.0, 0.0), y_axis=(0.0, 1.0, 0.0), **parameters):
@@ -238,13 +241,20 @@ class WallModel(object):
         zb, zt = self.L[k - 1], self.L[k] - self.zone(k)
         base = "W:%s:S%d" % (key, k)
         tracks = {}
+        top = st.get("top_track") or tr                     # the collector selection where the top track is the collector (one or two nested plies)
+        topname = r.channel(need(top, "section", key + " top track")); topmat = need(top, "material", key + " top track")
+        ttop = cfs_sections.parse_designator(topname)["t"]
         for tag, z, ly, recs in (("BT", zb, Z, []), ("TT", zt, neg(Z), [st.get("top_track_record")])):
-            tid = r.member(base + ":" + tag, "bottom_track" if tag == "BT" else "top_track", [self.pt(P0, u, 0.0, z), self.pt(P0, u, Lw, z)], tname, tmat, ly, lvl,
+            sec_, mat_, th_ = (tname, tmat, tt) if tag == "BT" else (topname, topmat, ttop)
+            tid = r.member(base + ":" + tag, "bottom_track" if tag == "BT" else "top_track", [self.pt(P0, u, 0.0, z), self.pt(P0, u, Lw, z)], sec_, mat_, ly, lvl,
                            recs, storey=k, wall_line=key, role="bottom track" if tag == "BT" else "top track")
-            tracks[tag] = dict(id=tid, z=z, P0=P0, u=u, n=n, length=Lw, t=tt)
+            tracks[tag] = dict(id=tid, z=z, P0=P0, u=u, n=n, length=Lw, t=th_)
             self.tracks[(key, k, tag)] = tracks[tag]
             self.track_studs[tid] = []
-        z0, z1 = zb + tt / 2.0, zt - tt / 2.0
+        if int(top.get("n", 1)) == 2:
+            tracks["TT"]["ply2"] = r.member(base + ":TT2", "top_track", [self.pt(P0, u, 0.0, zt + ttop), self.pt(P0, u, Lw, zt + ttop)], topname, topmat, neg(Z), lvl,
+                                            [st.get("top_track_record")], storey=k, wall_line=key, role="top track (second ply)")
+        z0, z1 = zb + tt / 2.0, zt - ttop / 2.0
         stud = need(st, "stud", key)
         segs = [(float(a) * 12.0 - self.s0(line), float(b) * 12.0 - self.s0(line)) for a, b in st.get("segments_ft", [])]
         seg_stud = st.get("segment_stud") or stud
@@ -263,15 +273,21 @@ class WallModel(object):
             return n_ply * b
 
         rods = []
+        t2 = bool(st.get("type_ii"))            # Type II (perforated) wall: chord packs and tie-down rods at the two ends of the wall only
         for si, (a, e) in enumerate(segs, 1):
             ch = need(st, "chord", key + " (sheathed segment)")
             npl = int(need(ch, "n", key + " chord"))
-            w = pack(a, ch, npl, "chord stud", [ch.get("record")])
-            pack(e - w, ch, npl, "chord stud", [ch.get("record")])
+            first, last = (not t2) or si == 1, (not t2) or si == len(segs)
+            w = npl * cfs_sections.parse_designator(ch["section"])["flange"]
+            if first:
+                pack(a, ch, npl, "chord stud", [ch.get("record")])
+            if last:
+                pack(e - w, ch, npl, "chord stud", [ch.get("record")])
             rd = st.get("rod")
-            if rd:
-                rods.append((si, "A", a + w + 2.0, rd)); rods.append((si, "B", e - w - 2.0, rd))
-                taken.append((a + w + 0.5, a + w + 3.5)); taken.append((e - w - 3.5, e - w - 0.5))
+            if rd and first:
+                rods.append((1 if t2 else si, "A", a + w + 2.0, rd)); taken.append((a + w + 0.5, a + w + 3.5))
+            if rd and last:
+                rods.append((1 if t2 else si, "B", e - w - 2.0, rd)); taken.append((e - w - 3.5, e - w - 0.5))
         for op in openings:
             a = float(op["start_ft"]) * 12.0 - self.s0(line); e = a + float(op["width_ft"]) * 12.0
             jm = need(op, "jamb", "opening " + op["id"]); nj = int(need(jm, "n", "jamb"))
@@ -286,7 +302,14 @@ class WallModel(object):
             stations.append(Lw - bs)                 # closing stud at the end of the line
         elif stations[-1] > Lw - bs:
             stations[-1] = Lw - bs
-        for a, e in ([] if st.get("strap") else segs):   # sheathing panel joints land on framing (48 in. sheets)
+        # Inside a sheathed segment or braced bay the studs are set out from the segment start, so equal segments are framed
+        # (and fastened) identically wherever they sit on the line; sheathing panel joints (48 in. sheets) land on framing.
+        stations = [x for x in stations if not any(a_ - 0.5 <= x <= e_ + 0.5 for a_, e_ in segs)]
+        for a, e in segs:
+            x = a + sp
+            while x < e - 1.0:
+                stations.append(x); x += sp
+        for a, e in ([] if st.get("strap") else segs):
             x = a + 48.0
             while x < e - 6.0:
                 stations.append(x); x += 48.0
@@ -308,7 +331,7 @@ class WallModel(object):
             r.channel(sec)
             mid = r.member("%s:V%03d" % (base, i), "stud", [self.pt(P0, u, s, z0), self.pt(P0, u, s, z1)], sec, mat, [fd * u[0], fd * u[1], 0.0], lvl,
                            records, storey=k, wall_line=key, role=role, station_in=round(s, 4))
-            for tag, end, zz, off in (("BT", "start", z0, tt / 2.0), ("TT", "end", z1, -tt / 2.0)):
+            for tag, end, zz, off in (("BT", "start", z0, tt / 2.0), ("TT", "end", z1, -ttop / 2.0)):
                 jid = r.joint("%s:%s" % (mid, "B" if tag == "BT" else "T"), self.pt(P0, u, s, zz), lvl, ends=[(mid, end)],
                               attachments=[(tracks[tag]["id"], s / Lw, [0.0, 0.0, off])])
                 ids[tag].append(jid)
@@ -359,6 +382,10 @@ class WallModel(object):
                              [fs["record"]], lvl, family="stud-to-track fastening")
             je = r.joint(tr["id"] + ":Z", self.pt(tr["P0"], tr["u"], tr["length"], tr["z"]), lvl, ends=[(tr["id"], "end")])
             r.shared(je, [cid], "Track end is fastened to the end stud of the wall by the stud-to-track screws of this track")
+            if tr.get("ply2"):
+                for end, s_ in (("start", 0.0), ("end", tr["length"])):
+                    j2 = r.joint("%s:%s" % (tr["ply2"], "A" if end == "start" else "Z"), self.pt(tr["P0"], tr["u"], s_, tr["z"] + tr["t"]), lvl, ends=[(tr["ply2"], end)])
+                    r.shared(j2, [cid], "Second top-track ply nested on the first and fastened to it through the stud-to-track screws of this track")
             for j in joint_ids[tag]:
                 r.shared(j, [cid], "Stud end seated in the track and fastened by the located stud-to-track screws of this track")
 
@@ -513,11 +540,20 @@ class WallModel(object):
         parts = [cyl("%s-%04d-%d" % ("anchor" if pk != "screw" else "scr", i, j), pk, fs["screw_material"], [1.0 + (Ls - 2.0) * i / m, y, bt["t"] / 2.0 + 0.05], neg(Z), pl, float(fs["screw_d_in"]) / 2.0,
                      size=fs.get("screw"), role="bottom track to floor framing")
                  for i in range(m + 1) for j, y in enumerate(ys, 1)]
+        recs = [fs["record"]]
+        if fs.get("uplift_rows"):                      # Type II wall: dedicated uplift row(s) beside the shear rows
+            mu = max(1, int(math.floor((Ls - 2.0) / float(fs["uplift_spacing_in"]) + 1e-9)))
+            for j in range(int(fs["uplift_rows"])):
+                yu = 2.4 * (1.0 if j == 0 else -1.0)
+                parts += [cyl("up-%04d-%d" % (i, j + 1), "screw", fs["screw_material"], [1.0 + (Ls - 2.0) * i / mu, yu, bt["t"] / 2.0 + 0.05], neg(Z), pl, float(fs["screw_d_in"]) / 2.0,
+                              size=fs.get("screw"), role="bottom track uplift tie") for i in range(mu + 1)]
+            recs.append(need(fs, "uplift_record", "floor_shear"))
         receivers = [dict(id="track", kind="member", axis=[[0.0, 0.0, 0.0], [Ls, 0.0, 0.0]])]
-        tpl = r.template("FLOOR-SHEAR", parts, receivers, [fs["record"]], "%d row(s) of %s at %g in. o.c. through the bottom track web into the floor below the wall segment" % (rows, "screws" if pk == "screw" else "anchors", sp))
+        tpl = r.template("FLOOR-SHEAR", parts, receivers, recs, "%d row(s) of %s at %g in. o.c. through the bottom track web into the floor below the wall segment%s" % (
+            rows, "screws" if pk == "screw" else "anchors", sp, ("; %d uplift row(s) at %g in. o.c." % (fs["uplift_rows"], fs["uplift_spacing_in"])) if fs.get("uplift_rows") else ""))
         origin = self.pt(bt["P0"], bt["u"], a, bt["z"])
         jid = r.joint("J:%s:S%d:G%d:shear" % (key, k, si), origin, lvl, attachments=[(bt["id"], a / bt["length"], [0.0, 0.0, 0.0])])
-        r.instance("C:%s:S%d:G%d:shear" % (key, k, si), jid, tpl, origin, bt["u"], bt["n"], dict(track=bt["id"]), [fs["record"]], lvl, family="wall-to-floor shear transfer")
+        r.instance("C:%s:S%d:G%d:shear" % (key, k, si), jid, tpl, origin, bt["u"], bt["n"], dict(track=bt["id"]), recs, lvl, family="wall-to-floor shear transfer")
 
     def stitch(self, key, k, si, st, base, verticals, a, e, z0, z1, P0, u, lvl):
         """Screws interconnecting the chord plies (one template per pack end)."""
@@ -680,13 +716,24 @@ class WallModel(object):
             ends = {0: [], 1: []}
             for i, q in enumerate(qs, 1):
                 A, B = mk(q)
-                what = "truss" if jo.get("envelope") else "joist"
+                what = "truss" if jo.get("envelope") else ("truss bottom chord" if jo.get("rise_ft") else "joist")
                 mid = r.member("F:L%d:%s:J%03d" % (lvl, zn["id"], i), "joist", [A, B], jname, jo["material"], ly, lvl, [jo["record"]], zone=zn["id"], role=("floor " if fl.get("kind") != "roof" else "roof ") + what,
                                **({"reference_line": "truss envelope centre"} if jo.get("envelope") else {}))
+                tops = []
+                if jo.get("rise_ft"):                      # gable truss: the two top chords are located members; webs are the truss supplier's
+                    ridge = [(A[0] + B[0]) / 2.0, (A[1] + B[1]) / 2.0, zc + float(jo["rise_ft"]) * 12.0]
+                    tname = r.channel(need(jo, "top_section", "gable truss"))
+                    for tag, P in (("TA", A), ("TB", B)):
+                        tops.append(r.member("%s:%s" % (mid, tag), "joist", [P, ridge], tname, jo["material"], ly, lvl, [jo["record"]], zone=zn["id"], role="roof truss top chord"))
+                    jr = r.joint(mid + ":R", ridge, lvl, ends=[(tops[0], "end"), (tops[1], "end")])
+                    r.m.record("connections", dict(id="C:" + mid + ":ridge", joint_id=jr, scope="delegated", design_record_ids=r.link([jo["record"]]), parts=[], level=lvl,
+                                                   responsible_party=need(jo, "truss_supplier", "gable truss"), detail_ref=dict(id="TRUSS-PANEL-POINTS", revision="1"),
+                                                   representation="Ridge joint, web members and panel-point connections of the roof truss by the truss supplier for the chord forces and reactions on the truss record",
+                                                   family="roof truss ridge joint"))
                 for e_i, (pnt, tr, endname) in enumerate(((A, tA, "start"), (B, tB, "end"))):
                     s = self.station(tr, pnt)
                     off = [pnt[0] - (tr["P0"][0] + tr["u"][0] * s), pnt[1] - (tr["P0"][1] + tr["u"][1] * s), pnt[2] - tr["z"]]
-                    jid = r.joint("%s:%s" % (mid, "A" if e_i == 0 else "B"), pnt, lvl, ends=[(mid, endname)], attachments=[(tr["id"], s / tr["length"], off)])
+                    jid = r.joint("%s:%s" % (mid, "A" if e_i == 0 else "B"), pnt, lvl, ends=[(mid, endname)] + ([(tops[e_i], "start")] if tops else []), attachments=[(tr["id"], s / tr["length"], off)])
                     ends[e_i].append((jid, s, off))
             for e_i, tr in ((0, tA), (1, tB)):
                 if not ends[e_i]:
@@ -709,6 +756,11 @@ class WallModel(object):
                     r.shared(j, [cid], "Joist end seated on the wall top track and fastened by the located screws of this bearing line")
         bx = [float(v) * 12.0 for v in fl.get("x_ft", [0.0, self.cfg["plan_ft"][0]])]; by = [float(v) * 12.0 for v in fl.get("y_ft", [0.0, self.cfg["plan_ft"][1]])]
         ring = [[float(x) * 12.0, float(y) * 12.0, zL] for x, y in fl["outline_ft"]] if fl.get("outline_ft") else [[bx[0], by[0], zL], [bx[1], by[0], zL], [bx[1], by[1], zL], [bx[0], by[1], zL]]
+        if fl.get("panels"):                              # explicit diaphragm panels (wings, sloped roof planes): vertices x, y in ft, z offset from the level in ft
+            for pn in fl["panels"]:
+                r.m.panel("D:L%d:%s" % (lvl, pn["id"]), "roof" if fl.get("kind") == "roof" else "floor", [[float(x) * 12.0, float(y) * 12.0, zL + float(dz) * 12.0] for x, y, dz in pn["ring_ft"]],
+                          float(pn.get("thickness_in", tsh)), pn.get("material", sh["material"]), level=lvl, design_record_ids=r.link(sh.get("records", [])), role="diaphragm sheathing")
+            return
         r.m.panel("D:L%d" % lvl, "roof" if fl.get("kind") == "roof" else "floor", ring, tsh, sh["material"], level=lvl,
                   design_record_ids=r.link(sh.get("records", [])), role="diaphragm sheathing")
 

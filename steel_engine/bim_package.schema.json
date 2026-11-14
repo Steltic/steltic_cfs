@@ -469,6 +469,11 @@
             "radius": {
               "type": "number",
               "exclusiveMinimum": 0
+            },
+            "segments": {
+              "type": "integer",
+              "minimum": 3,
+              "maximum": 64
             }
           },
           "required": [
