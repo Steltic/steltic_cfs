@@ -1226,7 +1226,15 @@ def snow_pm(cfg):
 
 
 def _partial_segments(cfg):
-    """7.5 partial-load spans [(x0_in, x1_in)] for monoslopes / overhang cantilevers."""
+    """7.5 partial-load spans [(x0_in, x1_in)] for monoslopes / overhang cantilevers, and for the spans of a
+    continuous multi-span rafter."""
+    spans = cfg.get("spans") or []
+    if len(spans) > 1 and cfg.get("partial_snow_spans"):
+        segs, x = [], 0.0
+        for sp in spans:
+            L = float(sp["span_ft"]) * 12.0
+            segs.append((x, x + L)); x += L
+        return segs
     th, _h, span_ft, (x_lo, x_hi), oh = _roof_geometry(cfg)
     span_in = span_ft * 12.0
     segs = [(0.0, span_in)]
@@ -1263,6 +1271,12 @@ def snow_case_names(cfg):
     if cfg.get("truss_roof"):
         names += ["S_unb_L", "S_unb_R"]
         return names, notes
+    if len(cfg.get("spans") or []) > 1 and cfg.get("partial_snow_spans"):
+        # opt-in: gable slopes of 2.38 to 30.3 deg are exempt from 7.5, but a continuous rafter over interior
+        # columns can be checked for span-by-span loading when the engineer asks for it
+        names += ["S_part_%d" % k for k in range(len(_partial_segments(cfg)))]
+        notes.append("7.5.1 partial loading of the continuous multi-span rafter (cfg partial_snow_spans): full "
+                     "balanced snow on one span with half the balanced snow on the other spans, each span in turn")
     if 2.38 <= th <= 30.2:
         names += ["S_unb_L", "S_unb_R"]
     else:

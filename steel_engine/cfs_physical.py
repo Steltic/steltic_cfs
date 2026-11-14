@@ -88,8 +88,13 @@ def neg(v):
     return [-x for x in v]
 
 
+def r12(v):
+    """Unit axes keep 12 decimals: 6 would leave an inclined axis off unit length by more than the frame tolerance."""
+    return [round(float(x), 12) for x in v]
+
+
 def cyl(pid, kind, material, origin, axis, length, radius, **parameters):
-    geometry = dict(type="cylinder", origin=r6(origin), axis=r6(axis), length=float(length), radius=float(radius))
+    geometry = dict(type="cylinder", origin=r6(origin), axis=r12(axis), length=float(length), radius=float(radius))
     if radius <= 0.15:
         geometry["segments"] = 6            # screws are drawn as hexagonal prisms: tens of thousands of them per building
     return dict(id=pid, kind=kind, material_id=material, parameters=parameters, geometry=geometry)
@@ -97,7 +102,7 @@ def cyl(pid, kind, material, origin, axis, length, radius, **parameters):
 
 def box(pid, kind, material, origin, size, x_axis=(1.0, 0.0, 0.0), y_axis=(0.0, 1.0, 0.0), **parameters):
     return dict(id=pid, kind=kind, material_id=material, parameters=parameters,
-                geometry=dict(type="box", origin=r6(origin), size=[float(v) for v in size], x_axis=r6(x_axis), y_axis=r6(y_axis)))
+                geometry=dict(type="box", origin=r6(origin), size=[float(v) for v in size], x_axis=r12(x_axis), y_axis=r12(y_axis)))
 
 
 class Recorder(object):
@@ -165,7 +170,7 @@ class Recorder(object):
         return name
 
     def member(self, mid, kind, axis, profile, material, local_y, level, records=(), **props):
-        self.m.member(mid, kind, [r6(axis[0]), r6(axis[1])], profile, material, r6(local_y), reference_line=props.pop("reference_line", "web mid-depth centre"),
+        self.m.member(mid, kind, [r6(axis[0]), r6(axis[1])], profile, material, r12(local_y), reference_line=props.pop("reference_line", "web mid-depth centre"),
                       end_offsets=[[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]], level=level, design_record_ids=self.link(records), **props)
         return mid
 
@@ -193,7 +198,7 @@ class Recorder(object):
     def instance(self, cid, joint_id, template, origin, x_axis, y_axis, bindings, records, level, **data):
         tid, rev = template
         self.m.record("connections", dict(id=cid, joint_id=joint_id, scope="designed", design_record_ids=self.link(records), parts=[], level=level,
-                                          assembly_instance=dict(template_id=tid, revision=rev, origin=r6(origin), x_axis=r6(x_axis), y_axis=r6(y_axis), bindings=bindings), **data))
+                                          assembly_instance=dict(template_id=tid, revision=rev, origin=r6(origin), x_axis=r12(x_axis), y_axis=r12(y_axis), bindings=bindings), **data))
         return cid
 
 

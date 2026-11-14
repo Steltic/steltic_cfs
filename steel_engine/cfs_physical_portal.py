@@ -111,8 +111,13 @@ class PortalModel(object):
         self.gcol, self.graf = [float((self.fr[k].get("interconnect") or {}).get("gap_in", 0.0)) for k in ("column", "rafter")]
         for fi in sorted(by_frame):
             ends = defaultdict(list)             # rounded point -> [(member id, end, kind, other point)]
+            nlab = defaultdict(int)
+            for c in by_frame[fi]:
+                nlab[c["id"].split(":")[4]] += 1
             for c in by_frame[fi]:
                 label = c["id"].split(":")[4]
+                if nlab[label] > 1:
+                    label = "%s%s" % (label, c["id"].split(":")[5])
                 col = c["kind"] == "column"
                 sel = self.fr["column"] if col else self.fr["rafter"]
                 A, B = [float(v) for v in c["axis"][0]], [float(v) for v in c["axis"][1]]
@@ -124,15 +129,15 @@ class PortalModel(object):
                 self.axis[mid] = (A, B)
                 self.interconnect(mid, (A, B), sel, cp if col else rp, fi, col)
                 for end, P, Q in (("start", A, B), ("end", B, A)):
-                    ends[tuple(round(v, 4) for v in P)].append((mid, end, "column" if col else "rafter", Q))
+                    ends[tuple(round(v, 3) for v in P)].append((mid, end, "column" if col else "rafter", Q, P))
             for pt, es in sorted(ends.items()):
-                P = list(pt)
+                P = list(es[0][4])
                 kinds = sorted(e[2] for e in es)
                 jid = r.joint("J:FR%02d:%d:%d" % (fi, int(round(P[0])), int(round(P[2]))), P, 0 if P[2] < 1.0 else 1, ends=[(e[0], e[1]) for e in es])
                 if kinds == ["column"] and P[2] < 1.0:
                     self.base(fi, jid, P, es[0])
                 elif "column" in kinds and "rafter" in kinds:
-                    self.knee(fi, jid, P, es)
+                    self.knee(fi, jid, P, es, "valley" if (kinds.count("rafter") == 2 and "valley" in self.fr) else "knee")
                 elif kinds and all(k == "rafter" for k in kinds) and len(es) == 2:
                     self.apex(fi, jid, P, es)
                 else:
@@ -221,18 +226,18 @@ class PortalModel(object):
         tpl = r.template(key.upper(), parts, receivers, [js["record"]], "One gusset plate between the webs of each back-to-back pair, %d bolts to each member leg of each plate (2 lines at %g in., %d rows at %g in.)" % (2 * rows, gauge, rows, pitch))
         r.instance("C:FR%02d:%s:%d" % (fi, key, int(round(P[0]))), jid, tpl, P, [1.0, 0.0, 0.0], Y, bindings, [js["record"]], 1, family=family)
 
-    def knee(self, fi, jid, P, es):
+    def knee(self, fi, jid, P, es, key="knee"):
         legs, bind = [], {}
-        for i, (mid, end, kind, Q) in enumerate(es, 1):
+        for i, (mid, end, kind, Q, _P) in enumerate(es, 1):
             direction = unit([Q[0] - P[0], 0.0, Q[2] - P[2]])
             rid = "column" if kind == "column" else "rafter%d" % i
             legs.append((rid, direction, self.ncol if kind == "column" else self.nraf, self.cp["depth"] if kind == "column" else self.rp["depth"]))
             bind[rid] = mid
-        self.bracket("knee", legs, "knee bracket", fi, jid, P, bind)
+        self.bracket(key, legs, "%s bracket" % key, fi, jid, P, bind)
 
     def apex(self, fi, jid, P, es):
         legs, bind = [], {}
-        for i, (mid, end, kind, Q) in enumerate(es, 1):
+        for i, (mid, end, kind, Q, _P) in enumerate(es, 1):
             legs.append(("rafter%d" % i, unit([Q[0] - P[0], 0.0, Q[2] - P[2]]), self.nraf, self.rp["depth"])); bind["rafter%d" % i] = mid
         self.bracket("apex", legs, "apex bracket", fi, jid, P, bind)
 
@@ -240,10 +245,10 @@ class PortalModel(object):
     @staticmethod
     def att(axis, P):
         """Station and offset of point P relative to a member axis."""
-        A, B = axis
+        A, B, P = r6(axis[0]), r6(axis[1]), r6(P)          # the recorded (6-decimal) geometry, so the declared station and offset reproduce the joint point
         d = [B[i] - A[i] for i in range(3)]; L2 = sum(v * v for v in d)
         t = sum((P[i] - A[i]) * d[i] for i in range(3)) / L2
-        t = min(1.0, max(0.0, t))
+        t = round(min(1.0, max(0.0, t)), 12)
         return t, [P[i] - (A[i] + t * d[i]) for i in range(3)]
 
     def stations(self, L, sp, first, last):
@@ -268,36 +273,52 @@ class PortalModel(object):
             for si, s in enumerate(self.stations(Lh, sp, first, last), 1):
                 line = "%s:H%d:L%02d" % (tag0, hi + 1, si)
                 Pf = {fi: add(lerp(hosts_by_frame[fi][hi][1], hosts_by_frame[fi][hi][2], s / Lh), nrm, off) for fi in frames}
-                mids, axes = [], {}
-                for bi, (fa, fb) in enumerate(zip(frames, frames[1:]), 1):
-                    A = add(Pf[fa], Y, -lap if bi > 1 else 0.0)
-                    B = add(Pf[fb], Y, lap if bi < len(frames) - 1 else 0.0)
-                    mid = r.member("%s:B%02d" % (line, bi), kind, [A, B], prof, sel["material"], ly, 1, [need(sel, "record", key)], bay=bi, line=si, role="roof purlin" if kind == "purlin" else "wall girt",
-                                   reference_line="section centroid", host_line=hi + 1)
-                    mids.append(mid); axes[mid] = (A, B)
-                for k, fi in enumerate(frames):
-                    before = mids[k - 1] if k > 0 else None
-                    after = mids[k] if k < len(mids) else None
-                    host = hosts_by_frame[fi][hi][0]
-                    P = Pf[fi]
-                    th, oh = self.att(self.axis[host], P)
-                    ends, atts, bind = [], [(host, th, oh)], dict(host=host)
-                    if before and after:
-                        for m_, rid in ((before, "before"), (after, "after")):
-                            t_, o_ = self.att(axes[m_], P); atts.append((m_, t_, o_)); bind[rid] = m_
-                    elif after:
-                        ends.append((after, "start")); bind["after"] = after
+                zline = Pf[frames[0]][2]
+                skip = set()
+                for om in sel.get("omit") or []:            # door / opening bays: no member on the lines below the opening head
+                    if abs(self.columns[frames[0]][int(om["line"]) - 1][1][0] - A0[0]) < 1.0 and zline < float(om.get("below_ft", 1e9)) * 12.0:
+                        skip.update(int(b) for b in om["bays"])
+                runs, cur = [], []
+                for bi in range(1, len(frames)):
+                    if bi in skip:
+                        if cur:
+                            runs.append(cur); cur = []
                     else:
-                        ends.append((before, "end")); bind["before"] = before
-                    tpl = self.support_template(key, kind, sel, bool(before), bool(after), lap, off, dp, p["t"], host_p, host_n)
-                    jid = r.joint("J:%s:F%02d" % (line, fi), P, 1, ends=ends, attachments=atts)
-                    cid = r.instance("C:%s:F%02d" % (line, fi), jid, tpl, P, Y, nrm, bind, [sel["record"]], 1, family="%s support" % kind)
-                    if before and after and lap > 0:
-                        for m_, end, other, sg in ((before, "end", after, 1.0), (after, "start", before, -1.0)):
-                            Q = add(P, Y, sg * lap)
-                            t_, o_ = self.att(axes[other], Q)
-                            jl = r.joint("J:%s:F%02d:lap%s" % (line, fi, "B" if sg > 0 else "A"), Q, 1, ends=[(m_, end)], attachments=[(other, t_, o_)])
-                            r.shared(jl, [cid], "Lap end bolted through both nested webs by the lap bolts of this support assembly")
+                        cur.append(bi)
+                if cur:
+                    runs.append(cur)
+                for run in runs:
+                    mids, axes = {}, {}
+                    for bi in run:
+                        fa, fb = frames[bi - 1], frames[bi]
+                        A = add(Pf[fa], Y, -lap if bi > run[0] else 0.0)
+                        B = add(Pf[fb], Y, lap if bi < run[-1] else 0.0)
+                        mid = r.member("%s:B%02d" % (line, bi), kind, [A, B], prof, sel["material"], ly, 1, [need(sel, "record", key)], bay=bi, line=si, role="roof purlin" if kind == "purlin" else "wall girt",
+                                       reference_line="section centroid", host_line=hi + 1)
+                        mids[bi] = mid; axes[mid] = (A, B)
+                    for k in range(run[0] - 1, run[-1] + 1):       # frame index k (0-based) borders bays k and k + 1
+                        fi = frames[k]
+                        before, after = mids.get(k), mids.get(k + 1)
+                        host = hosts_by_frame[fi][hi][0]
+                        P = Pf[fi]
+                        th, oh = self.att(self.axis[host], P)
+                        ends, atts, bind = [], [(host, th, oh)], dict(host=host)
+                        if before and after:
+                            for m_, rid in ((before, "before"), (after, "after")):
+                                t_, o_ = self.att(axes[m_], P); atts.append((m_, t_, o_)); bind[rid] = m_
+                        elif after:
+                            ends.append((after, "start")); bind["after"] = after
+                        else:
+                            ends.append((before, "end")); bind["before"] = before
+                        tpl = self.support_template(key, kind, sel, bool(before), bool(after), lap, off, dp, p["t"], host_p, host_n)
+                        jid = r.joint("J:%s:F%02d" % (line, fi), P, 1, ends=ends, attachments=atts)
+                        cid = r.instance("C:%s:F%02d" % (line, fi), jid, tpl, P, Y, nrm, bind, [sel["record"]], 1, family="%s support" % kind)
+                        if before and after and lap > 0:
+                            for m_, end, other, sg in ((before, "end", after, 1.0), (after, "start", before, -1.0)):
+                                Q = add(P, Y, sg * lap)
+                                t_, o_ = self.att(axes[other], Q)
+                                jl = r.joint("J:%s:F%02d:lap%s" % (line, fi, "B" if sg > 0 else "A"), Q, 1, ends=[(m_, end)], attachments=[(other, t_, o_)])
+                                r.shared(jl, [cid], "Lap end bolted through both nested webs by the lap bolts of this support assembly")
                 lines.append(line)
         return lines
 
@@ -377,34 +398,63 @@ class PortalModel(object):
         r = self.r; br = need(self.pd, "bracing", "root")
         frames = sorted(self.columns)
         for where in ("wall", "roof"):
-            sel = br.get(where)
-            if not sel:
-                continue
-            w, t = float(need(sel, "width_in", where)), float(need(sel, "t_in", where))
-            prof = r.flat(w, t); rec = need(sel, "record", where)
-            hosts = self.columns if where == "wall" else self.rafters
-            n_h = len(hosts[frames[0]])
-            host_lines = sel.get("host_lines") or ([1, n_h] if where == "wall" else list(range(1, n_h + 1)))
-            depth = (self.cp if where == "wall" else self.rp)["depth"]
-            for bay in need(sel, "bays", where):
+            entries = br.get(where)
+            entries = entries if isinstance(entries, list) else ([entries] if entries else [])
+            for sel in entries:
+                w, t = float(need(sel, "width_in", where)), float(need(sel, "t_in", where))
+                prof = r.flat(w, t); rec = need(sel, "record", where)
+                hosts = self.columns if where == "wall" else self.rafters
+                n_h = len(hosts[frames[0]])
+                host_lines = sel.get("lines") or ([1, n_h] if where == "wall" else list(range(1, n_h + 1)))
+                depth = (self.cp if where == "wall" else self.rp)["depth"]
+                for bay in need(sel, "bays", where):
+                    fa, fb = frames[int(bay) - 1], frames[int(bay)]
+                    for hl in host_lines:
+                        hi = int(hl) - 1
+                        ha, A0, B0 = hosts[fa][hi]; hb, A1, B1 = hosts[fb][hi]
+                        Lh = math.dist(A0, B0)
+                        out = self.wall_normal(A0, B0, hi) if where == "wall" else self.roof_normal(A0, B0, hi)
+                        zoff = depth / 2.0 + t / 2.0
+                        offv = [out[i] * zoff for i in range(3)]
+                        npan = int(sel.get("panels", 1))
+                        for pi in range(npan):
+                            t0, t1 = (12.0 + (Lh - 24.0) * pi / npan) / Lh, (12.0 + (Lh - 24.0) * (pi + 1) / npan) / Lh
+                            for tag, (ta, tb) in (("U", (t0, t1)), ("D", (t1, t0))):
+                                Pa, Pb = add(lerp(A0, B0, ta), offv), add(lerp(A1, B1, tb), offv)
+                                ax = unit([Pb[i] - Pa[i] for i in range(3)])
+                                mid = r.member("BR:%s:L%d:B%02d:P%d%s" % (where, hi + 1, int(bay), pi + 1, tag), "strap", [Pa, Pb], prof, sel["material"], cross(out, ax), 1, [rec],
+                                               bay=int(bay), role=sel.get("role") or ("%s tension strap" % ("side-wall" if where == "wall" else "roof-plane")), reference_line="strap centreline",
+                                               host_line=hi + 1, plane=where, schedule_row=sel.get("row") or "strap-%s" % where)
+                                self.strap_end(sel, rec, mid, "start", Pa, ha, (A0, B0), out, zoff, ax)
+                                self.strap_end(sel, rec, mid, "end", Pb, hb, (A1, B1), out, zoff, neg(ax))
+
+    # ---- longitudinal struts on a column line (discrete bracing of the columns) ----
+    def struts(self):
+        r = self.r
+        frames = sorted(self.columns)
+        for sel in self.pd.get("struts") or []:
+            prof, p = self.built_up(dict(section=need(sel, "section", "strut"), n=int(sel.get("n", 1))))
+            hi = int(need(sel, "line", "strut")) - 1
+            z = float(need(sel, "height_ft", "strut")) * 12.0
+            d = float(need(sel, "bolt_d_in", "strut"))
+            hw = self.half_width(self.ncol, self.cp, self.gcol)
+            rec = need(sel, "record", "strut")
+            parts = [box("clip", "clip_angle", sel["clip_material"], [0.0, -p["depth"] / 2.0 + 0.5, p["t"] / 2.0], [3.0, p["depth"] - 1.0, 0.25], role="strut end clip on the column", thickness_in=0.25)]
+            for j, yy in enumerate((-p["depth"] / 4.0, p["depth"] / 4.0), 1):
+                parts.append(cyl("bolt-%d" % j, "bolt", sel["bolt_material"], [1.5, yy, -0.5], Z, 1.25, d / 2.0, diameter_in=d, role="strut web to clip"))
+            receivers = [dict(id="strut", kind="member", axis=[[0.0, 0.0, 0.0], [12.0, 0.0, 0.0]]), dict(id="column", kind="member", axis=[[-hw, -3.0, 0.0], [-hw, 3.0, 0.0]])]
+            tpl = r.template("STRUT-END", parts, receivers, [rec], "Strut end: clip on the column pack with 2 x %g in. bolts through the strut web" % d)
+            bays = sel.get("bays") or list(range(1, len(frames)))
+            for bay in bays:
                 fa, fb = frames[int(bay) - 1], frames[int(bay)]
-                for hl in host_lines:
-                    hi = int(hl) - 1
-                    ha, A0, B0 = hosts[fa][hi]; hb, A1, B1 = hosts[fb][hi]
-                    Lh = math.dist(A0, B0)
-                    out = self.wall_normal(A0, B0, hi) if where == "wall" else self.roof_normal(A0, B0, hi)
-                    zoff = depth / 2.0 + t / 2.0
-                    offv = [out[i] * zoff for i in range(3)]
-                    npan = int(sel.get("panels", 1))
-                    for pi in range(npan):
-                        t0, t1 = (12.0 + (Lh - 24.0) * pi / npan) / Lh, (12.0 + (Lh - 24.0) * (pi + 1) / npan) / Lh
-                        for tag, (ta, tb) in (("U", (t0, t1)), ("D", (t1, t0))):
-                            Pa, Pb = add(lerp(A0, B0, ta), offv), add(lerp(A1, B1, tb), offv)
-                            ax = unit([Pb[i] - Pa[i] for i in range(3)])
-                            mid = r.member("BR:%s:B%02d:H%d:P%d%s" % (where, int(bay), hi + 1, pi + 1, tag), "strap", [Pa, Pb], prof, sel["material"], cross(out, ax), 1, [rec],
-                                           bay=int(bay), role="%s tension strap" % ("side-wall" if where == "wall" else "roof-plane"), reference_line="strap centreline", host_line=hi + 1, plane=where)
-                            self.strap_end(sel, rec, mid, "start", Pa, ha, (A0, B0), out, zoff, ax)
-                            self.strap_end(sel, rec, mid, "end", Pb, hb, (A1, B1), out, zoff, neg(ax))
+                ca, cb = self.columns[fa][hi], self.columns[fb][hi]
+                A = [ca[1][0], ca[1][1] + hw, z]; B = [cb[1][0], cb[1][1] - hw, z]
+                mid = r.member("ST:L%d:B%02d" % (hi + 1, int(bay)), "strut", [A, B], prof, sel["material"], [1.0, 0.0, 0.0], 1, [rec], bay=int(bay), role=sel.get("role") or "column-line strut",
+                               reference_line="web mid-depth centre", host_line=hi + 1)
+                for end, P, host, sg in (("start", A, ca[0], 1.0), ("end", B, cb[0], -1.0)):
+                    t_, o_ = self.att(self.axis[host], P)
+                    jid = r.joint("J:%s:%s" % (mid, "A" if end == "start" else "B"), P, 1, ends=[(mid, end)], attachments=[(host, t_, o_)])
+                    r.instance("C:%s:%s" % (mid, "A" if end == "start" else "B"), jid, tpl, P, [0.0, sg, 0.0], [0.0, 0.0, 1.0], dict(strut=mid, column=host), [rec], 1, family="strut end connection")
 
     def wall_normal(self, A, B, hi):
         return [-1.0, 0.0, 0.0] if A[0] <= self.xmid else [1.0, 0.0, 0.0]
@@ -422,15 +472,21 @@ class PortalModel(object):
         ys = snap["layout_evidence"]["frame_positions_in"]
         self.frames(snap["physical"]["members"])
         frames = sorted(self.columns)
+        for fi in frames:                                   # host lines are numbered across the frame, left to right
+            self.columns[fi].sort(key=lambda c: c[1][0])
+            self.rafters[fi].sort(key=lambda c: min(c[1][0], c[2][0]))
         xs = sorted({round(c[1][0], 3) for c in self.columns[frames[0]]})
         self.xmid = (xs[0] + xs[-1]) / 2.0
         if self.pd.get("purlins"):
             self.secondary("purlins", "purlin", self.rafters, self.roof_normal, self.rp, self.nraf, 6.0, 6.0)
         if self.pd.get("girts"):
-            ext = {fi: [c for c in cols if abs(c[1][0] - xs[0]) < 1.0 or abs(c[1][0] - xs[-1]) < 1.0] for fi, cols in self.columns.items()}
+            want = [int(v) for v in (self.pd["girts"].get("lines") or [1, len(xs)])]         # column lines (numbered across the frame) that carry girts
+            ext = {fi: [c for i_, c in enumerate(cols, 1) if i_ in want] for fi, cols in self.columns.items()}
             self.secondary("girts", "girt", ext, self.wall_normal, self.cp, self.ncol, 12.0, 6.0)
         if self.pd.get("bracing"):
             self.straps()
+        if self.pd.get("struts"):
+            self.struts()
         eaves = sorted({round(c[2][2], 3) for fi in frames for c in self.columns[fi]})
         top = max(round(q[2][2], 3) for fi in frames for q in self.rafters[fi])
         tops = [z for z in eaves if z < top - 1e-6] + [top]
